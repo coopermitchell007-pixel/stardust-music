@@ -1,0 +1,10 @@
+{
+  "id": "aurora",
+  "name": "Aurora Veil",
+  "author": "YTM+",
+  "accent": "#3affa3",
+  "background": "radial-gradient(1200px 900px at 50% -8%, #0a3b2c 0%, rgba(10,59,44,0) 62%), #03070a",
+  "glass": { "blur": 18, "opacity": 0.46 },
+  "starfield": { "enabled": true, "count": 320, "color": "#d6ffee", "speed": 0.24, "size": 1.8, "twinkle": true, "shootingStars": true },
+  "visualizer": { "enabled": true, "color": "#3affa3", "style": "bars" }
+}

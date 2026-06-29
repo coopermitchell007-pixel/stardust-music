@@ -1,0 +1,62 @@
+{
+  "name": "ytm-plus",
+  "version": "0.1.0",
+  "description": "YTM+ — Spicetify-style theming for YouTube Music, with customizable space themes, a visualizer, glassmorphism, Discord Rich Presence, global hotkeys and a mini player.",
+  "main": "src/main.js",
+  "author": "Cooper Mitchell",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --enable-logging",
+    "icon": "node assets/generate-icon.js",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac",
+    "dist:linux": "electron-builder --linux"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "optionalDependencies": {
+    "discord-rpc": "^4.0.1"
+  },
+  "build": {
+    "appId": "com.ytmplus.app",
+    "productName": "YTM+",
+    "copyright": "Copyright © 2026 Cooper Mitchell",
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "assets/icon.png",
+      "assets/icon.icns",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.music",
+      "target": ["dmg", "zip"],
+      "icon": "build/icon.png"
+    },
+    "win": {
+      "target": ["nsis", "portable"],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "YTM+"
+    },
+    "linux": {
+      "target": ["AppImage"],
+      "category": "Audio",
+      "icon": "build/icon.png"
+    }
+  }
+}

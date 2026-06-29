@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>YTM+ Mini</title>
+  <link rel="stylesheet" href="miniplayer.css" />
+</head>
+<body>
+  <div id="mini">
+    <div id="art" class="drag"></div>
+    <div id="info" class="drag">
+      <div id="title">Nothing playing</div>
+      <div id="artist"></div>
+      <div id="progress"><div id="bar"></div></div>
+    </div>
+    <div id="controls">
+      <button data-act="previous" title="Previous">⏮</button>
+      <button data-act="playpause" id="pp" title="Play/Pause">▶</button>
+      <button data-act="next" title="Next">⏭</button>
+      <button data-act="open-main" id="expand" title="Open YTM+">⤢</button>
+    </div>
+  </div>
+  <script src="miniplayer.js"></script>
+</body>
+</html>
