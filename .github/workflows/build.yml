@@ -9,6 +9,10 @@ on:
       - 'v*'
   workflow_dispatch:
 
+# Needed so the tag build can create/attach to a GitHub Release.
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
