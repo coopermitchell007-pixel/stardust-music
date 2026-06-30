@@ -6,6 +6,7 @@ const path = require('path');
 const config = require('./config');
 const themes = require('./themes');
 const discord = require('./discord');
+const marketplace = require('./marketplace');
 
 const YTM_URL = 'https://music.youtube.com/';
 const ICON_PNG = path.join(__dirname, '..', 'assets', 'icon.png');
@@ -59,6 +60,17 @@ function createMainWindow() {
     mainWindow.webContents.on('did-finish-load', () => {
       setTimeout(async () => {
         try {
+          // Optionally open UI before the snapshot (debug only).
+          const open = process.env.YTMPLUS_OPEN;
+          if (open) {
+            await mainWindow.webContents.executeJavaScript(`(() => {
+              const l = document.getElementById('ytmplus-launcher'); if (l) l.click();
+              if (${open === 'market' ? 'true' : 'false'}) {
+                const b = document.getElementById('ytmplus-open-market'); if (b) b.click();
+              }
+            })();`);
+            await new Promise((r) => setTimeout(r, 1500));
+          }
           const img = await mainWindow.webContents.capturePage();
           require('fs').writeFileSync(process.env.YTMPLUS_CAPTURE, img.toPNG());
           console.log('[YTM+] captured to', process.env.YTMPLUS_CAPTURE);
@@ -176,8 +188,24 @@ function registerIpc() {
   ipcMain.handle('ytmplus:init', () => ({
     themes: lightThemeList(),
     settings: config.load(),
-    discordAvailable: discord.isAvailable()
+    discordAvailable: discord.isAvailable(),
+    installed: marketplace.installedIds(),
+    extras: marketplace.installedExtras()
   }));
+
+  // --- Marketplace ---
+  ipcMain.handle('ytmplus:marketplace-catalog', async () => ({
+    items: await marketplace.catalog(),
+    installed: marketplace.installedIds()
+  }));
+  ipcMain.handle('ytmplus:marketplace-install', (_e, item) => {
+    const res = marketplace.install(item);
+    return { res, installed: marketplace.installedIds(), extras: marketplace.installedExtras(), themes: lightThemeList() };
+  });
+  ipcMain.handle('ytmplus:marketplace-remove', (_e, { type, id }) => {
+    const res = marketplace.remove(type, id);
+    return { res, installed: marketplace.installedIds(), extras: marketplace.installedExtras(), themes: lightThemeList() };
+  });
 
   ipcMain.handle('ytmplus:get-theme', (_e, id) => {
     const t = themes.get(id);

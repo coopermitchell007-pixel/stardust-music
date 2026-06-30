@@ -22,7 +22,11 @@ const DEFAULTS = {
   // to enable Rich Presence. https://discord.com/developers/applications
   discordClientId: '',
   globalHotkeys: true,
-  windowBounds: { width: 1280, height: 800 }
+  windowBounds: { width: 1280, height: 800 },
+  // Marketplace extras
+  activeFont: null,          // installed font id, or null for YTM default
+  enabledAnimations: [],     // installed animation ids that are on
+  enabledFeatures: []        // installed feature ids that are on
 };
 
 let cache = null;

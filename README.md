@@ -10,10 +10,12 @@ hotkeys, and a mini player.
 
 ## Features
 
+- **Community Marketplace** — browse and one-click-install **themes, fonts, animations, and features** from an in-app store (categories, search, live preview). Ships with a bundled catalog and can pull a community catalog from GitHub.
 - **Built-in space themes** — Nebula Drift, Spiral Galaxy, Event Horizon (black hole), Aurora Veil.
 - **Full theme SDK** — drop your own theme folders into the themes directory; they load live, no restart, exactly like Spicetify.
 - **Animated starfield** — parallax stars, twinkle, and shooting stars, all configurable per theme.
-- **Visualizer** — playback-reactive bars in your accent color (see note below).
+- **Real audio visualizer** — true spectrum bars sampled from the playing audio via Web Audio, in your accent color.
+- **Fonts / animations / features** — swap the whole UI font, toggle animation packs (vinyl-spin artwork, gradient headings, card lift, pulsing play), and enable feature tweaks (compact density, rounded art, hide Upgrade, focus dim).
 - **Live customizer** — accent color picker, star density, glass blur, and toggles for every effect, in an in-app panel.
 - **Glassmorphism** — frosted nav and player bars.
 - **Discord Rich Presence** — show what you're listening to (optional).
@@ -76,12 +78,29 @@ user themes folder (Panel → **Open themes folder**) and hit **Reload**.
 `theme.css` is injected on top of the base layer — target any YouTube Music
 element and use `var(--ytmplus-accent)` for the active accent color.
 
+## Marketplace
+
+Open the panel (**✦** button) → **Browse the Marketplace**. Items install into
+your user data folder and apply live:
+
+| Type | What it does | Where it goes |
+|------|--------------|---------------|
+| **Theme** | Full look (background, accent, starfield, visualizer) | `Themes/<id>/` — also appears in the Theme list |
+| **Font** | Swaps the UI font (one active at a time) | `Marketplace/fonts/` |
+| **Animation** | Toggleable motion packs | `Marketplace/animations/` |
+| **Feature** | Layout/cleanup tweaks | `Marketplace/features/` |
+
+The catalog is `src/marketplace/catalog.json` (bundled, works offline). A remote
+catalog at the same path on the `main` branch overrides/extends it by `id`, so
+the "community" catalog is just a PR away — add an item to that JSON and it
+shows up in everyone's store.
+
 ## Notes & limitations
 
-- **Visualizer is simulated, not sampled.** YouTube Music streams audio from a
-  cross-origin host, so the Web Audio `AnalyserNode` can't legally read the
-  samples (and tapping the element risks muting playback). The visualizer is a
-  smooth, beat-feel animation driven by real playback state instead.
+- **Visualizer samples real audio.** YTM plays through MediaSource (same-origin
+  `blob:` streams), so a Web Audio `AnalyserNode` taps the media element for a
+  true spectrum. If that element is ever unavailable/tainted, it falls back to a
+  smooth play-state animation.
 - **Discord Rich Presence** needs the optional `discord-rpc` package (installed
   automatically) and a Discord application **Client ID** — create one at
   <https://discord.com/developers/applications> and paste it into the panel.
@@ -95,6 +114,8 @@ element and use `var(--ytmplus-accent)` for the active accent color.
 | Page injection (panel, starfield, visualizer, scraping) | `src/preload.js` |
 | Base CSS (YTM transparency, glass, accent, panel) | `src/overlay/overlay.css` |
 | Theme discovery (built-in + user) | `src/themes.js` |
+| Marketplace install/list/catalog | `src/marketplace.js` |
+| Bundled marketplace catalog | `src/marketplace/catalog.json` |
 | Settings persistence | `src/config.js` |
 | Discord Rich Presence (guarded) | `src/discord.js` |
 | Mini player window | `src/miniplayer/` |

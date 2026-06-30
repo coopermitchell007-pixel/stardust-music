@@ -13,6 +13,10 @@ let settings = null;
 let themeList = [];
 let activeTheme = null; // full theme object incl. starfield/visualizer config
 let discordAvailable = false;
+let installed = { theme: [], font: [], animation: [], feature: [] };
+let extras = { font: [], animation: [], feature: [] }; // payloads of installed extras
+let panelEl = null;
+let marketState = { items: [], filter: 'all', search: '' };
 
 // Lazily create/cache our injected <style> sheets. Must be lazy: the preload
 // runs before the DOM exists, so document.head is null at module load time.
@@ -132,19 +136,25 @@ const Starfield = (() => {
 })();
 
 // ---------------------------------------------------------------------------
-// Visualizer — playback-reactive bars.
-// NOTE: YouTube Music streams audio cross-origin (googlevideo.com), so the
-// Web Audio AnalyserNode cannot legally sample it (and tapping the element
-// risks muting playback). We therefore drive a smooth, beat-feel simulation
-// from the real playback state (only animates while a track is playing).
+// Visualizer — real spectrum bars driven by the actual audio.
+// YTM plays via MediaSource (blob: URLs are same-origin), so we *can* tap the
+// page's media element with a Web Audio AnalyserNode: route
+// mediaElement -> analyser -> destination and read getByteFrequencyData.
+// If that ever yields silence (a tainted/cross-origin element), we fall back
+// to a smooth simulation so the bars still move with play/pause.
 // ---------------------------------------------------------------------------
 const Visualizer = (() => {
   let canvas, ctx, raf = null, cfg = null, enabled = true, w = 0, h = 0;
-  const BARS = 64;
+  const BARS = 72;
   let levels = new Array(BARS).fill(0);
   let targets = new Array(BARS).fill(0);
   let playing = false;
   let phase = 0;
+
+  // Web Audio
+  let audioCtx = null, analyser = null, freq = null, attachedEl = null;
+  let useReal = false;       // true once we get non-zero spectrum data
+  let zeroFrames = 0;        // consecutive silent frames while playing -> tainted
 
   function ensureCanvas() {
     if (canvas) return;
@@ -159,12 +169,47 @@ const Visualizer = (() => {
     if (!canvas) return;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     w = window.innerWidth;
-    h = 140;
+    h = 150;
     canvas.width = w * dpr;
     canvas.height = h * dpr;
     canvas.style.width = w + 'px';
     canvas.style.height = h + 'px';
+    // Dock just above the real player bar, whatever its height is, so the
+    // now-playing thumbnail/controls never sit on top of the bars.
+    const bar = document.querySelector('ytmusic-player-bar');
+    const barH = bar ? Math.round(bar.getBoundingClientRect().height) : 72;
+    canvas.style.bottom = barH + 'px';
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  // Attempt to wire the analyser to the page's <video>/<audio>. Safe to call
+  // repeatedly; only creates one MediaElementSource per element.
+  function attachAudio() {
+    const el = document.querySelector('video') || document.querySelector('audio');
+    if (!el || el === attachedEl) return;
+    try {
+      if (!audioCtx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AC();
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 1024;
+        analyser.smoothingTimeConstant = 0.8;
+        freq = new Uint8Array(analyser.frequencyBinCount);
+      }
+      const src = audioCtx.createMediaElementSource(el);
+      src.connect(analyser);
+      analyser.connect(audioCtx.destination); // keep audio audible
+      attachedEl = el;
+      zeroFrames = 0;
+    } catch (e) {
+      // createMediaElementSource throws if the element was already tapped by
+      // someone else; in that case real sampling isn't available here.
+      console.log('[YTM+] visualizer audio tap unavailable:', e.message);
+    }
+  }
+
+  function resumeAudio() {
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
   }
 
   function configure(visCfg) {
@@ -173,40 +218,77 @@ const Visualizer = (() => {
     enabled = settings.visualizerEnabled && cfg.enabled !== false;
     resize();
     canvas.style.display = enabled ? 'block' : 'none';
-    enabled ? start() : stop();
+    if (enabled) { attachAudio(); start(); } else stop();
   }
 
-  function setPlaying(p) { playing = p; }
+  function setPlaying(p) {
+    playing = p;
+    if (p) { attachAudio(); resumeAudio(); }
+  }
 
-  function newTargets() {
+  // --- real spectrum: map FFT bins onto BARS with a perceptual (log) curve ---
+  function realTargets() {
+    analyser.getByteFrequencyData(freq);
+    const bins = analyser.frequencyBinCount;
+    let sum = 0;
     for (let i = 0; i < BARS; i++) {
-      // layered sines give a music-like, center-weighted spectrum shape
+      // log-spaced bin window so low/mid frequencies (where music lives) spread
+      // across more bars and highs compress toward the edge.
+      const f0 = Math.pow(i / BARS, 2.0);
+      const f1 = Math.pow((i + 1) / BARS, 2.0);
+      let lo = Math.floor(f0 * bins);
+      let hi = Math.max(lo + 1, Math.floor(f1 * bins));
+      let max = 0;
+      for (let j = lo; j < hi && j < bins; j++) if (freq[j] > max) max = freq[j];
+      const v = max / 255;
+      sum += v;
+      targets[i] = Math.min(1, Math.pow(v, 1.4) * 1.25);
+    }
+    return sum;
+  }
+
+  function simTargets() {
+    for (let i = 0; i < BARS; i++) {
       const center = 1 - Math.abs(i - BARS / 2) / (BARS / 2);
       const base = playing ? 0.25 + 0.75 * center : 0.04;
       const wobble = playing ? (Math.sin(phase + i * 0.5) * 0.3 + Math.random() * 0.4) : 0;
-      // Collapse fully to 0 when paused so no idle bars/lines linger.
       targets[i] = playing ? Math.max(0.04, Math.min(1, base * (0.6 + wobble))) : 0;
     }
   }
 
-  let lastTargetAt = 0;
+  let lastSimAt = 0;
   function frame(ts) {
     if (!enabled) return;
-    if (ts - lastTargetAt > 90) { phase += 0.35; newTargets(); lastTargetAt = ts; }
+
+    if (analyser) {
+      const sum = realTargets();
+      if (playing && sum < 0.02) {
+        if (++zeroFrames > 90) useReal = false; // ~1.5s of silence -> tainted
+      } else if (sum >= 0.02) {
+        zeroFrames = 0; useReal = true;
+      }
+    }
+    if (!useReal) {
+      if (ts - lastSimAt > 90) { phase += 0.35; simTargets(); lastSimAt = ts; }
+      if (!playing) for (let i = 0; i < BARS; i++) targets[i] = 0;
+    }
+
     ctx.clearRect(0, 0, w, h);
     const accent = settings.accentOverride || cfg.color || '#8b5cff';
     const gap = 2;
     const bw = (w / BARS) - gap;
     for (let i = 0; i < BARS; i++) {
-      levels[i] += (targets[i] - levels[i]) * 0.18;
+      levels[i] += (targets[i] - levels[i]) * (useReal ? 0.35 : 0.18);
       const bh = levels[i] * (h - 20);
-      if (bh < 2) continue; // don't render hairline idle bars
+      if (bh < 2) continue;
       const x = i * (bw + gap);
       const y = h - bh;
       const grad = ctx.createLinearGradient(0, y, 0, h);
       grad.addColorStop(0, accent);
+      grad.addColorStop(0.6, accent);
       grad.addColorStop(1, 'transparent');
       ctx.fillStyle = grad;
+      // rounded-ish caps for a softer look
       ctx.fillRect(x, y, bw, bh);
     }
     raf = requestAnimationFrame(frame);
@@ -215,8 +297,11 @@ const Visualizer = (() => {
   function start() { if (enabled && !raf) raf = requestAnimationFrame(frame); }
   function stop() { if (raf) { cancelAnimationFrame(raf); raf = null; } if (ctx) ctx.clearRect(0, 0, w, h); }
 
-  return { configure, setPlaying };
+  return { configure, setPlaying, resumeAudio };
 })();
+
+// A user gesture is required before an AudioContext can produce sound/data.
+window.addEventListener('pointerdown', () => Visualizer.resumeAudio(), { capture: true });
 
 // ---------------------------------------------------------------------------
 // Theme application
@@ -242,6 +327,29 @@ function applyVars() {
   --ytmplus-glass-blur: ${settings.glassEnabled ? blur : 0}px;
   --ytmplus-glass-opacity: ${settings.glassEnabled ? glassOpacity : 0.92};
 }`;
+}
+
+// ---------------------------------------------------------------------------
+// Marketplace extras — inject the user's enabled font / animations / features.
+// ---------------------------------------------------------------------------
+function applyExtras() {
+  // Font (single active)
+  const font = (extras.font || []).find((f) => f.id === settings.activeFont);
+  sheet('ytmplus-font').textContent = font && font.font ? font.font.css : '';
+
+  // Animations (multiple)
+  const anims = (extras.animation || [])
+    .filter((a) => (settings.enabledAnimations || []).includes(a.id))
+    .map((a) => `/* ${a.id} */\n${a.css || ''}`)
+    .join('\n');
+  sheet('ytmplus-animations').textContent = anims;
+
+  // Features (multiple)
+  const feats = (extras.feature || [])
+    .filter((f) => (settings.enabledFeatures || []).includes(f.id))
+    .map((f) => `/* ${f.id} */\n${f.css || ''}`)
+    .join('\n');
+  sheet('ytmplus-features').textContent = feats;
 }
 
 // ---------------------------------------------------------------------------
@@ -274,6 +382,8 @@ function pollNowPlaying() {
   const np = readNowPlaying();
   if (!np) return;
   Visualizer.setPlaying(np.playing);
+  // Drives play-state-gated animations (e.g. Vinyl Spin).
+  document.body.classList.toggle('ytmplus-playing', np.playing);
   const sig = `${np.title}|${np.artist}|${np.playing}|${np.position}`;
   if (sig !== lastSig) {
     lastSig = sig;
@@ -352,6 +462,7 @@ function buildUI() {
     section([
       label('Theme'),
       h('div', { id: 'ytmplus-themes', class: 'ytmplus-themes' }),
+      h('button', { id: 'ytmplus-open-market', class: 'ytmplus-market-cta', dataset: { act: 'open-market' }, text: '✦  Browse the Marketplace' }),
       h('div', { class: 'ytmplus-row' }, [miniBtn('open-themes', 'Open themes folder'), miniBtn('reload-themes', 'Reload')])
     ]),
     section([
@@ -380,6 +491,7 @@ function buildUI() {
 
   launcher.addEventListener('click', () => panel.classList.toggle('open'));
 
+  panelEl = panel;
   wirePanel(panel);
 }
 
@@ -434,6 +546,7 @@ function wirePanel(panel) {
         themeList = await ipcRenderer.invoke('ytmplus:reload-themes');
         renderThemes(panel);
       }
+      if (act === 'open-market') openMarket();
     });
   });
 }
@@ -472,8 +585,189 @@ function renderThemes(panel) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Marketplace modal
+// ---------------------------------------------------------------------------
+const TYPE_LABEL = { theme: 'Theme', font: 'Font', animation: 'Animation', feature: 'Feature' };
+
+function isInstalled(item) { return (installed[item.type] || []).includes(item.id); }
+function isEnabled(item) {
+  if (item.type === 'font') return settings.activeFont === item.id;
+  if (item.type === 'animation') return (settings.enabledAnimations || []).includes(item.id);
+  if (item.type === 'feature') return (settings.enabledFeatures || []).includes(item.id);
+  if (item.type === 'theme') return activeTheme && activeTheme.id === item.id;
+  return false;
+}
+
+async function openMarket() {
+  let modal = document.getElementById('ytmplus-market');
+  if (!modal) modal = buildMarketShell();
+  modal.classList.add('open');
+  const grid = modal.querySelector('#ytmplus-market-grid');
+  while (grid.firstChild) grid.removeChild(grid.firstChild);
+  grid.appendChild(h('div', { class: 'ytmplus-market-loading', text: 'Loading marketplace…' }));
+  try {
+    const data = await ipcRenderer.invoke('ytmplus:marketplace-catalog');
+    marketState.items = data.items || [];
+    installed = data.installed || installed;
+  } catch (e) {
+    marketState.items = [];
+  }
+  renderMarketGrid();
+}
+
+function buildMarketShell() {
+  const tabs = ['all', 'theme', 'font', 'animation', 'feature'].map((t) =>
+    h('button', { class: 'ytmplus-market-tab' + (t === 'all' ? ' active' : ''), dataset: { tab: t },
+      text: t === 'all' ? 'All' : TYPE_LABEL[t] + 's' })
+  );
+
+  const search = h('input', { id: 'ytmplus-market-search', type: 'text', placeholder: 'Search themes, fonts, animations…' });
+
+  const modal = h('div', { id: 'ytmplus-market' }, [
+    h('div', { class: 'ytmplus-market-card-shell' }, [
+      h('div', { class: 'ytmplus-market-head' }, [
+        h('div', { class: 'ytmplus-market-title' }, [
+          h('span', { class: 'ytmplus-logo', text: '✦ Marketplace' }),
+          h('span', { class: 'ytmplus-market-sub', text: 'Themes · Fonts · Animations · Features' })
+        ]),
+        h('button', { class: 'ytmplus-x', dataset: { mact: 'close' }, text: '✕' })
+      ]),
+      h('div', { class: 'ytmplus-market-toolbar' }, [
+        h('div', { class: 'ytmplus-market-tabs' }, tabs),
+        search
+      ]),
+      h('div', { id: 'ytmplus-market-grid', class: 'ytmplus-market-grid' })
+    ])
+  ]);
+  document.body.appendChild(modal);
+
+  modal.addEventListener('click', (e) => { if (e.target === modal) modal.classList.remove('open'); });
+  modal.querySelector('[data-mact="close"]').addEventListener('click', () => modal.classList.remove('open'));
+  tabs.forEach((tb) => tb.addEventListener('click', () => {
+    marketState.filter = tb.dataset.tab;
+    modal.querySelectorAll('.ytmplus-market-tab').forEach((x) => x.classList.toggle('active', x === tb));
+    renderMarketGrid();
+  }));
+  search.addEventListener('input', () => { marketState.search = search.value.toLowerCase(); renderMarketGrid(); });
+  return modal;
+}
+
+function renderMarketGrid() {
+  const grid = document.getElementById('ytmplus-market-grid');
+  if (!grid) return;
+  while (grid.firstChild) grid.removeChild(grid.firstChild);
+  const items = marketState.items.filter((it) => {
+    if (marketState.filter !== 'all' && it.type !== marketState.filter) return false;
+    if (!marketState.search) return true;
+    const hay = `${it.name} ${it.author} ${it.description} ${(it.tags || []).join(' ')} ${it.type}`.toLowerCase();
+    return hay.includes(marketState.search);
+  });
+  if (!items.length) {
+    grid.appendChild(h('div', { class: 'ytmplus-market-loading', text: 'No matches.' }));
+    return;
+  }
+  for (const it of items) grid.appendChild(marketCard(it));
+}
+
+function marketCard(item) {
+  const card = h('div', { class: 'ytmplus-market-item' });
+  const preview = h('div', { class: 'ytmplus-market-preview' });
+  if (item.preview) preview.style.background = item.preview;
+  preview.appendChild(h('span', { class: 'ytmplus-market-type', text: TYPE_LABEL[item.type] || item.type }));
+  card.appendChild(preview);
+
+  card.appendChild(h('div', { class: 'ytmplus-market-name', text: item.name }));
+  card.appendChild(h('div', { class: 'ytmplus-market-author', text: 'by ' + (item.author || 'community') }));
+  if (item.description) card.appendChild(h('div', { class: 'ytmplus-market-desc', text: item.description }));
+
+  const actions = h('div', { class: 'ytmplus-market-actions' });
+  const inst = isInstalled(item);
+
+  if (!inst) {
+    const b = h('button', { class: 'ytmplus-market-btn primary', text: 'Install' });
+    b.addEventListener('click', () => doInstall(item, b));
+    actions.appendChild(b);
+  } else {
+    if (item.type === 'theme') {
+      const sel = h('button', { class: 'ytmplus-market-btn' + (isEnabled(item) ? ' on' : ' primary'),
+        text: isEnabled(item) ? 'Applied ✓' : 'Apply' });
+      sel.addEventListener('click', async () => {
+        await setSetting('activeTheme', item.id);
+        await applyTheme(item.id);
+        if (panelEl) renderThemes(panelEl);
+        renderMarketGrid();
+      });
+      actions.appendChild(sel);
+    } else {
+      const on = isEnabled(item);
+      const tog = h('button', { class: 'ytmplus-market-btn' + (on ? ' on' : ' primary'), text: on ? 'Enabled ✓' : 'Enable' });
+      tog.addEventListener('click', () => toggleEnable(item));
+      actions.appendChild(tog);
+    }
+    const rm = h('button', { class: 'ytmplus-market-btn ghost', title: 'Remove', text: 'Remove' });
+    rm.addEventListener('click', () => doRemove(item));
+    actions.appendChild(rm);
+  }
+  card.appendChild(actions);
+  return card;
+}
+
+async function doInstall(item, btn) {
+  if (btn) { btn.textContent = 'Installing…'; btn.disabled = true; }
+  const r = await ipcRenderer.invoke('ytmplus:marketplace-install', item);
+  installed = r.installed || installed;
+  extras = r.extras || extras;
+  themeList = r.themes || themeList;
+  // Auto-enable non-theme extras on install so the effect is immediate.
+  if (item.type === 'font') await setSetting('activeFont', item.id);
+  else if (item.type === 'animation') await setSetting('enabledAnimations', uniqAdd(settings.enabledAnimations, item.id));
+  else if (item.type === 'feature') await setSetting('enabledFeatures', uniqAdd(settings.enabledFeatures, item.id));
+  applyExtras();
+  if (panelEl) renderThemes(panelEl);
+  renderMarketGrid();
+}
+
+async function doRemove(item) {
+  // Turn it off first so nothing dangles, then delete.
+  if (item.type === 'font' && settings.activeFont === item.id) await setSetting('activeFont', null);
+  if (item.type === 'animation') await setSetting('enabledAnimations', without(settings.enabledAnimations, item.id));
+  if (item.type === 'feature') await setSetting('enabledFeatures', without(settings.enabledFeatures, item.id));
+  const r = await ipcRenderer.invoke('ytmplus:marketplace-remove', { type: item.type, id: item.id });
+  installed = r.installed || installed;
+  extras = r.extras || extras;
+  themeList = r.themes || themeList;
+  // If we removed the active theme, fall back to the first available one.
+  if (item.type === 'theme' && activeTheme && activeTheme.id === item.id) {
+    const fallback = (themeList[0] && themeList[0].id) || 'nebula';
+    await setSetting('activeTheme', fallback);
+    await applyTheme(fallback);
+  }
+  applyExtras();
+  if (panelEl) renderThemes(panelEl);
+  renderMarketGrid();
+}
+
+async function toggleEnable(item) {
+  if (item.type === 'font') {
+    await setSetting('activeFont', settings.activeFont === item.id ? null : item.id);
+  } else if (item.type === 'animation') {
+    const on = (settings.enabledAnimations || []).includes(item.id);
+    await setSetting('enabledAnimations', on ? without(settings.enabledAnimations, item.id) : uniqAdd(settings.enabledAnimations, item.id));
+  } else if (item.type === 'feature') {
+    const on = (settings.enabledFeatures || []).includes(item.id);
+    await setSetting('enabledFeatures', on ? without(settings.enabledFeatures, item.id) : uniqAdd(settings.enabledFeatures, item.id));
+  }
+  applyExtras();
+  renderMarketGrid();
+}
+
+function uniqAdd(arr, id) { return Array.from(new Set([...(arr || []), id])); }
+function without(arr, id) { return (arr || []).filter((x) => x !== id); }
+
 async function setSetting(key, value) {
-  return ipcRenderer.invoke('ytmplus:set-setting', { key, value });
+  settings = await ipcRenderer.invoke('ytmplus:set-setting', { key, value });
+  return settings;
 }
 
 // ---------------------------------------------------------------------------
@@ -491,8 +785,11 @@ async function boot() {
   settings = init.settings;
   themeList = init.themes;
   discordAvailable = init.discordAvailable;
+  installed = init.installed || installed;
+  extras = init.extras || extras;
 
   await applyTheme(settings.activeTheme || (themeList[0] && themeList[0].id));
+  applyExtras();
   buildUI();
 
   setInterval(pollNowPlaying, 1000);

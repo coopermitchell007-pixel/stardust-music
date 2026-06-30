@@ -1,0 +1,205 @@
+[
+  {
+    "id": "cosmic-bloom",
+    "type": "theme",
+    "name": "Cosmic Bloom",
+    "author": "YTM+",
+    "description": "Vibrant violet & magenta nebula clouds over deep space.",
+    "tags": ["vibrant", "purple", "nebula"],
+    "preview": "radial-gradient(120% 100% at 30% 0%, #c061ff, transparent 60%), radial-gradient(120% 100% at 90% 30%, #5a1b80, transparent 60%), #07040f",
+    "theme": {
+      "accent": "#c061ff",
+      "background": "radial-gradient(1100px 820px at 28% -6%, #3a1466 0%, rgba(58,20,102,0) 60%), radial-gradient(940px 720px at 88% 8%, #6a1f8c 0%, rgba(106,31,140,0) 58%), #07040f",
+      "glass": { "blur": 22, "opacity": 0.5 },
+      "starfield": { "enabled": true, "count": 380, "color": "#f3d6ff", "speed": 0.26, "size": 1.9, "twinkle": true, "shootingStars": true },
+      "visualizer": { "enabled": true, "color": "#c061ff", "style": "bars" },
+      "css": ""
+    }
+  },
+  {
+    "id": "neon-drive",
+    "type": "theme",
+    "name": "Neon Drive",
+    "author": "YTM+",
+    "description": "Retro-futuristic synthwave: magenta + cyan glow over indigo.",
+    "tags": ["neon", "synthwave", "dark"],
+    "preview": "linear-gradient(180deg, #12204a, #05030d 70%), radial-gradient(80% 60% at 50% 110%, #ff2bd6, transparent 60%)",
+    "theme": {
+      "accent": "#ff2bd6",
+      "background": "radial-gradient(1200px 720px at 50% 118%, #2a0a4a 0%, rgba(42,10,74,0) 60%), radial-gradient(900px 620px at 50% -10%, #13224d 0%, rgba(19,34,77,0) 55%), #05030d",
+      "glass": { "blur": 20, "opacity": 0.52 },
+      "starfield": { "enabled": true, "count": 300, "color": "#9becff", "speed": 0.3, "size": 1.6, "twinkle": true, "shootingStars": true },
+      "visualizer": { "enabled": true, "color": "#2be0ff", "style": "bars" },
+      "css": "ytmusic-nav-bar.ytmusic-app-layout { box-shadow: 0 1px 0 0 color-mix(in srgb, var(--ytmplus-accent) 40%, transparent), 0 0 22px color-mix(in srgb, var(--ytmplus-accent) 25%, transparent) !important; }"
+    }
+  },
+  {
+    "id": "deep-void",
+    "type": "theme",
+    "name": "Deep Void",
+    "author": "YTM+",
+    "description": "Sleek near-black minimalism with a faint periwinkle glow.",
+    "tags": ["minimal", "dark", "clean"],
+    "preview": "radial-gradient(100% 80% at 50% 0%, #16183a, transparent 60%), #030307",
+    "theme": {
+      "accent": "#7f8bff",
+      "background": "radial-gradient(820px 600px at 50% -10%, #11132f 0%, rgba(17,19,47,0) 60%), #030307",
+      "glass": { "blur": 16, "opacity": 0.58 },
+      "starfield": { "enabled": true, "count": 150, "color": "#cfd4ff", "speed": 0.16, "size": 1.3, "twinkle": true, "shootingStars": false },
+      "visualizer": { "enabled": true, "color": "#7f8bff", "style": "bars" },
+      "css": ""
+    }
+  },
+  {
+    "id": "emerald-nebula",
+    "type": "theme",
+    "name": "Emerald Nebula",
+    "author": "YTM+",
+    "description": "Teal-green cosmic haze with mint stars.",
+    "tags": ["green", "nebula"],
+    "preview": "radial-gradient(120% 100% at 50% 0%, #2be6a0, transparent 60%), #03070a",
+    "theme": {
+      "accent": "#2be6a0",
+      "background": "radial-gradient(1100px 820px at 50% -8%, #0a3a2c 0%, rgba(10,58,44,0) 62%), #03070a",
+      "glass": { "blur": 18, "opacity": 0.5 },
+      "starfield": { "enabled": true, "count": 320, "color": "#cffded", "speed": 0.24, "size": 1.8, "twinkle": true, "shootingStars": true },
+      "visualizer": { "enabled": true, "color": "#2be6a0", "style": "bars" },
+      "css": ""
+    }
+  },
+
+  {
+    "id": "font-orbitron",
+    "type": "font",
+    "name": "Orbitron",
+    "author": "Google Fonts",
+    "description": "Geometric sci-fi display font — full UI.",
+    "tags": ["futuristic", "display"],
+    "preview": "linear-gradient(135deg, #1a1040, #0a0720)",
+    "font": {
+      "family": "Orbitron",
+      "css": "@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&display=swap'); ytmusic-app, ytmusic-app yt-formatted-string, ytmusic-app .title, ytmusic-app span, ytmusic-app a, ytmusic-app div, ytmusic-app button, ytmusic-app input { font-family: 'Orbitron', system-ui, sans-serif !important; }"
+    }
+  },
+  {
+    "id": "font-inter",
+    "type": "font",
+    "name": "Inter",
+    "author": "Google Fonts",
+    "description": "Crisp, modern neutral sans — easy on the eyes.",
+    "tags": ["clean", "modern"],
+    "preview": "linear-gradient(135deg, #20243a, #0c0e1a)",
+    "font": {
+      "family": "Inter",
+      "css": "@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap'); ytmusic-app, ytmusic-app yt-formatted-string, ytmusic-app .title, ytmusic-app span, ytmusic-app a, ytmusic-app div, ytmusic-app button, ytmusic-app input { font-family: 'Inter', system-ui, sans-serif !important; }"
+    }
+  },
+  {
+    "id": "font-comfortaa",
+    "type": "font",
+    "name": "Comfortaa",
+    "author": "Google Fonts",
+    "description": "Soft, rounded, friendly geometric font.",
+    "tags": ["rounded", "friendly"],
+    "preview": "linear-gradient(135deg, #2a1d3a, #120a1a)",
+    "font": {
+      "family": "Comfortaa",
+      "css": "@import url('https://fonts.googleapis.com/css2?family=Comfortaa:wght@400;500;700&display=swap'); ytmusic-app, ytmusic-app yt-formatted-string, ytmusic-app .title, ytmusic-app span, ytmusic-app a, ytmusic-app div, ytmusic-app button, ytmusic-app input { font-family: 'Comfortaa', system-ui, sans-serif !important; }"
+    }
+  },
+  {
+    "id": "font-jetbrains-mono",
+    "type": "font",
+    "name": "JetBrains Mono",
+    "author": "Google Fonts",
+    "description": "Monospaced terminal vibes for the whole UI.",
+    "tags": ["mono", "techy"],
+    "preview": "linear-gradient(135deg, #0e2030, #04101a)",
+    "font": {
+      "family": "JetBrains Mono",
+      "css": "@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap'); ytmusic-app, ytmusic-app yt-formatted-string, ytmusic-app .title, ytmusic-app span, ytmusic-app a, ytmusic-app div, ytmusic-app button, ytmusic-app input { font-family: 'JetBrains Mono', ui-monospace, monospace !important; }"
+    }
+  },
+
+  {
+    "id": "anim-vinyl-spin",
+    "type": "animation",
+    "name": "Vinyl Spin",
+    "author": "YTM+",
+    "description": "The now-playing artwork becomes a spinning vinyl record.",
+    "tags": ["nowplaying", "fun"],
+    "preview": "radial-gradient(circle at 50% 50%, #111 18%, #333 19%, #111 40%, #444 41%, #111 60%)",
+    "css": "ytmusic-player-bar img.image, ytmusic-player-bar .image img, #song-image img { border-radius: 50% !important; animation: ytmplusVinyl 4s linear infinite; animation-play-state: paused; box-shadow: 0 0 0 3px rgba(0,0,0,.5), 0 0 0 5px color-mix(in srgb, var(--ytmplus-accent) 60%, transparent); } body.ytmplus-playing ytmusic-player-bar img.image, body.ytmplus-playing ytmusic-player-bar .image img, body.ytmplus-playing #song-image img { animation-play-state: running; } @keyframes ytmplusVinyl { to { transform: rotate(360deg); } }"
+  },
+  {
+    "id": "anim-gradient-headings",
+    "type": "animation",
+    "name": "Gradient Headings",
+    "author": "YTM+",
+    "description": "Section titles shimmer with an animated accent gradient.",
+    "tags": ["text", "accent"],
+    "preview": "linear-gradient(90deg, #8b5cff, #fff, #8b5cff)",
+    "css": ".ytmusic-carousel-shelf-basic-header-renderer .text, ytmusic-carousel-shelf-basic-header-renderer yt-formatted-string, ytmusic-shelf-renderer > .title, .title.ytmusic-immersive-header-renderer { background: linear-gradient(90deg, var(--ytmplus-accent), #ffffff, var(--ytmplus-accent)); background-size: 200% auto; -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; animation: ytmplusGrad 6s linear infinite; } @keyframes ytmplusGrad { to { background-position: 200% center; } }"
+  },
+  {
+    "id": "anim-card-lift",
+    "type": "animation",
+    "name": "Card Lift",
+    "author": "YTM+",
+    "description": "Cards lift and glow with your accent on hover.",
+    "tags": ["hover", "cards"],
+    "preview": "linear-gradient(180deg, #2a2350, #14122a)",
+    "css": "ytmusic-two-row-item-renderer, ytmusic-responsive-list-item-renderer { transition: transform .2s cubic-bezier(.2,.9,.3,1.3), box-shadow .2s ease; } ytmusic-two-row-item-renderer:hover { transform: translateY(-6px) scale(1.02); box-shadow: 0 14px 34px color-mix(in srgb, var(--ytmplus-accent) 45%, transparent); border-radius: 14px; }"
+  },
+  {
+    "id": "anim-pulse-play",
+    "type": "animation",
+    "name": "Pulse Play",
+    "author": "YTM+",
+    "description": "The play/pause button breathes with a soft accent halo.",
+    "tags": ["player", "glow"],
+    "preview": "radial-gradient(circle at 50% 50%, #8b5cff, transparent 60%), #0c0b22",
+    "css": "#play-pause-button { border-radius: 50% !important; animation: ytmplusPulse 2.4s ease-in-out infinite; } @keyframes ytmplusPulse { 0%,100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ytmplus-accent) 55%, transparent); } 50% { box-shadow: 0 0 0 10px transparent; } }"
+  },
+
+  {
+    "id": "feat-rounded-everything",
+    "type": "feature",
+    "name": "Rounded Everything",
+    "author": "YTM+",
+    "description": "Softly rounds all artwork and thumbnails.",
+    "tags": ["layout", "polish"],
+    "preview": "linear-gradient(135deg, #241a44, #0e0b1e)",
+    "css": "ytmusic-thumbnail-renderer, ytmusic-thumbnail-renderer img, img.ytmusic-thumbnail-renderer, yt-img-shadow img { border-radius: 16px !important; overflow: hidden; }"
+  },
+  {
+    "id": "feat-compact",
+    "type": "feature",
+    "name": "Compact Density",
+    "author": "YTM+",
+    "description": "Tightens list/row spacing to fit more on screen.",
+    "tags": ["layout", "density"],
+    "preview": "linear-gradient(180deg, #1c2238, #0a0e1a)",
+    "css": "ytmusic-responsive-list-item-renderer { padding-top: 2px !important; padding-bottom: 2px !important; } ytmusic-shelf-renderer #contents.ytmusic-shelf-renderer { gap: 2px !important; } ytmusic-carousel { --ytmusic-carousel-items-per-row: 7; }"
+  },
+  {
+    "id": "feat-hide-upgrade",
+    "type": "feature",
+    "name": "Hide Upgrade",
+    "author": "YTM+",
+    "description": "Removes the Premium 'Upgrade' entries from the UI.",
+    "tags": ["cleanup"],
+    "preview": "linear-gradient(135deg, #2a1430, #0e0a16)",
+    "css": "ytmusic-guide-entry-renderer a[title=\"Upgrade\"], ytmusic-pivot-bar-item-renderer[tab-id=\"FEmusic_offline\"], a[href*=\"musicpremium\"], ytmusic-guide-entry-renderer:has(yt-formatted-string[title=\"Upgrade\"]) { display: none !important; }"
+  },
+  {
+    "id": "feat-focus-dim",
+    "type": "feature",
+    "name": "Focus Dim",
+    "author": "YTM+",
+    "description": "Dims other cards in a row when you hover one.",
+    "tags": ["hover", "focus"],
+    "preview": "linear-gradient(180deg, #201a3a, #0c0a18)",
+    "css": "ytmusic-carousel:hover ytmusic-two-row-item-renderer:not(:hover) { opacity: .45; transition: opacity .25s ease; }"
+  }
+]
