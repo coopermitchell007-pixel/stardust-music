@@ -26,6 +26,7 @@
     "appId": "com.ytmplus.app",
     "productName": "YTM+",
     "copyright": "Copyright © 2026 Cooper Mitchell",
+    "afterPack": "build/afterPack.js",
     "directories": {
       "buildResources": "build",
       "output": "dist"
