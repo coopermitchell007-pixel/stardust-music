@@ -227,6 +227,7 @@ function registerIpc() {
       glass: t.glass,
       starfield: t.starfield,
       visualizer: t.visualizer,
+      blackhole: t.blackhole,
       css: t.css
     };
   });

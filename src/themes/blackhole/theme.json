@@ -3,8 +3,9 @@
   "name": "Event Horizon",
   "author": "Stardust",
   "accent": "#ff8c42",
-  "background": "radial-gradient(105% 88% at 50% 36%, #000 0%, #150700 13%, #341300 21%, #5e2807 27%, #94440f 31%, #cf5f18 35%, #ff8c42 39%, #c2541a 44%, #7a3209 50%, #3c1804 60%, #150800 74%, #000 100%), #000",
+  "background": "radial-gradient(1400px 1000px at 50% 42%, #1a0a02 0%, rgba(26,10,2,0) 58%), #030101",
   "glass": { "blur": 22, "opacity": 0.55 },
-  "starfield": { "enabled": true, "count": 260, "color": "#ffe6c2", "speed": 0.18, "size": 1.7, "twinkle": true, "shootingStars": false },
-  "visualizer": { "enabled": true, "color": "#ff8c42", "style": "bars" }
+  "starfield": { "enabled": true, "count": 220, "color": "#ffe6c2", "speed": 0.16, "size": 1.5, "twinkle": true, "shootingStars": false },
+  "visualizer": { "enabled": true, "color": "#ff8c42", "style": "bars" },
+  "blackhole": { "enabled": true, "color": "#ff8c42" }
 }

@@ -136,6 +136,126 @@ const Starfield = (() => {
 })();
 
 // ---------------------------------------------------------------------------
+// Black hole — a real animated event horizon for the "Event Horizon" theme:
+// a perfectly round dark core, a glowing accretion halo + photon ring, and
+// stars/objects spiralling inward and getting swallowed.
+// ---------------------------------------------------------------------------
+function hexA(hex, a) {
+  const m = /^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(hex || '#ff8c42');
+  if (!m) return `rgba(255,140,66,${a})`;
+  return `rgba(${parseInt(m[1], 16)},${parseInt(m[2], 16)},${parseInt(m[3], 16)},${a})`;
+}
+const BlackHole = (() => {
+  let canvas, ctx, raf = null, cfg = {}, enabled = false, w = 0, h = 0, t = 0, parts = [];
+  const OBJECTS = ['🎵', '🎧', '⭐', '🪐', '☄️', '💿', '✨', '🛸', '🌟'];
+
+  function ensureCanvas() {
+    if (canvas) return;
+    canvas = document.createElement('canvas');
+    canvas.id = 'stardust-blackhole';
+    document.body.appendChild(canvas);
+    ctx = canvas.getContext('2d');
+    window.addEventListener('resize', resize);
+    document.addEventListener('visibilitychange', () => (document.hidden ? stop() : (enabled && start())));
+  }
+  function resize() {
+    if (!canvas) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    w = window.innerWidth; h = window.innerHeight;
+    canvas.width = w * dpr; canvas.height = h * dpr;
+    canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  const CX = () => w * 0.5, CY = () => h * 0.42, R = () => Math.max(52, Math.min(w, h) * 0.10);
+
+  function spawn(outer) {
+    const r = R();
+    const isObj = Math.random() < 0.1;
+    return {
+      ang: Math.random() * Math.PI * 2,
+      rad: r * (outer ? 7 + Math.random() * 4 : 1.4 + Math.random() * 9),
+      spin: 0.5 + Math.random() * 0.7,
+      vin: 0.7 + Math.random() * 1.3,
+      size: isObj ? 14 + Math.random() * 12 : 1 + Math.random() * 1.8,
+      obj: isObj ? OBJECTS[Math.floor(Math.random() * OBJECTS.length)] : null
+    };
+  }
+  function seed() { parts = Array.from({ length: 190 }, () => spawn(false)); }
+
+  function configure(bhCfg) {
+    ensureCanvas();
+    enabled = !!bhCfg && bhCfg.enabled !== false;
+    cfg = bhCfg || {};
+    resize();
+    if (enabled) { seed(); canvas.style.display = 'block'; start(); }
+    else { canvas.style.display = 'none'; stop(); }
+  }
+
+  function frame() {
+    if (!enabled) return;
+    t += 0.01;
+    const cx = CX(), cy = CY(), r = R(), color = cfg.color || '#ff8c42';
+    ctx.clearRect(0, 0, w, h);
+
+    // accretion halo
+    const g = ctx.createRadialGradient(cx, cy, r * 0.7, cx, cy, r * 5);
+    g.addColorStop(0, hexA(color, 0.0));
+    g.addColorStop(0.12, hexA(color, 0.55));
+    g.addColorStop(0.32, hexA(color, 0.16));
+    g.addColorStop(1, hexA(color, 0));
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+
+    // swirling accretion arcs
+    for (let k = 0; k < 3; k++) {
+      const rr = r * (1.5 + k * 0.55);
+      ctx.beginPath();
+      ctx.arc(cx, cy, rr, t * (1.2 - k * 0.25), t * (1.2 - k * 0.25) + Math.PI * 1.4);
+      ctx.strokeStyle = hexA(color, 0.32 - k * 0.08);
+      ctx.lineWidth = r * (0.5 - k * 0.12);
+      ctx.stroke();
+    }
+
+    // particles + objects spiralling inward
+    for (const p of parts) {
+      p.ang += p.spin * 0.02 * (1 + r / Math.max(p.rad, r));
+      p.rad -= p.vin * (0.5 + (r * 1.5) / Math.max(p.rad, 1));
+      if (p.rad <= r * 0.96) Object.assign(p, spawn(true));
+      const x = cx + Math.cos(p.ang) * p.rad, y = cy + Math.sin(p.ang) * p.rad;
+      const fade = Math.min(1, (p.rad - r) / (r * 2.5));
+      if (p.obj) {
+        ctx.globalAlpha = fade;
+        ctx.font = `${p.size}px sans-serif`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(p.obj, x, y);
+        ctx.globalAlpha = 1;
+      } else {
+        // streak toward the hole for a "being pulled in" feel
+        const tx = cx + Math.cos(p.ang - p.spin * 0.06) * (p.rad + p.vin * 6);
+        const ty = cy + Math.sin(p.ang - p.spin * 0.06) * (p.rad + p.vin * 6);
+        ctx.strokeStyle = hexA(color, 0.35 + 0.5 * fade);
+        ctx.lineWidth = p.size;
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(tx, ty); ctx.stroke();
+      }
+    }
+
+    // event horizon — perfectly round black core
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = '#000'; ctx.fill();
+    // photon ring
+    ctx.beginPath(); ctx.arc(cx, cy, r * 1.04, 0, Math.PI * 2);
+    ctx.lineWidth = 2.5; ctx.strokeStyle = hexA(color, 0.95);
+    ctx.shadowBlur = 34; ctx.shadowColor = color; ctx.stroke(); ctx.shadowBlur = 0;
+
+    raf = requestAnimationFrame(frame);
+  }
+  function start() { if (enabled && !raf) raf = requestAnimationFrame(frame); }
+  function stop() { if (raf) { cancelAnimationFrame(raf); raf = null; } if (ctx) ctx.clearRect(0, 0, w, h); }
+
+  return { configure };
+})();
+
+// ---------------------------------------------------------------------------
 // Visualizer — real spectrum bars driven by the actual audio.
 // YTM plays via MediaSource (blob: URLs are same-origin), so we *can* tap the
 // page's media element with a Web Audio AnalyserNode: route
@@ -360,6 +480,7 @@ async function applyTheme(id) {
   sheet('stardust-theme').textContent = theme.css || '';
   Starfield.configure(theme.starfield);
   Visualizer.configure(theme.visualizer);
+  BlackHole.configure(theme.blackhole);
 }
 
 function applyVars() {
@@ -515,61 +636,119 @@ const AmbientGlow = (() => {
   return { enable, disable, onTrack };
 })();
 
-// --- Synced lyrics (lrclib.net via main process) ---------------------------
+// --- Synced lyrics — integrated into YTM's own Lyrics tab ------------------
+// Un-greys the Lyrics tab (so it works on videos too) and renders time-synced
+// lyrics from LRCLIB directly inside the player page's lyrics tab content,
+// styled to look native rather than a bulky floating panel.
 const Lyrics = (() => {
-  let panel = null, body = null, active = false, key = '', synced = [], tick = null, lastIdx = -1;
-  function enable() { active = true; build(); refresh(readNowPlaying()); tick = setInterval(highlight, 300); }
-  function disable() { active = false; if (tick) { clearInterval(tick); tick = null; } if (panel) { panel.remove(); panel = null; } synced = []; key = ''; }
-  function build() {
-    if (panel) return;
-    const close = h('button', { class: 'stardust-x', text: '✕' }); close.addEventListener('click', () => Lyrics.disable());
-    body = h('div', { class: 'stardust-lyrics-body' });
-    panel = h('div', { id: 'stardust-lyrics' }, [
-      h('div', { class: 'stardust-lyrics-head' }, [h('span', { class: 'stardust-logo', text: '✦ Lyrics' }), close]),
-      body
-    ]);
-    document.body.appendChild(panel);
+  let active = false, synced = [], plain = null, key = '', poll = null;
+  let box = null, body = null, lastIdx = -1, attempts = 0, np = null;
+
+  function enable() {
+    active = true;
+    np = readNowPlaying(); fetchFor(np);
+    // A light 300ms poll keeps the tab un-greyed, injects when the Lyrics tab
+    // is open, and advances the highlight — no heavy whole-document observer.
+    poll = setInterval(() => { sync(); highlight(); }, 300);
+    sync();
   }
-  function status(t) { while (body.firstChild) body.removeChild(body.firstChild); body.appendChild(h('div', { class: 'stardust-lyrics-status', text: t })); }
+  function disable() {
+    active = false;
+    if (poll) { clearInterval(poll); poll = null; }
+    detach(); synced = []; plain = null; key = '';
+  }
+
+  const lyricsTab = () => [...document.querySelectorAll('ytmusic-player-page tp-yt-paper-tab')]
+    .find((t) => /lyric/i.test(t.textContent || ''));
+  const tabHost = () => document.querySelector('ytmusic-player-page #tab-renderer');
+  const nativeLyrics = () => document.querySelector('ytmusic-player-page ytmusic-description-shelf-renderer');
+  const tabSelected = () => { const t = lyricsTab(); return !!t && (t.getAttribute('aria-selected') === 'true' || t.hasAttribute('selected')); };
+
+  // Keep the Lyrics tab clickable even when YTM disables it (videos, etc.).
+  function ungray() {
+    const t = lyricsTab(); if (!t) return;
+    if (t.hasAttribute('disabled') || t.getAttribute('aria-disabled') === 'true') {
+      t.removeAttribute('disabled'); t.setAttribute('aria-disabled', 'false');
+      t.classList.remove('disabled'); t.style.pointerEvents = 'auto'; t.style.opacity = '';
+    }
+  }
+
+  function ensureBox() {
+    if (!box) { body = h('div', { class: 'stardust-lyric-lines' }); box = h('div', { id: 'stardust-lyrics' }, [body]); }
+    return box;
+  }
+  function attach() {
+    const host = tabHost(); if (!host) return;
+    ensureBox();
+    if (box.parentElement !== host) host.appendChild(box);
+    host.querySelectorAll('ytmusic-message-renderer').forEach((m) => { m.style.display = 'none'; });
+    if (!body.firstChild) render();
+  }
+  function detach() {
+    if (box && box.parentElement) {
+      box.parentElement.querySelectorAll('ytmusic-message-renderer').forEach((m) => { m.style.display = ''; });
+      box.remove();
+    }
+  }
+
+  // Each tick: keep tab clickable, and show our lyrics only when the Lyrics tab
+  // is active and YTM has no native lyrics of its own.
+  function sync() {
+    if (!active) return;
+    ungray();
+    if (tabSelected() && tabHost() && !nativeLyrics()) attach(); else detach();
+  }
+
   function parseLRC(text) {
     const out = [];
     for (const line of (text || '').split('\n')) {
       const m = line.match(/\[(\d+):(\d+(?:\.\d+)?)\](.*)/);
-      if (m) { const t = parseInt(m[1]) * 60 + parseFloat(m[2]); const s = m[3].trim(); out.push({ t, s }); }
+      if (m) out.push({ t: parseInt(m[1]) * 60 + parseFloat(m[2]), s: m[3].trim() });
     }
     return out;
   }
-  async function refresh(np) {
-    if (!active || !np || !np.title) return;
-    const k = np.title + '|' + np.artist; if (k === key) return; key = k;
-    status('Searching lyrics…');
+  function render(status) {
+    if (!body) return;
+    while (body.firstChild) body.removeChild(body.firstChild);
+    if (status) { body.appendChild(h('div', { class: 'stardust-lyric-status', text: status })); return; }
+    if (synced.length) for (const l of synced) body.appendChild(h('div', { class: 'stardust-lyric-line', text: l.s || '♪' }));
+    else if (plain) for (const l of plain.split('\n')) body.appendChild(h('div', { class: 'stardust-lyric-line plain', text: l || ' ' }));
+    else body.appendChild(h('div', { class: 'stardust-lyric-status', text: 'No lyrics found for this track' }));
+    lastIdx = -1;
+  }
+
+  function fetchFor(track) {
+    if (!track || !track.title) return;
+    const k = track.title + '|' + track.artist; if (k === key) return;
+    key = k; np = track; synced = []; plain = null; attempts = 0; lastIdx = -1;
+    render('Searching lyrics…'); doFetch();
+  }
+  async function doFetch() {
+    attempts++;
     let res = null;
     try { res = await ipcRenderer.invoke('stardust:lyrics', { artist: np.artist, title: np.title, album: np.album, duration: np.duration }); } catch {}
     if (!active) return;
-    synced = []; lastIdx = -1;
-    while (body.firstChild) body.removeChild(body.firstChild);
-    if (res && res.syncedLyrics) {
-      synced = parseLRC(res.syncedLyrics);
-      for (const ln of synced) body.appendChild(h('div', { class: 'stardust-lyric-line', text: ln.s || '♪' }));
-    } else if (res && res.plainLyrics) {
-      for (const ln of res.plainLyrics.split('\n')) body.appendChild(h('div', { class: 'stardust-lyric-line plain', text: ln || ' ' }));
-    } else {
-      status('No lyrics found for this track');
-    }
+    if (res && res.syncedLyrics) { synced = parseLRC(res.syncedLyrics); plain = null; }
+    else if (res && res.plainLyrics) { synced = []; plain = res.plainLyrics; }
+    else if (attempts < 3) { setTimeout(() => { if (active) doFetch(); }, 1800); return; } // duration may not be ready yet
+    else { synced = []; plain = null; }
+    render();
   }
+
   function highlight() {
-    if (!active || !synced.length) return;
+    if (!active || !synced.length || !box || !box.isConnected || !body) return;
     const v = q('video'); if (!v) return;
     const t = v.currentTime || 0;
     let idx = -1;
-    for (let i = 0; i < synced.length; i++) { if (synced[i].t <= t + 0.15) idx = i; else break; }
+    for (let i = 0; i < synced.length; i++) { if (synced[i].t <= t + 0.2) idx = i; else break; }
     if (idx === lastIdx) return;
     lastIdx = idx;
     const kids = body.children;
     for (let i = 0; i < kids.length; i++) kids[i].classList.toggle('active', i === idx);
     if (idx >= 0 && kids[idx]) kids[idx].scrollIntoView({ block: 'center', behavior: 'smooth' });
   }
-  function onTrack(np) { if (active) refresh(np); }
+
+  function onTrack(track) { if (active) fetchFor(track); }
   return { enable, disable, onTrack };
 })();
 

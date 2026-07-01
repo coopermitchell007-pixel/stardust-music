@@ -12,7 +12,8 @@ hotkeys, and a mini player.
 
 - **Community Marketplace** — browse and one-click-install **themes, audio effects, fonts, animations, and features** from an in-app store (categories, search, live preview). Ships with a bundled catalog and can pull a community catalog from GitHub.
 - **Audio effects** — real Web Audio DSP on the live stream: Bass/Treble/Volume Boost, 8D Audio, Nightcore, Slowed + Reverb.
-- **Synced lyrics** — time-synced, auto-scrolling lyrics fetched from LRCLIB.
+- **Synced lyrics** — time-synced, auto-scrolling lyrics from LRCLIB, rendered inside YTM's own **Lyrics tab** (and it un-greys that tab so it works on videos too).
+- **Animated Event Horizon** — the black-hole theme is a live canvas: a round event horizon, glowing accretion disk, and objects spiralling in and getting swallowed.
 - **Smart features** — sleep timer, scroll-to-top, ambient glow (backdrop tinted by album-art color), and more.
 - **Ad blocker** — network-level blocking of ad/tracker endpoints + in-page ad skipper. On by default.
 - **Built-in space themes** — Nebula Drift, Spiral Galaxy, Event Horizon (black hole), Aurora Veil.

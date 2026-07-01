@@ -55,6 +55,13 @@ body::after {
   pointer-events: none;
 }
 
+#stardust-blackhole {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
 #stardust-visualizer {
   position: fixed;
   left: 0;
@@ -623,29 +630,14 @@ input[type="color"]#stardust-accent {
 }
 #stardust-scrolltop:hover { transform: translateY(-3px) scale(1.05); }
 
-#stardust-lyrics {
-  position: fixed; left: 24px; top: 80px; bottom: 96px; width: 370px; z-index: 2147483630;
-  display: flex; flex-direction: column;
-  border-radius: 20px; overflow: hidden;
-  border: 1px solid rgba(255,255,255,0.14);
-  background: linear-gradient(180deg, rgba(20,16,46,0.94), rgba(9,10,22,0.95));
-  backdrop-filter: blur(24px) saturate(150%);
-  box-shadow: 0 24px 70px rgba(0,0,0,0.6), 0 0 0 1px color-mix(in srgb, var(--stardust-accent) 20%, transparent);
-  color: #ece9ff; font-family: 'Roboto', system-ui, sans-serif;
-}
-.stardust-lyrics-head {
-  display: flex; align-items: center; justify-content: space-between; padding: 14px 16px;
-  border-bottom: 1px solid rgba(255,255,255,0.08);
-  background: linear-gradient(120deg, color-mix(in srgb, var(--stardust-accent) 40%, transparent), transparent 55%);
-  background-size: 220% 100%; animation: stardust-aurora 9s ease infinite;
-}
-.stardust-lyrics-body { flex: 1; overflow-y: auto; padding: 18px 20px 40px; scroll-behavior: smooth; }
-.stardust-lyrics-body::-webkit-scrollbar { width: 8px; }
-.stardust-lyrics-body::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--stardust-accent) 45%, transparent); border-radius: 8px; }
+/* Synced lyrics rendered inside YTM's own Lyrics tab — flat & native, not a card. */
+#stardust-lyrics { width: 100%; box-sizing: border-box; padding: 8px 32px 56px; font-family: inherit; }
+.stardust-lyric-lines { display: flex; flex-direction: column; gap: 2px; }
 .stardust-lyric-line {
-  font-size: 15px; line-height: 1.5; padding: 5px 0; color: #8b86b3; font-weight: 600;
-  transition: color 0.2s ease, transform 0.2s ease; transform-origin: left center;
+  font-size: 2rem; line-height: 1.34; font-weight: 700; padding: 7px 0;
+  color: rgba(255,255,255,0.42);
+  transition: color 0.25s ease, transform 0.25s ease; transform-origin: left center;
 }
-.stardust-lyric-line.plain { color: #c4bfe4; font-weight: 500; font-size: 14px; }
-.stardust-lyric-line.active { color: #fff; transform: scale(1.06); text-shadow: 0 0 16px color-mix(in srgb, var(--stardust-accent) 70%, transparent); }
-.stardust-lyrics-status { color: #8b86b3; font-size: 13px; text-align: center; padding: 30px 10px; }
+.stardust-lyric-line.plain { font-size: 1.15rem; font-weight: 500; color: rgba(255,255,255,0.72); }
+.stardust-lyric-line.active { color: #fff; transform: scale(1.02); text-shadow: 0 0 22px color-mix(in srgb, var(--stardust-accent) 55%, transparent); }
+.stardust-lyric-status { color: rgba(255,255,255,0.5); font-size: 1rem; padding: 24px 0; }
