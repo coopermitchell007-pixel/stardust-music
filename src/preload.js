@@ -631,7 +631,31 @@ const Visualizer = (() => {
     return veSmooth;
   }
 
-  return { configure, setPlaying, resumeAudio, fx, getBars, setReactiveColor, vocalEnergy };
+  // Onset detector: positive spectral flux in the vocal band (sum of frame-to-
+  // frame energy INCREASES) marks a syllable/word attack. Returns the onset
+  // strength (0 when none), with a refractory gap so one attack fires once.
+  let fluxPrev = null, fluxAvg = 0, lastOnsetAt = 0;
+  function vocalOnset() {
+    if (!analyser || !freq || !useReal) return 0;
+    analyser.getByteFrequencyData(freq);
+    const bins = analyser.frequencyBinCount;
+    const sr = audioCtx ? audioCtx.sampleRate : 44100;
+    const lo = Math.max(1, Math.floor(180 / (sr / 2) * bins));
+    const hi = Math.min(bins, Math.floor(4000 / (sr / 2) * bins));
+    if (!fluxPrev || fluxPrev.length !== bins) fluxPrev = new Float32Array(bins);
+    let flux = 0;
+    for (let i = lo; i < hi; i++) { const d = freq[i] - fluxPrev[i]; if (d > 0) flux += d; fluxPrev[i] = freq[i]; }
+    flux /= ((hi - lo) * 255) || 1;
+    fluxAvg += (flux - fluxAvg) * 0.12;
+    const now = performance.now();
+    if (flux > fluxAvg * 1.5 && flux > 0.03 && now - lastOnsetAt > 110) {
+      lastOnsetAt = now;
+      return Math.min(1, flux * 6);
+    }
+    return 0;
+  }
+
+  return { configure, setPlaying, resumeAudio, fx, getBars, setReactiveColor, vocalEnergy, vocalOnset };
 })();
 
 // A user gesture is required before an AudioContext can produce sound/data.
@@ -1083,6 +1107,7 @@ const Lyrics = (() => {
   let curEl = null, curSpans = null, curTiming = null;
   let curMode = 'est', curWeights = null, curTotalW = 1, curSungDur = 1, prog = 0, lastCT = 0;
   let synthMode = false, lineSyl = null, cumSyl = null, totalSyl = 1, progAll = 0, lastCTs = 0;
+  let curSyl = null, curSylTotal = 1, sylPtr = 0;
 
   function enable() {
     active = true;
@@ -1316,14 +1341,13 @@ const Lyrics = (() => {
         if (real) {
           curTiming = computeWordTiming(line, lineEnd);
         } else {
-          curWeights = (line.words || []).map((w) => {
-            const syl = ((w.text || '').toLowerCase().match(/[aeiouy]+/g) || []).length || 1;
-            return Math.max(0.26, 0.16 + syl * 0.34);
-          });
+          curSyl = (line.words || []).map((w) => ((w.text || '').toLowerCase().match(/[aeiouy]+/g) || []).length || 1);
+          curSylTotal = curSyl.reduce((a, b) => a + b, 0) || 1;
+          curWeights = curSyl.map((syl) => Math.max(0.26, 0.16 + syl * 0.34));
           curTotalW = curWeights.reduce((a, b) => a + b, 0) || 1;
           const win = Math.max(0.5, lineEnd - line.t);
           curSungDur = Math.max(0.5, Math.min(win, curTotalW * 1.5)); // finish within, hold after
-          prog = 0; lastCT = t;
+          prog = 0; lastCT = t; sylPtr = 0;
         }
         curEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
       }
@@ -1340,29 +1364,27 @@ const Lyrics = (() => {
       }
       return;
     }
-    if (!curWeights) return;
+    if (!curSyl) return;
 
-    // Estimated timing, but ADVANCED BY THE ACTUAL VOCAL ENERGY: words move
-    // faster when the singing is loud, slower when quiet — anchored to clock
-    // time so it can't drift. Every word gets a continuous fill (no popping).
+    // Estimated timing, ONSET-STEPPED: advance the "sung syllable" pointer on
+    // real vocal attacks (spectral-flux onsets) so words snap to the actual
+    // singing rhythm — pulled gently toward the clock estimate and clamped near
+    // it so it can't drift. Continuous per-word fill (no popping).
     let dt = t - lastCT; lastCT = t;
-    if (dt < 0 || dt > 1) dt = 0; // seek/pause guard
-    const e = Visualizer.vocalEnergy();
+    if (dt < 0 || dt > 1) { dt = 0; sylPtr = 0; } // seek/pause → resync
     const timeProg = Math.min(1, Math.max(0, (t - line.t) / curSungDur));
-    if (e >= 0) {
-      prog += (dt / curSungDur) * (0.45 + 1.3 * e);
-      prog = Math.max(prog, timeProg - 0.18);   // stay anchored to the clock
-      prog = Math.min(prog, timeProg + 0.30);
-    } else {
-      prog = timeProg; // no audio reading → pure time
-    }
-    prog = Math.min(1, Math.max(0, prog));
-    const target = prog * curTotalW;
+    const timeTarget = timeProg * curSylTotal;         // syllables the clock expects by now
+    const onset = Visualizer.vocalOnset();             // >0 on a vocal attack
+    if (onset > 0) sylPtr += 0.6 + 0.8 * onset;        // step forward ~a syllable per attack
+    sylPtr += (timeTarget - sylPtr) * 0.03;            // gentle pull toward the estimate
+    sylPtr = Math.max(sylPtr, timeTarget - 2.2);       // clamp: never lag/lead the clock far
+    sylPtr = Math.min(sylPtr, timeTarget + 2.2);
+    sylPtr = Math.min(curSylTotal, Math.max(0, sylPtr));
     let acc = 0;
     for (let i = 0; i < curSpans.length; i++) {
-      const wt = curWeights[i] || 0.3;
-      setWordFill(curSpans[i], Math.min(1, Math.max(0, (target - acc) / wt)));
-      acc += wt;
+      const s = curSyl[i] || 1;
+      setWordFill(curSpans[i], Math.min(1, Math.max(0, (sylPtr - acc) / s)));
+      acc += s;
     }
   }
 
