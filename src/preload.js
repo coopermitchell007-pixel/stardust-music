@@ -890,28 +890,25 @@ const ReactiveTheme = (() => {
 
 // --- Crossfade: fade transitions between tracks (single-element approximation)
 const Crossfade = (() => {
-  let timer = null, key = '', faded = false;
-  const OUT = 4, IN = 2;
-  function enable() { if (timer) return; key = ''; faded = false; timer = setInterval(tick, 400); }
-  function disable() { if (timer) { clearInterval(timer); timer = null; } Visualizer.fx.fade(1, 0.3); }
+  let timer = null, active = false, faded = false;
+  const OUT = 3, IN = 1.4;
+  function enable() { if (active) return; active = true; faded = false; Visualizer.fx.fade(1, 0.2); timer = setInterval(tick, 300); }
+  function disable() { active = false; if (timer) { clearInterval(timer); timer = null; } Visualizer.fx.fade(1, 0.3); }
+  // Fade IN the moment a real track change is detected (driven by pollNowPlaying,
+  // so there's no silent gap while a poll catches up). Guarded by `active`.
+  function onTrack() { if (!active) return; faded = false; Visualizer.fx.fade(0.0001, 0.01); Visualizer.fx.fade(1, IN); }
+  // Fade OUT over the last few seconds of the current track.
   function tick() {
+    if (!active) return;
     const v = q('video'); if (!v) return;
     const np = readNowPlaying();
-    // Ignore ads/interstitials entirely — an ad blip must NOT read as a track
-    // change (that's what made crossfade misfire). Keep the audible level as-is.
-    if (!np || np.isAd || !np.isTrack) return;
-    const k = np.title + '|' + np.artist;
-    if (k !== key) {                   // genuine new track → fade in from silence
-      key = k; faded = false;
-      Visualizer.fx.fade(0.0001, 0.01); Visualizer.fx.fade(1, IN);
-      return;
-    }
+    if (!np || np.isAd || !np.isTrack) return;   // never fade on ad interstitials
     if (isFinite(v.duration) && v.duration > 0) {
       const left = v.duration - v.currentTime;
       if (!faded && left > 0 && left <= OUT) { faded = true; Visualizer.fx.fade(0.0001, left); }
     }
   }
-  return { enable, disable };
+  return { enable, disable, onTrack };
 })();
 
 // --- Smart playlist tools: a floating bar of queue/playlist shortcuts -------
@@ -1211,6 +1208,7 @@ function pollNowPlaying() {
     lastTrack = track;
     AmbientGlow.onTrack(np);
     ReactiveTheme.onTrack(np);
+    Crossfade.onTrack(np);
     Lyrics.onTrack(np);
   }
 
@@ -1395,13 +1393,19 @@ function dismissUpsells() {
 }
 
 // Watch the player for the AD state flipping on, so we react immediately.
+// Throttled + scoped to the player's own state attribute — NOT document-wide
+// class changes (YTM mutates those constantly, which caused UI stutter).
+let adTick = 0;
+function scheduleSkip() {
+  const now = Date.now();
+  if (now - adTick < 80) return;
+  adTick = now; skipAds();
+}
 function watchAds() {
   try {
-    const obs = new MutationObserver(() => skipAds());
-    obs.observe(document.documentElement, {
-      subtree: true, attributes: true,
-      attributeFilter: ['player-ui-state_', 'class']
-    });
+    const target = document.querySelector('ytmusic-player') || document.querySelector('ytmusic-app') || document.documentElement;
+    const obs = new MutationObserver(scheduleSkip);
+    obs.observe(target, { subtree: true, attributes: true, attributeFilter: ['player-ui-state_'] });
   } catch {}
   hookVideoForAds();
   setInterval(hookVideoForAds, 2000); // the <video> can be recreated
