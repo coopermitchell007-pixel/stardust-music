@@ -1367,9 +1367,12 @@ const Lyrics = (() => {
       if (nowSame) {
         if (res.syncedLyrics) applySynced(res.syncedLyrics);
         else { synced = []; plain = res.plainLyrics; mode = 'ours'; }
+        // We paused near the end to stop autoplay — restart from 0 and PLAY so
+        // the karaoke actually runs (otherwise the words just sit there).
+        try { const vv = q('video'); if (vv) { vv.currentTime = 0; if (vv.paused) doCommand('playpause'); } } catch {}
         render(); sync();
       }
-      toast(nowSame ? '✓ Lyrics transcribed' : '✓ Transcribed "' + (trackTitle || 'song') + '" — replay it to see the lyrics');
+      toast(nowSame ? '✓ Lyrics transcribed — playing' : '✓ Transcribed "' + (trackTitle || 'song') + '" — replay it to see the lyrics');
     } else {
       const e = res && res.error;
       const msg = (e === 'no-key') ? 'Add a free Groq API key in the Stardust panel to transcribe'
