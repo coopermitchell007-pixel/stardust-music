@@ -27,7 +27,8 @@ const DEFAULTS = {
   // Marketplace extras
   activeFont: null,          // installed font id, or null for YTM default
   enabledAnimations: [],     // installed animation ids that are on
-  enabledFeatures: []        // installed feature ids that are on
+  enabledFeatures: [],       // installed feature ids that are on
+  enabledAudio: []           // installed audio-effect ids that are on
 };
 
 let cache = null;

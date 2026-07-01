@@ -10,7 +10,11 @@ hotkeys, and a mini player.
 
 ## Features
 
-- **Community Marketplace** — browse and one-click-install **themes, fonts, animations, and features** from an in-app store (categories, search, live preview). Ships with a bundled catalog and can pull a community catalog from GitHub.
+- **Community Marketplace** — browse and one-click-install **themes, audio effects, fonts, animations, and features** from an in-app store (categories, search, live preview). Ships with a bundled catalog and can pull a community catalog from GitHub.
+- **Audio effects** — real Web Audio DSP on the live stream: Bass/Treble/Volume Boost, 8D Audio, Nightcore, Slowed + Reverb.
+- **Synced lyrics** — time-synced, auto-scrolling lyrics fetched from LRCLIB.
+- **Smart features** — sleep timer, scroll-to-top, ambient glow (backdrop tinted by album-art color), and more.
+- **Ad blocker** — network-level blocking of ad/tracker endpoints + in-page ad skipper. On by default.
 - **Built-in space themes** — Nebula Drift, Spiral Galaxy, Event Horizon (black hole), Aurora Veil.
 - **Full theme SDK** — drop your own theme folders into the themes directory; they load live, no restart, exactly like Spicetify.
 - **Animated starfield** — parallax stars, twinkle, and shooting stars, all configurable per theme.
@@ -86,9 +90,14 @@ your user data folder and apply live:
 | Type | What it does | Where it goes |
 |------|--------------|---------------|
 | **Theme** | Full look (background, accent, starfield, visualizer) | `Themes/<id>/` — also appears in the Theme list |
+| **Audio** | Real Web Audio effects (EQ, 8D, nightcore, slowed+reverb) | `Marketplace/audio/` |
 | **Font** | Swaps the UI font (one active at a time) | `Marketplace/fonts/` |
 | **Animation** | Toggleable motion packs | `Marketplace/animations/` |
-| **Feature** | Layout/cleanup tweaks | `Marketplace/features/` |
+| **Feature** | Layout/cleanup tweaks + smart features (lyrics, sleep timer, …) | `Marketplace/features/` |
+
+Audio effects and smart features run built-in behaviours keyed by item id — the
+catalog never ships executable code, so installing from the community catalog
+stays safe.
 
 The catalog is `src/marketplace/catalog.json` (bundled, works offline). A remote
 catalog at the same path on the `main` branch overrides/extends it by `id`, so

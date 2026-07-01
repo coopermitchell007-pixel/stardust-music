@@ -13,8 +13,8 @@ let settings = null;
 let themeList = [];
 let activeTheme = null; // full theme object incl. starfield/visualizer config
 let discordAvailable = false;
-let installed = { theme: [], font: [], animation: [], feature: [] };
-let extras = { font: [], animation: [], feature: [] }; // payloads of installed extras
+let installed = { theme: [], font: [], animation: [], feature: [], audio: [] };
+let extras = { font: [], animation: [], feature: [], audio: [] }; // payloads of installed extras
 let panelEl = null;
 let marketState = { items: [], filter: 'all', search: '' };
 
@@ -151,10 +151,23 @@ const Visualizer = (() => {
   let playing = false;
   let phase = 0;
 
-  // Web Audio
+  // Web Audio + effects chain:
+  //   source -> bass -> treble -> volume -> panner -> analyser -> destination
+  //                                          panner -> reverb -> wet -> analyser
   let audioCtx = null, analyser = null, freq = null, attachedEl = null;
+  let bass = null, treble = null, volume = null, panner = null, reverb = null, wet = null, lfo = null;
   let useReal = false;       // true once we get non-zero spectrum data
   let zeroFrames = 0;        // consecutive silent frames while playing -> tainted
+
+  function makeImpulse(seconds, decay) {
+    const rate = audioCtx.sampleRate, len = rate * seconds;
+    const buf = audioCtx.createBuffer(2, len, rate);
+    for (let c = 0; c < 2; c++) {
+      const ch = buf.getChannelData(c);
+      for (let i = 0; i < len; i++) ch[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
+    }
+    return buf;
+  }
 
   function ensureCanvas() {
     if (canvas) return;
@@ -195,9 +208,21 @@ const Visualizer = (() => {
         analyser.fftSize = 1024;
         analyser.smoothingTimeConstant = 0.8;
         freq = new Uint8Array(analyser.frequencyBinCount);
+        bass = audioCtx.createBiquadFilter(); bass.type = 'lowshelf'; bass.frequency.value = 220; bass.gain.value = 0;
+        treble = audioCtx.createBiquadFilter(); treble.type = 'highshelf'; treble.frequency.value = 3200; treble.gain.value = 0;
+        volume = audioCtx.createGain(); volume.gain.value = 1;
+        panner = audioCtx.createStereoPanner ? audioCtx.createStereoPanner() : null;
+        reverb = audioCtx.createConvolver(); reverb.buffer = makeImpulse(2.4, 3.0);
+        wet = audioCtx.createGain(); wet.gain.value = 0;
       }
       const src = audioCtx.createMediaElementSource(el);
-      src.connect(analyser);
+      // dry chain
+      src.connect(bass); bass.connect(treble); treble.connect(volume);
+      const tail = panner || volume;
+      if (panner) volume.connect(panner);
+      tail.connect(analyser);
+      // wet (reverb) send in parallel
+      tail.connect(reverb); reverb.connect(wet); wet.connect(analyser);
       analyser.connect(audioCtx.destination); // keep audio audible
       attachedEl = el;
       zeroFrames = 0;
@@ -297,7 +322,28 @@ const Visualizer = (() => {
   function start() { if (enabled && !raf) raf = requestAnimationFrame(frame); }
   function stop() { if (raf) { cancelAnimationFrame(raf); raf = null; } if (ctx) ctx.clearRect(0, 0, w, h); }
 
-  return { configure, setPlaying, resumeAudio };
+  // --- audio effects (used by the Audio marketplace category) --------------
+  function ensureAudio() { attachAudio(); resumeAudio(); }
+  const fx = {
+    bass: (on) => { ensureAudio(); if (bass) bass.gain.value = on ? 11 : 0; },
+    treble: (on) => { ensureAudio(); if (treble) treble.gain.value = on ? 8 : 0; },
+    volume: (on) => { ensureAudio(); if (volume) volume.gain.value = on ? 1.85 : 1; },
+    spatial: (on) => {
+      ensureAudio();
+      if (!panner) return;
+      if (on && !lfo) {
+        lfo = audioCtx.createOscillator(); const d = audioCtx.createGain();
+        lfo.frequency.value = 0.14; d.gain.value = 1;
+        lfo.connect(d); d.connect(panner.pan); lfo.start();
+      } else if (!on && lfo) {
+        try { lfo.stop(); lfo.disconnect(); } catch {}
+        lfo = null; panner.pan.value = 0;
+      }
+    },
+    reverb: (on) => { ensureAudio(); if (wet) wet.gain.value = on ? 0.32 : 0; }
+  };
+
+  return { configure, setPlaying, resumeAudio, fx };
 })();
 
 // A user gesture is required before an AudioContext can produce sound/data.
@@ -344,13 +390,188 @@ function applyExtras() {
     .join('\n');
   sheet('stardust-animations').textContent = anims;
 
-  // Features (multiple)
+  // Features (multiple) — CSS side
   const feats = (extras.feature || [])
     .filter((f) => (settings.enabledFeatures || []).includes(f.id))
     .map((f) => `/* ${f.id} */\n${f.css || ''}`)
     .join('\n');
   sheet('stardust-features').textContent = feats;
+
+  // Behaviours (audio effects + smart features) — JS side
+  const desired = new Set([
+    ...(settings.enabledFeatures || []),
+    ...(settings.enabledAudio || [])
+  ].filter((id) => BEHAVIORS[id]));
+  reconcileBehaviors(desired);
 }
+
+// ---------------------------------------------------------------------------
+// Behaviours — built-in JS effects toggled by marketplace items (audio effects
+// and "smart" features). Keyed by item id so the catalog never ships raw code.
+// ---------------------------------------------------------------------------
+const activeBehaviors = new Set();
+function reconcileBehaviors(desired) {
+  for (const id of desired) if (!activeBehaviors.has(id)) { try { BEHAVIORS[id].on(); } catch (e) { console.error('[Stardust]', id, e); } activeBehaviors.add(id); }
+  for (const id of [...activeBehaviors]) if (!desired.has(id)) { try { BEHAVIORS[id].off(); } catch {} activeBehaviors.delete(id); }
+}
+
+// playback-rate effects (nightcore / slowed) — enforced on every poll since
+// YTM resets the rate on track changes.
+let rateMode = null;
+function enforceRate() {
+  const v = q('video'); if (!v) return;
+  const target = rateMode === 'nightcore' ? 1.2 : rateMode === 'slowed' ? 0.85 : 1;
+  try { v.preservesPitch = v.mozPreservesPitch = v.webkitPreservesPitch = (target === 1); } catch {}
+  if (Math.abs((v.playbackRate || 1) - target) > 0.001) { try { v.playbackRate = target; } catch {} }
+}
+
+const BEHAVIORS = {
+  'audio-bass-boost':   { on: () => Visualizer.fx.bass(true),    off: () => Visualizer.fx.bass(false) },
+  'audio-treble-boost': { on: () => Visualizer.fx.treble(true),  off: () => Visualizer.fx.treble(false) },
+  'audio-volume-boost': { on: () => Visualizer.fx.volume(true),  off: () => Visualizer.fx.volume(false) },
+  'audio-8d':           { on: () => Visualizer.fx.spatial(true), off: () => Visualizer.fx.spatial(false) },
+  'audio-nightcore':    { on: () => { rateMode = 'nightcore'; enforceRate(); }, off: () => { if (rateMode === 'nightcore') { rateMode = null; enforceRate(); } } },
+  'audio-slowed':       { on: () => { rateMode = 'slowed'; Visualizer.fx.reverb(true); enforceRate(); }, off: () => { if (rateMode === 'slowed') rateMode = null; Visualizer.fx.reverb(false); enforceRate(); } },
+  'feat-sleep-timer':   { on: () => SleepTimer.show(),  off: () => SleepTimer.hide() },
+  'feat-scroll-top':    { on: () => ScrollTop.show(),   off: () => ScrollTop.hide() },
+  'feat-ambient-glow':  { on: () => AmbientGlow.enable(), off: () => AmbientGlow.disable() },
+  'feat-lyrics':        { on: () => Lyrics.enable(),    off: () => Lyrics.disable() }
+};
+
+// --- Sleep timer: floating pill with 15/30/60-min presets ------------------
+const SleepTimer = (() => {
+  let el = null, tick = null, endAt = 0;
+  function show() {
+    if (el) return;
+    const label = h('span', { class: 'stardust-sleep-label', text: '💤 Sleep' });
+    const chips = [15, 30, 60].map((m) => { const b = h('button', { class: 'stardust-chip', text: m + 'm' }); b.addEventListener('click', () => start(m)); return b; });
+    const x = h('button', { class: 'stardust-chip cancel', text: '✕' }); x.addEventListener('click', cancel);
+    el = h('div', { id: 'stardust-sleep' }, [label, ...chips, x]);
+    document.body.appendChild(el);
+  }
+  function start(min) {
+    cancel(); endAt = Date.now() + min * 60000; el.classList.add('armed'); paint();
+    tick = setInterval(() => {
+      const r = endAt - Date.now();
+      if (r <= 0) { const v = q('video'); if (v && !v.paused) doCommand('playpause'); cancel(); }
+      else paint();
+    }, 1000);
+  }
+  function paint() {
+    const l = el && el.querySelector('.stardust-sleep-label'); if (!l) return;
+    if (!endAt) { l.textContent = '💤 Sleep'; return; }
+    const ms = Math.max(0, endAt - Date.now()), m = Math.floor(ms / 60000), s = Math.floor((ms % 60000) / 1000);
+    l.textContent = '💤 ' + m + ':' + String(s).padStart(2, '0');
+  }
+  function cancel() { if (tick) { clearInterval(tick); tick = null; } endAt = 0; if (el) el.classList.remove('armed'); paint(); }
+  function hide() { cancel(); if (el) { el.remove(); el = null; } }
+  return { show, hide };
+})();
+
+// --- Scroll-to-top button --------------------------------------------------
+const ScrollTop = (() => {
+  let el = null;
+  function show() {
+    if (el) return;
+    el = h('button', { id: 'stardust-scrolltop', title: 'Scroll to top', text: '↑' });
+    el.addEventListener('click', () => {
+      const cands = [
+        document.querySelector('ytmusic-app-layout'),
+        document.querySelector('#layout.ytmusic-app-layout'),
+        document.querySelector('#content.ytmusic-app-layout'),
+        document.querySelector('ytmusic-tab-renderer[role="tabpanel"]'),
+        document.scrollingElement
+      ];
+      for (const c of cands) { if (!c) continue; try { c.scrollTo ? c.scrollTo({ top: 0, behavior: 'smooth' }) : (c.scrollTop = 0); } catch {} }
+    });
+    document.body.appendChild(el);
+  }
+  function hide() { if (el) { el.remove(); el = null; } }
+  return { show, hide };
+})();
+
+// --- Ambient glow: tint the backdrop with the album-art colour -------------
+const AmbientGlow = (() => {
+  let el = null, active = false, last = '';
+  function enable() { active = true; if (!el) { el = h('div', { id: 'stardust-ambient' }); document.body.appendChild(el); } update(readNowPlaying()); }
+  function disable() { active = false; last = ''; if (el) { el.remove(); el = null; } }
+  function onTrack(np) { if (active && np && np.art && np.art !== last) { last = np.art; update(np); } }
+  function update(np) {
+    if (!active || !el || !np || !np.art) return;
+    const img = new Image(); img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const c = document.createElement('canvas'); c.width = c.height = 16;
+        const cx = c.getContext('2d'); cx.drawImage(img, 0, 0, 16, 16);
+        const d = cx.getImageData(0, 0, 16, 16).data;
+        let r = 0, g = 0, b = 0, n = 0;
+        for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; n++; }
+        r = Math.round(r / n); g = Math.round(g / n); b = Math.round(b / n);
+        el.style.background = `radial-gradient(1300px 820px at 50% -5%, rgba(${r},${g},${b},0.55), transparent 62%)`;
+      } catch {}
+    };
+    img.src = np.art;
+  }
+  return { enable, disable, onTrack };
+})();
+
+// --- Synced lyrics (lrclib.net via main process) ---------------------------
+const Lyrics = (() => {
+  let panel = null, body = null, active = false, key = '', synced = [], tick = null, lastIdx = -1;
+  function enable() { active = true; build(); refresh(readNowPlaying()); tick = setInterval(highlight, 300); }
+  function disable() { active = false; if (tick) { clearInterval(tick); tick = null; } if (panel) { panel.remove(); panel = null; } synced = []; key = ''; }
+  function build() {
+    if (panel) return;
+    const close = h('button', { class: 'stardust-x', text: '✕' }); close.addEventListener('click', () => Lyrics.disable());
+    body = h('div', { class: 'stardust-lyrics-body' });
+    panel = h('div', { id: 'stardust-lyrics' }, [
+      h('div', { class: 'stardust-lyrics-head' }, [h('span', { class: 'stardust-logo', text: '✦ Lyrics' }), close]),
+      body
+    ]);
+    document.body.appendChild(panel);
+  }
+  function status(t) { while (body.firstChild) body.removeChild(body.firstChild); body.appendChild(h('div', { class: 'stardust-lyrics-status', text: t })); }
+  function parseLRC(text) {
+    const out = [];
+    for (const line of (text || '').split('\n')) {
+      const m = line.match(/\[(\d+):(\d+(?:\.\d+)?)\](.*)/);
+      if (m) { const t = parseInt(m[1]) * 60 + parseFloat(m[2]); const s = m[3].trim(); out.push({ t, s }); }
+    }
+    return out;
+  }
+  async function refresh(np) {
+    if (!active || !np || !np.title) return;
+    const k = np.title + '|' + np.artist; if (k === key) return; key = k;
+    status('Searching lyrics…');
+    let res = null;
+    try { res = await ipcRenderer.invoke('stardust:lyrics', { artist: np.artist, title: np.title, album: np.album, duration: np.duration }); } catch {}
+    if (!active) return;
+    synced = []; lastIdx = -1;
+    while (body.firstChild) body.removeChild(body.firstChild);
+    if (res && res.syncedLyrics) {
+      synced = parseLRC(res.syncedLyrics);
+      for (const ln of synced) body.appendChild(h('div', { class: 'stardust-lyric-line', text: ln.s || '♪' }));
+    } else if (res && res.plainLyrics) {
+      for (const ln of res.plainLyrics.split('\n')) body.appendChild(h('div', { class: 'stardust-lyric-line plain', text: ln || ' ' }));
+    } else {
+      status('No lyrics found for this track');
+    }
+  }
+  function highlight() {
+    if (!active || !synced.length) return;
+    const v = q('video'); if (!v) return;
+    const t = v.currentTime || 0;
+    let idx = -1;
+    for (let i = 0; i < synced.length; i++) { if (synced[i].t <= t + 0.15) idx = i; else break; }
+    if (idx === lastIdx) return;
+    lastIdx = idx;
+    const kids = body.children;
+    for (let i = 0; i < kids.length; i++) kids[i].classList.toggle('active', i === idx);
+    if (idx >= 0 && kids[idx]) kids[idx].scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
+  function onTrack(np) { if (active) refresh(np); }
+  return { enable, disable, onTrack };
+})();
 
 // ---------------------------------------------------------------------------
 // Now playing + media commands
@@ -384,12 +605,22 @@ function pollNowPlaying() {
   Visualizer.setPlaying(np.playing);
   // Drives play-state-gated animations (e.g. Vinyl Spin).
   document.body.classList.toggle('stardust-playing', np.playing);
-  const sig = `${np.title}|${np.artist}|${np.playing}|${np.position}`;
+  if (rateMode) enforceRate();
+
+  const track = `${np.title}|${np.artist}`;
+  if (track !== lastTrack) {
+    lastTrack = track;
+    AmbientGlow.onTrack(np);
+    Lyrics.onTrack(np);
+  }
+
+  const sig = `${track}|${np.playing}|${np.position}`;
   if (sig !== lastSig) {
     lastSig = sig;
     ipcRenderer.send('stardust:nowplaying', np);
   }
 }
+let lastTrack = '';
 
 function doCommand(action) {
   const click = (sel) => { const el = q(sel); if (el) { el.click(); return true; } return false; };
@@ -617,13 +848,15 @@ function renderThemes(panel) {
 // ---------------------------------------------------------------------------
 // Marketplace modal
 // ---------------------------------------------------------------------------
-const TYPE_LABEL = { theme: 'Theme', font: 'Font', animation: 'Animation', feature: 'Feature' };
+const TYPE_LABEL = { theme: 'Theme', font: 'Font', animation: 'Animation', feature: 'Feature', audio: 'Audio' };
+const TAB_LABEL = { all: 'All', theme: 'Themes', font: 'Fonts', animation: 'Animations', feature: 'Features', audio: 'Audio' };
 
 function isInstalled(item) { return (installed[item.type] || []).includes(item.id); }
 function isEnabled(item) {
   if (item.type === 'font') return settings.activeFont === item.id;
   if (item.type === 'animation') return (settings.enabledAnimations || []).includes(item.id);
   if (item.type === 'feature') return (settings.enabledFeatures || []).includes(item.id);
+  if (item.type === 'audio') return (settings.enabledAudio || []).includes(item.id);
   if (item.type === 'theme') return activeTheme && activeTheme.id === item.id;
   return false;
 }
@@ -646,9 +879,9 @@ async function openMarket() {
 }
 
 function buildMarketShell() {
-  const tabs = ['all', 'theme', 'font', 'animation', 'feature'].map((t) =>
+  const tabs = ['all', 'theme', 'audio', 'font', 'animation', 'feature'].map((t) =>
     h('button', { class: 'stardust-market-tab' + (t === 'all' ? ' active' : ''), dataset: { tab: t },
-      text: t === 'all' ? 'All' : TYPE_LABEL[t] + 's' })
+      text: TAB_LABEL[t] })
   );
 
   const search = h('input', { id: 'stardust-market-search', type: 'text', placeholder: 'Search themes, fonts, animations…' });
@@ -752,6 +985,7 @@ async function doInstall(item, btn) {
   if (item.type === 'font') await setSetting('activeFont', item.id);
   else if (item.type === 'animation') await setSetting('enabledAnimations', uniqAdd(settings.enabledAnimations, item.id));
   else if (item.type === 'feature') await setSetting('enabledFeatures', uniqAdd(settings.enabledFeatures, item.id));
+  else if (item.type === 'audio') await setSetting('enabledAudio', uniqAdd(settings.enabledAudio, item.id));
   applyExtras();
   if (panelEl) renderThemes(panelEl);
   renderMarketGrid();
@@ -762,6 +996,7 @@ async function doRemove(item) {
   if (item.type === 'font' && settings.activeFont === item.id) await setSetting('activeFont', null);
   if (item.type === 'animation') await setSetting('enabledAnimations', without(settings.enabledAnimations, item.id));
   if (item.type === 'feature') await setSetting('enabledFeatures', without(settings.enabledFeatures, item.id));
+  if (item.type === 'audio') await setSetting('enabledAudio', without(settings.enabledAudio, item.id));
   const r = await ipcRenderer.invoke('stardust:marketplace-remove', { type: item.type, id: item.id });
   installed = r.installed || installed;
   extras = r.extras || extras;
@@ -786,6 +1021,9 @@ async function toggleEnable(item) {
   } else if (item.type === 'feature') {
     const on = (settings.enabledFeatures || []).includes(item.id);
     await setSetting('enabledFeatures', on ? without(settings.enabledFeatures, item.id) : uniqAdd(settings.enabledFeatures, item.id));
+  } else if (item.type === 'audio') {
+    const on = (settings.enabledAudio || []).includes(item.id);
+    await setSetting('enabledAudio', on ? without(settings.enabledAudio, item.id) : uniqAdd(settings.enabledAudio, item.id));
   }
   applyExtras();
   renderMarketGrid();

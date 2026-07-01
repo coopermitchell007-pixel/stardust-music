@@ -129,7 +129,7 @@
     "description": "The now-playing artwork becomes a spinning vinyl record.",
     "tags": ["nowplaying", "fun"],
     "preview": "radial-gradient(circle at 50% 50%, #111 18%, #333 19%, #111 40%, #444 41%, #111 60%)",
-    "css": "ytmusic-player-bar img.image, ytmusic-player-bar .image img, #song-image img { border-radius: 50% !important; animation: stardustVinyl 4s linear infinite; animation-play-state: paused; box-shadow: 0 0 0 3px rgba(0,0,0,.5), 0 0 0 5px color-mix(in srgb, var(--stardust-accent) 60%, transparent); } body.stardust-playing ytmusic-player-bar img.image, body.stardust-playing ytmusic-player-bar .image img, body.stardust-playing #song-image img { animation-play-state: running; } @keyframes stardustVinyl { to { transform: rotate(360deg); } }"
+    "css": "ytmusic-player-bar img.image, ytmusic-player-bar .image img, #song-image img { border-radius: 50% !important; aspect-ratio: 1 / 1 !important; object-fit: cover !important; width: var(--stardust-vinyl, 56px) !important; height: var(--stardust-vinyl, 56px) !important; animation: stardustVinyl 4s linear infinite; animation-play-state: paused; box-shadow: 0 0 0 3px rgba(0,0,0,.5), 0 0 0 5px color-mix(in srgb, var(--stardust-accent) 60%, transparent); } body.stardust-playing ytmusic-player-bar img.image, body.stardust-playing ytmusic-player-bar .image img, body.stardust-playing #song-image img { animation-play-state: running; } @keyframes stardustVinyl { to { transform: rotate(360deg); } }"
   },
   {
     "id": "anim-gradient-headings",
@@ -201,5 +201,97 @@
     "tags": ["hover", "focus"],
     "preview": "linear-gradient(180deg, #201a3a, #0c0a18)",
     "css": "ytmusic-carousel:hover ytmusic-two-row-item-renderer:not(:hover) { opacity: .45; transition: opacity .25s ease; }"
+  },
+
+  {
+    "id": "audio-bass-boost",
+    "type": "audio",
+    "name": "Bass Boost",
+    "author": "Stardust",
+    "description": "Punchy low-end lift via a low-shelf EQ on the live audio.",
+    "tags": ["eq", "bass"],
+    "preview": "linear-gradient(135deg, #3a1466, #0a0720)"
+  },
+  {
+    "id": "audio-treble-boost",
+    "type": "audio",
+    "name": "Treble Boost",
+    "author": "Stardust",
+    "description": "Crisp, airy highs via a high-shelf EQ.",
+    "tags": ["eq", "treble"],
+    "preview": "linear-gradient(135deg, #123a4a, #04101a)"
+  },
+  {
+    "id": "audio-volume-boost",
+    "type": "audio",
+    "name": "Volume Boost",
+    "author": "Stardust",
+    "description": "Extra loudness beyond 100% with make-up gain.",
+    "tags": ["gain", "loud"],
+    "preview": "linear-gradient(135deg, #4a2a10, #160a04)"
+  },
+  {
+    "id": "audio-8d",
+    "type": "audio",
+    "name": "8D Audio",
+    "author": "Stardust",
+    "description": "The sound pans slowly around your head. Best on headphones.",
+    "tags": ["spatial", "fun"],
+    "preview": "radial-gradient(circle at 28% 50%, #8b5cff, transparent 55%), radial-gradient(circle at 72% 50%, #2be0ff, transparent 55%), #0a0720"
+  },
+  {
+    "id": "audio-nightcore",
+    "type": "audio",
+    "name": "Nightcore",
+    "author": "Stardust",
+    "description": "Speeds playback up (~1.2x) for a brighter, faster feel.",
+    "tags": ["speed", "fun"],
+    "preview": "linear-gradient(135deg, #ff2bd6, #3a1466)"
+  },
+  {
+    "id": "audio-slowed",
+    "type": "audio",
+    "name": "Slowed + Reverb",
+    "author": "Stardust",
+    "description": "Slows playback (~0.85x) with a dreamy reverb tail.",
+    "tags": ["speed", "reverb", "chill"],
+    "preview": "linear-gradient(135deg, #123a4a, #0a0720)"
+  },
+
+  {
+    "id": "feat-lyrics",
+    "type": "feature",
+    "name": "Synced Lyrics",
+    "author": "Stardust",
+    "description": "Time-synced, auto-scrolling lyrics fetched from LRCLIB.",
+    "tags": ["lyrics", "smart"],
+    "preview": "linear-gradient(180deg, #241a44, #0e0b1e)"
+  },
+  {
+    "id": "feat-sleep-timer",
+    "type": "feature",
+    "name": "Sleep Timer",
+    "author": "Stardust",
+    "description": "Auto-pause after 15/30/60 min — a floating countdown pill.",
+    "tags": ["smart", "sleep"],
+    "preview": "linear-gradient(135deg, #1c2238, #0a0e1a)"
+  },
+  {
+    "id": "feat-scroll-top",
+    "type": "feature",
+    "name": "Scroll to Top",
+    "author": "Stardust",
+    "description": "A floating button to jump back to the top of any page.",
+    "tags": ["smart", "nav"],
+    "preview": "linear-gradient(135deg, #20243a, #0c0e1a)"
+  },
+  {
+    "id": "feat-ambient-glow",
+    "type": "feature",
+    "name": "Ambient Glow",
+    "author": "Stardust",
+    "description": "Tints the backdrop with the current album-art colour.",
+    "tags": ["smart", "color"],
+    "preview": "radial-gradient(circle at 50% 0%, #c061ff, transparent 60%), #07040f"
   }
 ]

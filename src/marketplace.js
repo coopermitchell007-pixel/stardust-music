@@ -18,7 +18,8 @@ const ROOT = path.join(app.getPath('userData'), 'Marketplace');
 const TYPE_DIRS = {
   font: path.join(ROOT, 'fonts'),
   animation: path.join(ROOT, 'animations'),
-  feature: path.join(ROOT, 'features')
+  feature: path.join(ROOT, 'features'),
+  audio: path.join(ROOT, 'audio')
 };
 
 function ensureDirs() {
@@ -59,7 +60,7 @@ async function catalog() {
 
 function installedIds() {
   ensureDirs();
-  const out = { theme: [], font: [], animation: [], feature: [] };
+  const out = { theme: [], font: [], animation: [], feature: [], audio: [] };
   // themes
   try {
     out.theme = fs.readdirSync(themes.USER_DIR, { withFileTypes: true })
@@ -77,7 +78,7 @@ function installedIds() {
 // the ones the user has enabled (fonts/animations/features).
 function installedExtras() {
   ensureDirs();
-  const out = { font: [], animation: [], feature: [] };
+  const out = { font: [], animation: [], feature: [], audio: [] };
   for (const [type, dir] of Object.entries(TYPE_DIRS)) {
     let files = [];
     try { files = fs.readdirSync(dir).filter((f) => f.endsWith('.json')); } catch {}

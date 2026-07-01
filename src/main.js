@@ -8,6 +8,7 @@ const themes = require('./themes');
 const discord = require('./discord');
 const marketplace = require('./marketplace');
 const adblock = require('./adblock');
+const lyrics = require('./lyrics');
 
 const YTM_URL = 'https://music.youtube.com/';
 const ICON_PNG = path.join(__dirname, '..', 'assets', 'icon.png');
@@ -68,10 +69,13 @@ function createMainWindow() {
           // Optionally open UI before the snapshot (debug only).
           const open = process.env.STARDUST_OPEN;
           if (open) {
+            const tab = process.env.STARDUST_TAB || '';
             await mainWindow.webContents.executeJavaScript(`(() => {
               const l = document.getElementById('stardust-launcher'); if (l) l.click();
               if (${open === 'market' ? 'true' : 'false'}) {
                 const b = document.getElementById('stardust-open-market'); if (b) b.click();
+                const tab = ${JSON.stringify(tab)};
+                if (tab) setTimeout(() => { const t = document.querySelector('.stardust-market-tab[data-tab="'+tab+'"]'); if (t) t.click(); }, 400);
               }
             })();`);
             await new Promise((r) => setTimeout(r, 1500));
@@ -242,6 +246,8 @@ function registerIpc() {
   ipcMain.handle('stardust:reload-themes', () => lightThemeList());
 
   ipcMain.handle('stardust:get-nowplaying', () => lastNowPlaying);
+
+  ipcMain.handle('stardust:lyrics', (_e, meta) => lyrics.fetchLyrics(meta));
 
   // From the YTM page: current track + playback state.
   ipcMain.on('stardust:nowplaying', (_e, np) => {
