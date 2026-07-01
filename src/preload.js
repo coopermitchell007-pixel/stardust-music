@@ -1172,8 +1172,20 @@ const Lyrics = (() => {
   }
   function startRAF() {
     if (raf) return;
-    const loop = () => { raf = requestAnimationFrame(loop); paint(); };
+    const loop = () => { raf = requestAnimationFrame(loop); try { paint(); } catch {} };
     raf = requestAnimationFrame(loop);
+  }
+  // The <video> element YTM is actually playing (prefer a playing one; some
+  // pages have a stale/hidden extra video whose time never moves).
+  function playingVideo() {
+    const vids = document.querySelectorAll('video');
+    if (!vids.length) return null;
+    let best = null;
+    for (const vd of vids) {
+      if (!vd.paused && vd.currentTime > 0) return vd;
+      if (!best || (vd.currentTime || 0) > (best.currentTime || 0)) best = vd;
+    }
+    return best || vids[0];
   }
   function stopRAF() { if (raf) { cancelAnimationFrame(raf); raf = null; } }
 
@@ -1455,8 +1467,15 @@ const Lyrics = (() => {
   }
 
   function paint() {
-    if (!active || !synced.length || !box || !box.isConnected || !body) return;
-    const v = q('video'); if (!v) return;
+    if (!active || !synced.length || !box || !body) return;
+    // If YTM re-rendered the tab and dropped our box, re-attach it instead of
+    // freezing (this was leaving the words static).
+    if (!box.isConnected) {
+      const h0 = tabHost();
+      if (h0 && tabSelected()) { h0.classList.add('stardust-lyrics-on'); if (box.parentElement !== h0) h0.appendChild(box); host = h0; }
+      else return;
+    }
+    const v = playingVideo(); if (!v) return;
     const t = v.currentTime || 0;
     const kids = body.children;
 
