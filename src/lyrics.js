@@ -5,6 +5,7 @@
 // Genius (plain, scraped) as a last resort.
 const https = require('https');
 const http = require('http');
+const transcribe = require('./transcribe');
 
 // Core HTTP(S) GET with redirect-following, a hard timeout, and optional raw
 // (non-JSON) body — used for Genius's HTML lyrics pages.
@@ -140,6 +141,9 @@ function raceLyrics(promises) {
 
 async function fetchLyrics({ artist, title, album, duration } = {}) {
   if (!title) return null;
+  // A previously transcribed version of THIS song is the truest match (it's the
+  // actual audio's words, word-timed) — use it instantly.
+  try { const c = transcribe.getCached(title, artist); if (c) return { syncedLyrics: c, plainLyrics: '', kind: 'word' }; } catch {}
   if (!(duration > 0)) duration = undefined; // 0/NaN at track start → don't over-constrain
   const ct = cleanTitle(title);
   const bare = title.replace(/\(.*?\)|\[.*?\]/g, '').replace(/\s+/g, ' ').trim() || ct;

@@ -11,6 +11,7 @@ const adblock = require('./adblock');
 const lyrics = require('./lyrics');
 const updater = require('./updater');
 const stats = require('./stats');
+const transcribe = require('./transcribe');
 
 const YTM_URL = 'https://music.youtube.com/';
 const ICON_PNG = path.join(__dirname, '..', 'assets', 'icon.png');
@@ -301,6 +302,10 @@ function registerIpc() {
   ipcMain.handle('stardust:get-nowplaying', () => lastNowPlaying);
 
   ipcMain.handle('stardust:lyrics', (_e, meta) => lyrics.fetchLyrics(meta));
+  ipcMain.handle('stardust:transcribe', async (_e, payload) => {
+    try { return await transcribe.transcribe(payload, config.get('transcribeKey')); }
+    catch (err) { return { error: err.message || 'failed' }; }
+  });
   ipcMain.handle('stardust:stats', () => stats.get());
   ipcMain.handle('stardust:stats-reset', () => { stats.reset(); return true; });
 

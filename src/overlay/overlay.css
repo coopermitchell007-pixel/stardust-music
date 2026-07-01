@@ -810,3 +810,12 @@ body.stardust-playing #stardust-vinyl-big { animation-play-state: running; }
 .stardust-vinyl-wrap { background: transparent !important; overflow: visible !important; }
 body.stardust-playing img.stardust-vinyl { animation-play-state: running !important; }
 @keyframes stardustVinyl { to { transform: rotate(360deg); } }
+
+/* ---- Transcription key input + button ---- */
+.stardust-text-input {
+  width: 100%; box-sizing: border-box; margin-top: 8px; padding: 8px 10px;
+  border-radius: 8px; background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.12); color: #fff; font-size: 12px;
+}
+.stardust-text-input:focus { outline: none; border-color: var(--stardust-accent); }
+#stardust-transcribe-btn { margin-top: 16px; }

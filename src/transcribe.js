@@ -1,0 +1,125 @@
+'use strict';
+
+// Transcribe a song's audio into WORD-TIMED lyrics via a Whisper endpoint
+// (Groq's free OpenAI-compatible API by default). Results are cached to disk so
+// a transcribed song shows instantly on replay.
+const fs = require('fs');
+const path = require('path');
+const https = require('https');
+const { app } = require('electron');
+
+const ENDPOINT = 'https://api.groq.com/openai/v1/audio/transcriptions';
+const MODEL = 'whisper-large-v3';
+const CACHE_DIR = path.join(app.getPath('userData'), 'Transcripts');
+
+function ensureDir() { try { fs.mkdirSync(CACHE_DIR, { recursive: true }); } catch {} }
+const keyFor = (title, artist) =>
+  (String(title || '') + '__' + String(artist || '')).toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 120) || 'unknown';
+
+function getCached(title, artist) {
+  try {
+    const p = path.join(CACHE_DIR, keyFor(title, artist) + '.lrc');
+    const lrc = fs.readFileSync(p, 'utf8');
+    if (lrc && lrc.trim()) return lrc;
+  } catch {}
+  return null;
+}
+function putCached(title, artist, lrc) {
+  ensureDir();
+  try { fs.writeFileSync(path.join(CACHE_DIR, keyFor(title, artist) + '.lrc'), lrc); } catch {}
+}
+
+const stamp = (sec) => {
+  const t = Math.max(0, sec || 0), mm = Math.floor(t / 60), ss = (t - mm * 60).toFixed(2);
+  return String(mm).padStart(2, '0') + ':' + ss.padStart(5, '0');
+};
+
+// Build an enhanced-LRC string (with <mm:ss.xx> word tags) from Whisper's
+// verbose_json. Groups words into lines using segment boundaries when present.
+function buildLRC(json) {
+  if (!json) return '';
+  const words = json.words || (json.segments || []).flatMap((s) => s.words || []);
+  if (words && words.length) {
+    const segs = (json.segments && json.segments.length) ? json.segments : null;
+    const lines = [];
+    if (segs) {
+      for (const seg of segs) {
+        const inSeg = words.filter((w) => w.start >= seg.start - 0.05 && w.start <= seg.end + 0.05);
+        if (!inSeg.length) continue;
+        let body = '';
+        for (const w of inSeg) body += '<' + stamp(w.start) + '>' + String(w.word || w.text || '').trim() + ' ';
+        lines.push('[' + stamp(inSeg[0].start) + ']' + body.trim());
+      }
+    }
+    if (!lines.length) {
+      // No segments — chunk ~8 words per line.
+      for (let i = 0; i < words.length; i += 8) {
+        const chunk = words.slice(i, i + 8);
+        let body = '';
+        for (const w of chunk) body += '<' + stamp(w.start) + '>' + String(w.word || w.text || '').trim() + ' ';
+        lines.push('[' + stamp(chunk[0].start) + ']' + body.trim());
+      }
+    }
+    return lines.join('\n');
+  }
+  if (json.segments && json.segments.length) {
+    return json.segments.map((s) => '[' + stamp(s.start) + ']' + String(s.text || '').trim()).join('\n');
+  }
+  return '';
+}
+
+function postMultipart(url, fieldPairs, fileBuf, apiKey) {
+  return new Promise((resolve) => {
+    const boundary = '----stardust' + Date.now();
+    const chunks = [];
+    for (const [k, v] of fieldPairs) {
+      chunks.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${k}"\r\n\r\n${v}\r\n`));
+    }
+    chunks.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="audio.webm"\r\nContent-Type: application/octet-stream\r\n\r\n`));
+    chunks.push(Buffer.from(fileBuf));
+    chunks.push(Buffer.from(`\r\n--${boundary}--\r\n`));
+    const body = Buffer.concat(chunks);
+    let u;
+    try { u = new URL(url); } catch { return resolve(null); }
+    const req = https.request({
+      hostname: u.hostname, path: u.pathname + u.search, method: 'POST',
+      headers: {
+        Authorization: 'Bearer ' + apiKey,
+        'Content-Type': `multipart/form-data; boundary=${boundary}`,
+        'Content-Length': body.length
+      }, timeout: 120000
+    }, (res) => {
+      let d = '';
+      res.on('data', (c) => (d += c));
+      res.on('end', () => { try { resolve({ status: res.statusCode, json: JSON.parse(d) }); } catch { resolve({ status: res.statusCode, json: null }); } });
+    });
+    req.on('error', () => resolve(null));
+    req.on('timeout', () => { try { req.destroy(); } catch {} resolve(null); });
+    req.write(body); req.end();
+  });
+}
+
+// audio: Uint8Array/Buffer of the recorded song (webm/opus). Returns
+// { syncedLyrics } on success, or { error } describing what to fix.
+async function transcribe({ title, artist, audio } = {}, apiKey) {
+  if (!apiKey) return { error: 'no-key' };
+  if (!audio || !audio.length) return { error: 'no-audio' };
+  const buf = Buffer.isBuffer(audio) ? audio : Buffer.from(audio);
+  const fields = [
+    ['model', MODEL],
+    ['response_format', 'verbose_json'],
+    ['timestamp_granularities[]', 'segment'],
+    ['timestamp_granularities[]', 'word'],
+    ['temperature', '0']
+  ];
+  const res = await postMultipart(ENDPOINT, fields, buf, apiKey);
+  if (!res) return { error: 'network' };
+  if (res.status === 401) return { error: 'bad-key' };
+  if (res.status !== 200 || !res.json) return { error: 'engine' };
+  const lrc = buildLRC(res.json);
+  if (!lrc) return { error: 'empty' };
+  putCached(title, artist, lrc);
+  return { syncedLyrics: lrc };
+}
+
+module.exports = { transcribe, getCached, putCached, CACHE_DIR };

@@ -28,7 +28,10 @@ const DEFAULTS = {
   activeFont: null,          // installed font id, or null for YTM default
   enabledAnimations: [],     // installed animation ids that are on
   enabledFeatures: [],       // installed feature ids that are on
-  enabledAudio: []           // installed audio-effect ids that are on
+  enabledAudio: [],          // installed audio-effect ids that are on
+  // Optional: a Groq API key (free tier) enables "Transcribe this song" — it
+  // listens to the audio once and generates word-timed lyrics via Whisper.
+  transcribeKey: ''
 };
 
 let cache = null;

@@ -657,7 +657,36 @@ const Visualizer = (() => {
     return 0;
   }
 
-  return { configure, setPlaying, resumeAudio, fx, getBars, setReactiveColor, vocalEnergy, vocalOnset };
+  // --- audio capture (for "transcribe this song") -------------------------
+  let capDest = null, recorder = null, capChunks = [];
+  function captureStart() {
+    ensureAudio();
+    if (!audioCtx || !analyser) return false;
+    try {
+      if (!capDest) capDest = audioCtx.createMediaStreamDestination();
+      analyser.connect(capDest);
+      capChunks = [];
+      const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
+      recorder = new MediaRecorder(capDest.stream, { mimeType: mime, audioBitsPerSecond: 96000 });
+      recorder.ondataavailable = (e) => { if (e.data && e.data.size) capChunks.push(e.data); };
+      recorder.start(1000);
+      return true;
+    } catch (e) { console.warn('[Stardust] capture start failed:', e.message); return false; }
+  }
+  function captureStop() {
+    return new Promise((resolve) => {
+      if (!recorder) return resolve(null);
+      recorder.onstop = () => {
+        const blob = new Blob(capChunks, { type: 'audio/webm' });
+        try { analyser.disconnect(capDest); } catch {}
+        recorder = null;
+        resolve(blob);
+      };
+      try { recorder.stop(); } catch { resolve(null); }
+    });
+  }
+
+  return { configure, setPlaying, resumeAudio, fx, getBars, setReactiveColor, vocalEnergy, vocalOnset, captureStart, captureStop };
 })();
 
 // A user gesture is required before an AudioContext can produce sound/data.
@@ -1111,6 +1140,7 @@ const Lyrics = (() => {
   let synthMode = false, lineSyl = null, cumSyl = null, totalSyl = 1, progAll = 0, lastCTs = 0;
   let curSyl = null, curSylTotal = 1, sylPtr = 0;
   let floor = 0, sylAcc = 0;                 // adaptive vocal noise-floor + syllables-sung accumulator
+  let transcribing = false;
   const SYL_RATE = 3.6;                      // avg sung syllables per second (used while singing)
 
   // "Hear" the song this frame: vocal energy, whether a voice is ACTIVE (above an
@@ -1220,7 +1250,17 @@ const Lyrics = (() => {
   function render(status) {
     if (!body) return;
     while (body.firstChild) body.removeChild(body.firstChild);
-    if (status) { body.appendChild(h('div', { class: 'stardust-lyric-status', text: status })); return; }
+    if (status) {
+      body.appendChild(h('div', { class: 'stardust-lyric-status', text: status }));
+      // No lyrics anywhere → offer to transcribe from the audio.
+      if (mode === 'off') {
+        const btn = h('button', { class: 'stardust-market-btn primary', id: 'stardust-transcribe-btn', text: '🎙 Transcribe from the song' });
+        btn.addEventListener('click', () => startTranscribe(btn));
+        body.appendChild(btn);
+        body.appendChild(h('div', { class: 'stardust-hint', text: 'Restarts the track and listens once to build word-timed lyrics. Needs a free Groq API key in the Stardust panel → Settings.' }));
+      }
+      return;
+    }
     if (synced.length) {
       for (const l of synced) {
         const line = h('div', { class: 'stardust-lyric-line words' });
@@ -1276,6 +1316,55 @@ const Lyrics = (() => {
   }
   const stripTag = (s) => (s || '').replace(/\s*[([][^)\]]*(?:official|music\s*video|lyric|audio|visuali[sz]er|remaster|sped\s*up|slowed|reverb|extended|\bhd\b|\b4k\b|\blive\b)[^)\]]*[)\]]/gi, '').trim();
 
+  // Turn an LRC string into de-bloated synced lines and switch to 'ours'.
+  function applySynced(text) {
+    const titleN = alnum(stripTag(np && np.title));
+    synced = parseLRC(text).filter((l, i) => !isBloatLine(l.s, i, titleN));
+    for (const l of synced) { l.s = stripTag(l.s); }
+    plain = null; mode = 'ours'; synthMode = false;
+    lastIdx = -1; curEl = null; curSpans = null;
+  }
+
+  // Record the song once and transcribe it into word-timed lyrics.
+  async function startTranscribe(btn) {
+    if (transcribing) return;
+    transcribing = true; if (btn) btn.disabled = true;
+    const forKey = key;
+    const setStatus = (s) => { const el = body && body.querySelector('.stardust-lyric-status'); if (el) el.textContent = s; };
+    const v = q('video');
+    if (!Visualizer.captureStart()) { setStatus('Audio capture unavailable'); transcribing = false; if (btn) btn.disabled = false; return; }
+    try { if (v) { v.currentTime = 0; if (v.paused) doCommand('playpause'); } } catch {}
+    const fmtT = (s) => { s = Math.max(0, s | 0); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+    const total = (v && isFinite(v.duration) && v.duration > 0) ? Math.min(v.duration + 1, 360) : 240;
+    await new Promise((res) => {
+      const iv = setInterval(() => {
+        if (!active || key !== forKey) { clearInterval(iv); return res(); }
+        const cur = v ? v.currentTime : 0;
+        setStatus('🎙 Listening… ' + fmtT(cur) + ' / ' + fmtT(total));
+        if (cur >= total - 0.5 || (v && v.ended)) { clearInterval(iv); res(); }
+      }, 500);
+    });
+    setStatus('Transcribing… (about 10–30s)');
+    const blob = await Visualizer.captureStop();
+    transcribing = false;
+    if (!active || key !== forKey) return;
+    if (!blob || blob.size < 12000) { setStatus('Not enough audio captured — try again from the start'); return; }
+    let res = null;
+    try {
+      const buf = new Uint8Array(await blob.arrayBuffer());
+      res = await ipcRenderer.invoke('stardust:transcribe', { title: np.title, artist: np.artist, duration: np.duration, audio: buf });
+    } catch {}
+    if (!active || key !== forKey) return;
+    if (res && res.syncedLyrics) { applySynced(res.syncedLyrics); render(); sync(); }
+    else {
+      const e = res && res.error;
+      setStatus(e === 'no-key' || e === 'bad-key' ? 'Add a free Groq API key in the Stardust panel to transcribe'
+        : e === 'empty' ? 'Could not make out the vocals on this track'
+          : 'Transcription failed — try again');
+      const b = body && body.querySelector('#stardust-transcribe-btn'); if (b) b.disabled = false;
+    }
+  }
+
   function fetchFor(track) {
     if (!track || !track.title) return;
     const k = track.title + '|' + track.artist; if (k === key) return;
@@ -1292,9 +1381,7 @@ const Lyrics = (() => {
     if (!active || key !== forKey) return;   // track changed while awaiting
     const titleN = alnum(stripTag(np.title));
     if (res && res.syncedLyrics) {
-      synced = parseLRC(res.syncedLyrics).filter((l, i) => !isBloatLine(l.s, i, titleN));
-      for (const l of synced) { l.s = stripTag(l.s); }
-      plain = null; mode = 'ours';
+      applySynced(res.syncedLyrics);
     } else if (res && res.plainLyrics) {
       synced = [];
       plain = res.plainLyrics.split('\n').filter((l, i) => !isBloatLine(l, i, titleN)).map(stripTag).join('\n');
@@ -1833,6 +1920,8 @@ function buildUI() {
       h('div', { class: 'stardust-row' }, [
         miniBtn('toggle-lyrics', 'Lyrics: off')
       ]),
+      h('input', { type: 'password', id: 'stardust-transcribe-key', class: 'stardust-text-input', placeholder: 'Groq API key — for song transcription' }),
+      h('div', { class: 'stardust-hint', text: 'Free key at console.groq.com → enables "🎙 Transcribe from the song" when no lyrics are found (word-timed).' }),
       h('div', { class: 'stardust-hint', text: 'Hotkeys: ⌘/Ctrl+Shift+↑ like · ↓ dislike · S shuffle · C copy link' })
     ]),
     section([
@@ -1919,6 +2008,13 @@ function wirePanel(panel) {
   // Reflect current lyrics state on the toggle.
   const lt = panel.querySelector('[data-act="toggle-lyrics"]');
   if (lt) lt.textContent = (settings.enabledFeatures || []).includes('feat-lyrics') ? 'Lyrics: on' : 'Lyrics: off';
+
+  // Transcription API key.
+  const tk = panel.querySelector('#stardust-transcribe-key');
+  if (tk) {
+    tk.value = settings.transcribeKey || '';
+    tk.addEventListener('change', () => setSetting('transcribeKey', tk.value.trim()));
+  }
 }
 
 // ---------------------------------------------------------------------------
