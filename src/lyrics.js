@@ -7,7 +7,7 @@ const https = require('https');
 function getJson(url) {
   return new Promise((resolve) => {
     const req = https.get(url, {
-      headers: { 'User-Agent': 'Stardust v0.4 (https://github.com/coopermitchell007-pixel/stardust-music)' },
+      headers: { 'User-Agent': 'Stardust v0.6 (https://github.com/coopermitchell007-pixel/stardust-music)' },
       timeout: 6000
     }, (res) => {
       if (res.statusCode !== 200) { res.resume(); return resolve(null); }
@@ -24,35 +24,104 @@ const qs = (o) => Object.entries(o)
   .filter(([, v]) => v !== undefined && v !== null && v !== '')
   .map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
 
-const norm = (s) => (s || '').toLowerCase().replace(/\(.*?\)|\[.*?\]|feat\.?.*$|ft\.?.*$/g, '').replace(/[^a-z0-9]/g, '').trim();
+// Normalize for comparison: drop bracketed/feat noise, keep unicode letters &
+// digits (so non-Latin scripts survive instead of collapsing to '').
+const norm = (s) => (s || '')
+  .toLowerCase()
+  .replace(/\(.*?\)|\[.*?\]|feat\.?.*$|ft\.?.*$/g, '')
+  .replace(/[^\p{L}\p{N}]/gu, '')
+  .trim();
+
+// Strip the junk YTM often appends to titles before querying lrclib.
+const cleanTitle = (s) => (s || '')
+  .replace(/\((?:official|lyric|audio|video|visualizer|hd|4k|mv|m\/v).*?\)/gi, '')
+  .replace(/\[(?:official|lyric|audio|video|visualizer|hd|4k|mv|m\/v).*?\]/gi, '')
+  .replace(/\s+/g, ' ')
+  .trim();
+
+// True when a string is predominantly CJK / Hangul / Kana.
+const CJK_G = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff\uff66-\uff9d]/g;
+const isCJK = (s) => {
+  const chars = (s || '').replace(/[^\p{L}]/gu, '');
+  if (!chars) return false;
+  const cjk = (chars.match(CJK_G) || []).length;
+  return cjk / chars.length > 0.4;
+};
+
+function scoreCandidate(x, want) {
+  const nt = norm(x.trackName), na = norm(x.artistName);
+  if (!nt) return null; // can't verify an empty/unknown title
+  const titleExact = nt === want.title;
+  const titleOverlap = nt.length >= 3 && want.title.length >= 3 &&
+    (nt.includes(want.title) || want.title.includes(nt));
+  if (!titleExact && !titleOverlap) return null;
+
+  // Artist must actually correspond when we know it (empty candidate = reject).
+  if (want.artist) {
+    if (!na) return null;
+    if (na !== want.artist && !na.includes(want.artist) && !want.artist.includes(na)) return null;
+  }
+
+  // Script guard: reject a CJK cover for a non-CJK track (and vice-versa) —
+  // this is what produced random Chinese lyrics for English songs.
+  if (isCJK(x.trackName) !== want.cjkTitle) return null;
+
+  const ddiff = (x.duration && want.duration) ? Math.abs(x.duration - want.duration) : 999;
+  if (want.duration && x.duration && ddiff > 8) return null;
+
+  let s = 0;
+  if (titleExact) s += 4;
+  if (na && (na === want.artist)) s += 3;
+  if (x.syncedLyrics) s += 5;
+  if (ddiff <= 2) s += 3; else if (ddiff <= 8) s += 1;
+  return { x, score: s, synced: !!x.syncedLyrics, ddiff };
+}
 
 async function fetchLyrics({ artist, title, album, duration } = {}) {
   if (!title) return null;
+  const ct = cleanTitle(title);
 
-  // Exact match first (best synced result, verified by title+artist+duration).
-  let r = await getJson('https://lrclib.net/api/get?' + qs({
-    artist_name: artist, track_name: title, album_name: album, duration
-  }));
-  if (r && (r.syncedLyrics || r.plainLyrics)) {
-    return { syncedLyrics: r.syncedLyrics || '', plainLyrics: r.plainLyrics || '' };
+  // 1) Exact match (lrclib verifies title+artist+duration for us). Try with the
+  //    cleaned title, then the raw one, then without album/duration constraints.
+  const getVariants = [
+    { artist_name: artist, track_name: ct, album_name: album, duration },
+    { artist_name: artist, track_name: title, duration },
+    { artist_name: artist, track_name: ct }
+  ];
+  for (const v of getVariants) {
+    const r = await getJson('https://lrclib.net/api/get?' + qs(v));
+    if (r && (r.syncedLyrics || r.plainLyrics)) {
+      return { syncedLyrics: r.syncedLyrics || '', plainLyrics: r.plainLyrics || '' };
+    }
   }
 
-  // Search fallback — but ONLY accept a result that actually matches the track,
-  // so we never show lyrics for a different (e.g. same-title) song.
-  const arr = await getJson('https://lrclib.net/api/search?' + qs({ track_name: title, artist_name: artist }));
-  if (!Array.isArray(arr) || !arr.length) return null;
+  // 2) Search fallback — accept only a confidently-matching result so we never
+  //    show lyrics for a different (same-title / different-language) song.
+  const want = {
+    title: norm(title), artist: norm(artist),
+    duration, cjkTitle: isCJK(title)
+  };
+  const queries = [
+    { track_name: ct, artist_name: artist },
+    { track_name: ct },                       // last resort: title only
+    { q: `${ct} ${artist || ''}`.trim() }
+  ];
+  const seen = new Set();
+  let best = null;
+  for (const query of queries) {
+    const arr = await getJson('https://lrclib.net/api/search?' + qs(query));
+    if (!Array.isArray(arr)) continue;
+    for (const x of arr) {
+      if (!x || seen.has(x.id)) continue;
+      seen.add(x.id);
+      const scored = scoreCandidate(x, want);
+      if (scored && (!best || scored.score > best.score ||
+        (scored.score === best.score && scored.ddiff < best.ddiff))) best = scored;
+    }
+    if (best && best.synced && best.score >= 9) break; // strong synced hit, stop early
+  }
 
-  const wantTitle = norm(title), wantArtist = norm(artist);
-  const scored = arr.map((x) => {
-    const tMatch = norm(x.trackName) === wantTitle || norm(x.trackName).includes(wantTitle) || wantTitle.includes(norm(x.trackName));
-    const aMatch = !wantArtist || norm(x.artistName).includes(wantArtist) || wantArtist.includes(norm(x.artistName));
-    const dOk = !duration || !x.duration || Math.abs(x.duration - duration) <= 8;
-    return { x, ok: tMatch && aMatch && dOk, synced: !!x.syncedLyrics, ddiff: x.duration ? Math.abs((x.duration || 0) - (duration || 0)) : 999 };
-  }).filter((s) => s.ok);
-
-  // Prefer synced, then closest duration.
-  scored.sort((a, b) => (b.synced - a.synced) || (a.ddiff - b.ddiff));
-  const hit = scored[0] && scored[0].x;
+  const hit = best && best.x;
   if (hit && (hit.syncedLyrics || hit.plainLyrics)) {
     return { syncedLyrics: hit.syncedLyrics || '', plainLyrics: hit.plainLyrics || '' };
   }

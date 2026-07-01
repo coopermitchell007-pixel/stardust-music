@@ -747,23 +747,31 @@ const AmbientGlow = (() => {
 // lyrics from LRCLIB directly inside the player page's lyrics tab content,
 // styled to look native rather than a bulky floating panel.
 const Lyrics = (() => {
-  let active = false, synced = [], plain = null, key = '', poll = null;
+  let active = false, synced = [], plain = null, key = '', poll = null, raf = null;
   let box = null, body = null, lastIdx = -1, attempts = 0, np = null;
   let searching = false, host = null;
 
   function enable() {
     active = true;
     np = readNowPlaying(); fetchFor(np);
-    // A light 300ms poll keeps the tab un-greyed, injects when the Lyrics tab
-    // is open, and advances the highlight — no heavy whole-document observer.
-    poll = setInterval(() => { sync(); highlight(); }, 300);
+    // A light 300ms poll keeps the tab un-greyed and injects when the Lyrics tab
+    // is open. The per-word highlight runs on rAF for a smooth karaoke sweep.
+    poll = setInterval(() => { sync(); }, 300);
+    startRAF();
     sync();
   }
   function disable() {
     active = false;
     if (poll) { clearInterval(poll); poll = null; }
+    stopRAF();
     clearHost(); synced = []; plain = null; key = ''; searching = false;
   }
+  function startRAF() {
+    if (raf) return;
+    const loop = () => { raf = requestAnimationFrame(loop); paint(); };
+    raf = requestAnimationFrame(loop);
+  }
+  function stopRAF() { if (raf) { cancelAnimationFrame(raf); raf = null; } }
 
   const lyricsTab = () => [...document.querySelectorAll('ytmusic-player-page tp-yt-paper-tab')]
     .find((t) => /lyric/i.test(t.textContent || ''));
@@ -809,11 +817,28 @@ const Lyrics = (() => {
     }
   }
 
+  const toSec = (mm, ss) => parseInt(mm, 10) * 60 + parseFloat(ss);
   function parseLRC(text) {
     const out = [];
     for (const line of (text || '').split('\n')) {
       const m = line.match(/\[(\d+):(\d+(?:\.\d+)?)\](.*)/);
-      if (m) out.push({ t: parseInt(m[1]) * 60 + parseFloat(m[2]), s: m[3].trim() });
+      if (!m) continue;
+      const t = toSec(m[1], m[2]);
+      let rest = m[3];
+      // Enhanced LRC (A2): inline <mm:ss.xx> word timestamps → true per-word timing.
+      const wordTags = [...rest.matchAll(/<(\d+):(\d+(?:\.\d+)?)>\s*([^<]*)/g)];
+      let words;
+      if (wordTags.length) {
+        words = wordTags
+          .map((w) => ({ text: w[3].trim(), time: toSec(w[1], w[2]) }))
+          .filter((w) => w.text)
+          .map((w) => ({ ...w, len: Math.max(w.text.length, 1) }));
+        rest = words.map((w) => w.text).join(' ');
+      } else {
+        rest = rest.replace(/<\d+:\d+(?:\.\d+)?>/g, '').trim();
+        words = rest ? rest.split(/\s+/).map((t2) => ({ text: t2, len: Math.max(t2.length, 1), time: null })) : [];
+      }
+      out.push({ t, s: rest.trim(), words });
     }
     return out;
   }
@@ -821,10 +846,31 @@ const Lyrics = (() => {
     if (!body) return;
     while (body.firstChild) body.removeChild(body.firstChild);
     if (status) { body.appendChild(h('div', { class: 'stardust-lyric-status', text: status })); return; }
-    if (synced.length) for (const l of synced) body.appendChild(h('div', { class: 'stardust-lyric-line', text: l.s || '♪' }));
-    else if (plain) for (const l of plain.split('\n')) body.appendChild(h('div', { class: 'stardust-lyric-line plain', text: l || ' ' }));
-    else body.appendChild(h('div', { class: 'stardust-lyric-status', text: 'No lyrics found for this track' }));
+    if (synced.length) {
+      for (const l of synced) {
+        const line = h('div', { class: 'stardust-lyric-line' });
+        if (l.words && l.words.length) {
+          l.words.forEach((w, i) => {
+            line.appendChild(h('span', { class: 'w', text: w.text }));
+            if (i < l.words.length - 1) line.appendChild(document.createTextNode(' '));
+          });
+        } else { line.textContent = l.s || '♪'; }
+        body.appendChild(line);
+      }
+    } else if (plain) {
+      for (const l of plain.split('\n')) body.appendChild(h('div', { class: 'stardust-lyric-line plain', text: l || ' ' }));
+    } else {
+      body.appendChild(h('div', { class: 'stardust-lyric-status', text: 'No lyrics found for this track' }));
+    }
     lastIdx = -1;
+  }
+  // Reset any word highlighting on a line (when it stops being active).
+  function clearWords(lineEl) {
+    if (!lineEl) return;
+    for (const s of lineEl.querySelectorAll('.w')) {
+      if (s.className !== 'w') s.className = 'w';
+      if (s.style.getPropertyValue('--wp')) s.style.removeProperty('--wp');
+    }
   }
 
   function fetchFor(track) {
@@ -846,17 +892,66 @@ const Lyrics = (() => {
     render(); sync();
   }
 
-  function highlight() {
+  function paint() {
     if (!active || !synced.length || !box || !box.isConnected || !body) return;
     const v = q('video'); if (!v) return;
     const t = v.currentTime || 0;
-    let idx = -1;
-    for (let i = 0; i < synced.length; i++) { if (synced[i].t <= t + 0.2) idx = i; else break; }
-    if (idx === lastIdx) return;
-    lastIdx = idx;
     const kids = body.children;
-    for (let i = 0; i < kids.length; i++) kids[i].classList.toggle('active', i === idx);
-    if (idx >= 0 && kids[idx]) kids[idx].scrollIntoView({ block: 'center', behavior: 'smooth' });
+
+    // Which line is current?
+    let idx = -1;
+    for (let i = 0; i < synced.length; i++) { if (synced[i].t <= t + 0.15) idx = i; else break; }
+
+    // Line changed: move the .active class, reset the old line's words, scroll.
+    if (idx !== lastIdx) {
+      if (lastIdx >= 0 && kids[lastIdx]) { kids[lastIdx].classList.remove('active'); clearWords(kids[lastIdx]); }
+      if (idx >= 0 && kids[idx]) { kids[idx].classList.add('active'); kids[idx].scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+      lastIdx = idx;
+    }
+    if (idx < 0 || !kids[idx]) return;
+
+    // Sweep the active line's words.
+    const line = synced[idx];
+    const spans = kids[idx].querySelectorAll('.w');
+    if (!spans.length || !line.words || !line.words.length) return;
+    const lineEnd = synced[idx + 1] ? synced[idx + 1].t
+      : (isFinite(v.duration) && v.duration > line.t ? v.duration : line.t + Math.max(3, line.s.length * 0.09));
+
+    if (line.words[0].time != null) {
+      // Enhanced LRC: real per-word timing.
+      for (let i = 0; i < spans.length; i++) {
+        const w = line.words[i]; if (!w) continue;
+        const ws = w.time, we = (line.words[i + 1] && line.words[i + 1].time != null) ? line.words[i + 1].time : lineEnd;
+        if (t >= we) setWord(spans[i], 'sung');
+        else if (t >= ws) setWord(spans[i], 'cur', we > ws ? (t - ws) / (we - ws) : 1);
+        else setWord(spans[i], '');
+      }
+    } else {
+      // Interpolate: distribute the line's elapsed fraction across words by length.
+      const span = Math.max(lineEnd - line.t, 0.001);
+      const p = Math.min(1, Math.max(0, (t - line.t) / span));
+      const total = line.words.reduce((a, w) => a + w.len, 0);
+      const target = p * total;
+      let acc = 0;
+      for (let i = 0; i < spans.length; i++) {
+        const wt = line.words[i] ? line.words[i].len : 1;
+        if (acc + wt <= target) setWord(spans[i], 'sung');
+        else if (acc < target) setWord(spans[i], 'cur', (target - acc) / wt);
+        else setWord(spans[i], '');
+        acc += wt;
+      }
+    }
+  }
+  // Set a word's state without redundant DOM writes.
+  function setWord(el, state, wp) {
+    const cls = state ? 'w ' + state : 'w';
+    if (el.className !== cls) el.className = cls;
+    if (state === 'cur') {
+      const pct = Math.round(Math.min(1, Math.max(0, wp)) * 100) + '%';
+      if (el.style.getPropertyValue('--wp') !== pct) el.style.setProperty('--wp', pct);
+    } else if (el.style.getPropertyValue('--wp')) {
+      el.style.removeProperty('--wp');
+    }
   }
 
   function onTrack(track) { if (active) fetchFor(track); }
