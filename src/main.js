@@ -88,6 +88,28 @@ function createMainWindow() {
     });
   }
 
+  // Debug-only: dump computed styles of section containers to find seam lines.
+  if (process.env.STARDUST_DUMP) {
+    mainWindow.webContents.on('did-finish-load', () => {
+      setTimeout(async () => {
+        try {
+          const out = await mainWindow.webContents.executeJavaScript(`(() => {
+            const sels = ['ytmusic-carousel-shelf-renderer','ytmusic-shelf-renderer','ytmusic-item-section-renderer','ytmusic-carousel','ytmusic-grid-renderer','ytmusic-section-list-renderer','ytmusic-tab-renderer','ytmusic-carousel-shelf-basic-header-renderer','ytmusic-responsive-header-renderer','#contents','#header'];
+            const rep = [];
+            for (const s of sels) {
+              const els = document.querySelectorAll(s);
+              if (!els.length) { rep.push(s + ' :: (none)'); continue; }
+              const el = els[0]; const c = getComputedStyle(el);
+              rep.push(s + ' [' + els.length + '] bg=' + c.backgroundColor + ' img=' + (c.backgroundImage||'none').slice(0,30) + ' bT=' + c.borderTopWidth + '/' + c.borderTopColor + ' bB=' + c.borderBottomWidth + '/' + c.borderBottomColor + ' shadow=' + (c.boxShadow||'none').slice(0,40));
+            }
+            return rep.join('\\n');
+          })();`);
+          console.log('=== STARDUST DOM DUMP ===\n' + out + '\n=== END DUMP ===');
+        } catch (e) { console.error('[Stardust] dump failed', e.message); }
+      }, 8000);
+    });
+  }
+
   // Open external links (account, policies, etc.) in the system browser.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (!url.startsWith('https://music.youtube.com') && !url.startsWith('https://accounts.google.com')) {
@@ -357,9 +379,16 @@ app.whenReady().then(async () => {
   });
 });
 
-app.on('will-quit', () => {
-  globalShortcut.unregisterAll();
+// Guarantee the process actually exits — if any teardown (discord socket,
+// pending requests, a busy renderer) stalls the graceful quit, hard-exit.
+app.on('before-quit', () => {
+  try { globalShortcut.unregisterAll(); } catch {}
   try { discord.disconnect(); } catch {}
+  setTimeout(() => app.exit(0), 1000);
+});
+
+app.on('will-quit', () => {
+  try { globalShortcut.unregisterAll(); } catch {}
 });
 
 // Closing the main window quits the app on every platform (no lingering

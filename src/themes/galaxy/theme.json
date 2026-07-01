@@ -3,7 +3,7 @@
   "name": "Spiral Galaxy",
   "author": "Stardust",
   "accent": "#36d1dc",
-  "background": "radial-gradient(1200px 900px at 50% -8%, #0c2f52 0%, rgba(12,47,82,0) 62%), #03060f",
+  "background": "radial-gradient(1300px 1000px at 50% 30%, #0b1c32 0%, rgba(11,28,50,0) 60%), #03060d",
   "glass": { "blur": 18, "opacity": 0.48 },
   "starfield": { "enabled": true, "count": 400, "color": "#dbf3ff", "speed": 0.3, "size": 1.7, "twinkle": true, "shootingStars": true },
   "visualizer": { "enabled": true, "color": "#36d1dc", "style": "bars" }
