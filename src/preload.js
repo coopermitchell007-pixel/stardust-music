@@ -738,13 +738,20 @@ const VinylSpin = (() => {
   }
   function tagPage() {
     const page = document.querySelector('ytmusic-player-page');
-    if (!page) return;
     let big = null, area = 0;
-    for (const im of page.querySelectorAll('img')) {
-      const r = im.getBoundingClientRect(); const a = r.width * r.height;
-      if (a > area) { area = a; big = im; }
+    if (page) {
+      for (const im of page.querySelectorAll('img')) {
+        const r = im.getBoundingClientRect(); const a = r.width * r.height;
+        if (a > area) { area = a; big = im; }
+      }
     }
-    if (big && area > 20000) { big.classList.add('stardust-vinyl', 'sd-big'); markWrap(big); }
+    const qualifies = big && area > 40000;   // only the large now-playing art
+    // Untag any previously-big img that is no longer the large one (e.g. the
+    // player page collapsed) so the centered record never floats elsewhere.
+    document.querySelectorAll('img.sd-big').forEach((im) => {
+      if (im !== big || !qualifies) { im.classList.remove('stardust-vinyl', 'sd-big'); im.style.background = ''; }
+    });
+    if (qualifies) { big.classList.add('stardust-vinyl', 'sd-big'); markWrap(big); }
   }
   function scan() { try { tagBar(); tagPage(); } catch {} }
   function on() { if (timer) return; scan(); timer = setInterval(scan, 1500); }
@@ -1134,12 +1141,15 @@ const Lyrics = (() => {
   async function doFetch() {
     attempts++;
     const forKey = key;
+    const hadDuration = np.duration > 0;
     let res = null;
     try { res = await ipcRenderer.invoke('stardust:lyrics', { artist: np.artist, title: np.title, album: np.album, duration: np.duration }); } catch {}
     if (!active || key !== forKey) return;   // track changed while awaiting
     if (res && res.syncedLyrics) { synced = parseLRC(res.syncedLyrics); plain = null; mode = 'ours'; }
     else if (res && res.plainLyrics) { synced = []; plain = res.plainLyrics; mode = 'ours'; }
-    else if (attempts < 4) { setTimeout(() => { if (active && key === forKey) doFetch(); }, 1500); return; } // duration may not be ready yet
+    // Only retry if the duration wasn't ready yet (metadata still loading) —
+    // otherwise a genuine miss shouldn't loop for 20s+. One quick retry max.
+    else if (!hadDuration && attempts < 2) { setTimeout(() => { if (active && key === forKey) doFetch(); }, 1200); return; }
     else { synced = []; plain = null; mode = 'off'; }
     lastIdx = -1; curEl = null; curSpans = null;
     render(statusText()); sync();

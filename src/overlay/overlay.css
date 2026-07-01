@@ -777,12 +777,12 @@ img.stardust-vinyl.sd-mini {
   animation: stardustVinyl 4s linear infinite; animation-play-state: paused;
 }
 img.stardust-vinyl.sd-big {
-  border-radius: 50% !important; object-fit: cover !important; aspect-ratio: 1 / 1 !important; height: auto !important;
-  /* Cap the size + leave a margin so the big record never reaches down to the
-     player bar (and its mini vinyl). */
-  max-width: min(52vh, 460px) !important; max-height: min(52vh, 460px) !important;
-  margin: 0 auto 24px !important; display: block !important;
-  background: transparent !important;
+  /* Dead-center the big record on screen (inset:0 + margin:auto with a fixed
+     square size; no transform, so the spin animation still works). */
+  position: fixed !important; inset: 0 !important; margin: auto !important;
+  width: min(50vh, 440px) !important; height: min(50vh, 440px) !important;
+  border-radius: 50% !important; object-fit: cover !important;
+  background: transparent !important; z-index: 6 !important;
   box-shadow: 0 0 0 6px rgba(0,0,0,.5), 0 0 0 12px color-mix(in srgb, var(--stardust-accent) 60%, transparent) !important;
   animation: stardustVinyl 8s linear infinite; animation-play-state: paused;
 }
