@@ -7,13 +7,14 @@ const config = require('./config');
 const themes = require('./themes');
 const discord = require('./discord');
 const marketplace = require('./marketplace');
+const adblock = require('./adblock');
 
 const YTM_URL = 'https://music.youtube.com/';
 const ICON_PNG = path.join(__dirname, '..', 'assets', 'icon.png');
 
-// Identify as YTM+ rather than "Electron" everywhere we can in dev.
-app.setName('YTM+');
-app.setAppUserModelId('com.ytmplus.app');
+// Identify as Stardust rather than "Electron" everywhere we can in dev.
+app.setName('Stardust');
+app.setAppUserModelId('com.stardust.app');
 
 let mainWindow = null;
 let miniWindow = null;
@@ -30,7 +31,7 @@ function createMainWindow() {
     minWidth: 900,
     minHeight: 600,
     backgroundColor: '#05060f',
-    title: 'YTM+',
+    title: 'Stardust',
     icon: ICON_PNG,
     autoHideMenuBar: true,
     webPreferences: {
@@ -41,40 +42,44 @@ function createMainWindow() {
     }
   });
 
+  // Ad/tracker blocking on this window's session, before the first request.
+  adblock.setEnabled(config.get('adBlock') !== false);
+  adblock.attach(mainWindow.webContents.session);
+
   // A modern desktop UA keeps music.youtube.com from nagging about the browser.
   const ua = mainWindow.webContents.getUserAgent().replace(/Electron\/[\d.]+\s*/, '');
   mainWindow.loadURL(YTM_URL, { userAgent: ua });
 
   // Surface renderer-side console output (incl. preload errors) in the terminal.
   mainWindow.webContents.on('console-message', (_e, level, message, line, source) => {
-    if (message.includes('YTM+') || level >= 2) {
+    if (message.includes('Stardust') || level >= 2) {
       console.log(`[renderer:${level}] ${message} (${source}:${line})`);
     }
   });
   mainWindow.webContents.on('preload-error', (_e, preloadPath, error) => {
-    console.error('[YTM+] preload-error:', preloadPath, error);
+    console.error('[Stardust] preload-error:', preloadPath, error);
   });
 
-  // Debug-only: capture a screenshot of the rendered page (YTMPLUS_CAPTURE=path).
-  if (process.env.YTMPLUS_CAPTURE) {
+  // Debug-only: capture a screenshot of the rendered page (STARDUST_CAPTURE=path).
+  if (process.env.STARDUST_CAPTURE) {
     mainWindow.webContents.on('did-finish-load', () => {
       setTimeout(async () => {
         try {
           // Optionally open UI before the snapshot (debug only).
-          const open = process.env.YTMPLUS_OPEN;
+          const open = process.env.STARDUST_OPEN;
           if (open) {
             await mainWindow.webContents.executeJavaScript(`(() => {
-              const l = document.getElementById('ytmplus-launcher'); if (l) l.click();
+              const l = document.getElementById('stardust-launcher'); if (l) l.click();
               if (${open === 'market' ? 'true' : 'false'}) {
-                const b = document.getElementById('ytmplus-open-market'); if (b) b.click();
+                const b = document.getElementById('stardust-open-market'); if (b) b.click();
               }
             })();`);
             await new Promise((r) => setTimeout(r, 1500));
           }
           const img = await mainWindow.webContents.capturePage();
-          require('fs').writeFileSync(process.env.YTMPLUS_CAPTURE, img.toPNG());
-          console.log('[YTM+] captured to', process.env.YTMPLUS_CAPTURE);
-        } catch (e) { console.error('[YTM+] capture failed', e.message); }
+          require('fs').writeFileSync(process.env.STARDUST_CAPTURE, img.toPNG());
+          console.log('[Stardust] captured to', process.env.STARDUST_CAPTURE);
+        } catch (e) { console.error('[Stardust] capture failed', e.message); }
       }, 8000);
     });
   }
@@ -117,7 +122,7 @@ function openMiniPlayer() {
     alwaysOnTop: true,
     skipTaskbar: false,
     backgroundColor: '#0a0b18',
-    title: 'YTM+ Mini',
+    title: 'Stardust Mini',
     webPreferences: {
       preload: path.join(__dirname, 'miniplayer', 'preload.js'),
       contextIsolation: true,
@@ -131,7 +136,7 @@ function openMiniPlayer() {
     config.save({ miniPlayer: false });
   });
   miniWindow.webContents.on('did-finish-load', () => {
-    if (lastNowPlaying) miniWindow.webContents.send('ytmplus:nowplaying', lastNowPlaying);
+    if (lastNowPlaying) miniWindow.webContents.send('stardust:nowplaying', lastNowPlaying);
   });
 }
 
@@ -145,7 +150,7 @@ function closeMiniPlayer() {
 // ---------------------------------------------------------------------------
 function sendCommand(action) {
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('ytmplus:command', { action });
+    mainWindow.webContents.send('stardust:command', { action });
   }
 }
 
@@ -185,7 +190,7 @@ function lightThemeList() {
 }
 
 function registerIpc() {
-  ipcMain.handle('ytmplus:init', () => ({
+  ipcMain.handle('stardust:init', () => ({
     themes: lightThemeList(),
     settings: config.load(),
     discordAvailable: discord.isAvailable(),
@@ -194,20 +199,20 @@ function registerIpc() {
   }));
 
   // --- Marketplace ---
-  ipcMain.handle('ytmplus:marketplace-catalog', async () => ({
+  ipcMain.handle('stardust:marketplace-catalog', async () => ({
     items: await marketplace.catalog(),
     installed: marketplace.installedIds()
   }));
-  ipcMain.handle('ytmplus:marketplace-install', (_e, item) => {
+  ipcMain.handle('stardust:marketplace-install', (_e, item) => {
     const res = marketplace.install(item);
     return { res, installed: marketplace.installedIds(), extras: marketplace.installedExtras(), themes: lightThemeList() };
   });
-  ipcMain.handle('ytmplus:marketplace-remove', (_e, { type, id }) => {
+  ipcMain.handle('stardust:marketplace-remove', (_e, { type, id }) => {
     const res = marketplace.remove(type, id);
     return { res, installed: marketplace.installedIds(), extras: marketplace.installedExtras(), themes: lightThemeList() };
   });
 
-  ipcMain.handle('ytmplus:get-theme', (_e, id) => {
+  ipcMain.handle('stardust:get-theme', (_e, id) => {
     const t = themes.get(id);
     if (!t) return null;
     return {
@@ -222,33 +227,33 @@ function registerIpc() {
     };
   });
 
-  ipcMain.handle('ytmplus:set-setting', async (_e, { key, value }) => {
+  ipcMain.handle('stardust:set-setting', async (_e, { key, value }) => {
     const settings = config.save({ [key]: value });
     await applySideEffects(key, value, settings);
     return settings;
   });
 
-  ipcMain.handle('ytmplus:open-themes-folder', () => {
+  ipcMain.handle('stardust:open-themes-folder', () => {
     themes.ensureUserDir();
     shell.openPath(themes.USER_DIR);
     return themes.USER_DIR;
   });
 
-  ipcMain.handle('ytmplus:reload-themes', () => lightThemeList());
+  ipcMain.handle('stardust:reload-themes', () => lightThemeList());
 
-  ipcMain.handle('ytmplus:get-nowplaying', () => lastNowPlaying);
+  ipcMain.handle('stardust:get-nowplaying', () => lastNowPlaying);
 
   // From the YTM page: current track + playback state.
-  ipcMain.on('ytmplus:nowplaying', (_e, np) => {
+  ipcMain.on('stardust:nowplaying', (_e, np) => {
     lastNowPlaying = np;
     if (config.get('discordRichPresence')) discord.setActivity(np);
     if (miniWindow && !miniWindow.isDestroyed()) {
-      miniWindow.webContents.send('ytmplus:nowplaying', np);
+      miniWindow.webContents.send('stardust:nowplaying', np);
     }
   });
 
   // From the mini player: a control button was pressed.
-  ipcMain.on('ytmplus:miniplayer-control', (_e, action) => {
+  ipcMain.on('stardust:miniplayer-control', (_e, action) => {
     if (action === 'open-main' && mainWindow) {
       mainWindow.show();
       mainWindow.focus();
@@ -260,6 +265,11 @@ function registerIpc() {
 
 async function applySideEffects(key, value, settings) {
   if (key === 'globalHotkeys') registerHotkeys();
+  if (key === 'adBlock') {
+    adblock.setEnabled(value);
+    // Reload so the new blocking state applies to fresh requests.
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.reload();
+  }
   if (key === 'miniPlayer') {
     value ? openMiniPlayer() : closeMiniPlayer();
   }
@@ -289,19 +299,19 @@ function debounce(fn, ms) {
 }
 
 function buildAppMenu() {
-  // A real menu makes the macOS menu bar read "YTM+" instead of "Electron",
+  // A real menu makes the macOS menu bar read "Stardust" instead of "Electron",
   // and restores standard Edit/View shortcuts (copy, paste, reload, devtools).
   const template = [
     {
-      label: 'YTM+',
+      label: 'Stardust',
       submenu: [
-        { label: 'About YTM+', role: 'about' },
+        { label: 'About Stardust', role: 'about' },
         { type: 'separator' },
-        { label: 'Hide YTM+', role: 'hide' },
+        { label: 'Hide Stardust', role: 'hide' },
         { role: 'hideOthers' },
         { role: 'unhide' },
         { type: 'separator' },
-        { label: 'Quit YTM+', role: 'quit' }
+        { label: 'Quit Stardust', role: 'quit' }
       ]
     },
     { label: 'Edit', submenu: [
@@ -323,7 +333,7 @@ app.whenReady().then(async () => {
   if (process.platform === 'darwin' && app.dock) {
     try { app.dock.setIcon(nativeImage.createFromPath(ICON_PNG)); } catch {}
   }
-  app.setAboutPanelOptions({ applicationName: 'YTM+', applicationVersion: app.getVersion(), copyright: 'Spicetify-style theming for YouTube Music' });
+  app.setAboutPanelOptions({ applicationName: 'Stardust', applicationVersion: app.getVersion(), copyright: 'Spicetify-style theming for YouTube Music' });
   registerIpc();
   createMainWindow();
   registerHotkeys();

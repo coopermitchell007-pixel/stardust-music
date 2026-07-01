@@ -5,7 +5,7 @@ const path = require('path');
 const { app } = require('electron');
 
 // Persistent settings stored as JSON in the OS user-data dir.
-const CONFIG_PATH = path.join(app.getPath('userData'), 'ytmplus-config.json');
+const CONFIG_PATH = path.join(app.getPath('userData'), 'stardust-config.json');
 
 const DEFAULTS = {
   activeTheme: 'nebula',
@@ -22,6 +22,7 @@ const DEFAULTS = {
   // to enable Rich Presence. https://discord.com/developers/applications
   discordClientId: '',
   globalHotkeys: true,
+  adBlock: true,             // block ad/tracker requests + skip in-page ads
   windowBounds: { width: 1280, height: 800 },
   // Marketplace extras
   activeFont: null,          // installed font id, or null for YTM default
@@ -47,7 +48,7 @@ function save(patch = {}) {
   try {
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(cache, null, 2));
   } catch (err) {
-    console.error('[YTM+] failed to save config:', err.message);
+    console.error('[Stardust] failed to save config:', err.message);
   }
   return cache;
 }

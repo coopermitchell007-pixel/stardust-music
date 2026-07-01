@@ -4,7 +4,7 @@ const { ipcRenderer } = require('electron');
 const fs = require('fs');
 const path = require('path');
 
-console.log('YTM+ preload loaded at', location.href);
+console.log('Stardust preload loaded at', location.href);
 
 // ---------------------------------------------------------------------------
 // State
@@ -42,7 +42,7 @@ const Starfield = (() => {
   function ensureCanvas() {
     if (canvas) return;
     canvas = document.createElement('canvas');
-    canvas.id = 'ytmplus-starfield';
+    canvas.id = 'stardust-starfield';
     document.body.appendChild(canvas);
     ctx = canvas.getContext('2d');
     window.addEventListener('resize', resize);
@@ -159,7 +159,7 @@ const Visualizer = (() => {
   function ensureCanvas() {
     if (canvas) return;
     canvas = document.createElement('canvas');
-    canvas.id = 'ytmplus-visualizer';
+    canvas.id = 'stardust-visualizer';
     document.body.appendChild(canvas);
     ctx = canvas.getContext('2d');
     window.addEventListener('resize', resize);
@@ -204,7 +204,7 @@ const Visualizer = (() => {
     } catch (e) {
       // createMediaElementSource throws if the element was already tapped by
       // someone else; in that case real sampling isn't available here.
-      console.log('[YTM+] visualizer audio tap unavailable:', e.message);
+      console.log('[Stardust] visualizer audio tap unavailable:', e.message);
     }
   }
 
@@ -307,11 +307,11 @@ window.addEventListener('pointerdown', () => Visualizer.resumeAudio(), { capture
 // Theme application
 // ---------------------------------------------------------------------------
 async function applyTheme(id) {
-  const theme = await ipcRenderer.invoke('ytmplus:get-theme', id);
+  const theme = await ipcRenderer.invoke('stardust:get-theme', id);
   if (!theme) return;
   activeTheme = theme;
   applyVars();
-  sheet('ytmplus-theme').textContent = theme.css || '';
+  sheet('stardust-theme').textContent = theme.css || '';
   Starfield.configure(theme.starfield);
   Visualizer.configure(theme.visualizer);
 }
@@ -321,11 +321,11 @@ function applyVars() {
   const accent = settings.accentOverride || activeTheme.accent;
   const blur = settings.glassBlur != null ? settings.glassBlur : (activeTheme.glass && activeTheme.glass.blur) || 16;
   const glassOpacity = (activeTheme.glass && activeTheme.glass.opacity) != null ? activeTheme.glass.opacity : 0.5;
-  sheet('ytmplus-vars').textContent = `:root {
-  --ytmplus-accent: ${accent};
-  --ytmplus-bg: ${activeTheme.background || 'radial-gradient(circle at 50% 0%, #1b1340, #05060f 70%)'};
-  --ytmplus-glass-blur: ${settings.glassEnabled ? blur : 0}px;
-  --ytmplus-glass-opacity: ${settings.glassEnabled ? glassOpacity : 0.92};
+  sheet('stardust-vars').textContent = `:root {
+  --stardust-accent: ${accent};
+  --stardust-bg: ${activeTheme.background || 'radial-gradient(circle at 50% 0%, #1b1340, #05060f 70%)'};
+  --stardust-glass-blur: ${settings.glassEnabled ? blur : 0}px;
+  --stardust-glass-opacity: ${settings.glassEnabled ? glassOpacity : 0.92};
 }`;
 }
 
@@ -335,21 +335,21 @@ function applyVars() {
 function applyExtras() {
   // Font (single active)
   const font = (extras.font || []).find((f) => f.id === settings.activeFont);
-  sheet('ytmplus-font').textContent = font && font.font ? font.font.css : '';
+  sheet('stardust-font').textContent = font && font.font ? font.font.css : '';
 
   // Animations (multiple)
   const anims = (extras.animation || [])
     .filter((a) => (settings.enabledAnimations || []).includes(a.id))
     .map((a) => `/* ${a.id} */\n${a.css || ''}`)
     .join('\n');
-  sheet('ytmplus-animations').textContent = anims;
+  sheet('stardust-animations').textContent = anims;
 
   // Features (multiple)
   const feats = (extras.feature || [])
     .filter((f) => (settings.enabledFeatures || []).includes(f.id))
     .map((f) => `/* ${f.id} */\n${f.css || ''}`)
     .join('\n');
-  sheet('ytmplus-features').textContent = feats;
+  sheet('stardust-features').textContent = feats;
 }
 
 // ---------------------------------------------------------------------------
@@ -383,11 +383,11 @@ function pollNowPlaying() {
   if (!np) return;
   Visualizer.setPlaying(np.playing);
   // Drives play-state-gated animations (e.g. Vinyl Spin).
-  document.body.classList.toggle('ytmplus-playing', np.playing);
+  document.body.classList.toggle('stardust-playing', np.playing);
   const sig = `${np.title}|${np.artist}|${np.playing}|${np.position}`;
   if (sig !== lastSig) {
     lastSig = sig;
-    ipcRenderer.send('ytmplus:nowplaying', np);
+    ipcRenderer.send('stardust:nowplaying', np);
   }
 }
 
@@ -409,7 +409,35 @@ function doCommand(action) {
   setTimeout(pollNowPlaying, 250);
 }
 
-ipcRenderer.on('ytmplus:command', (_e, { action }) => doCommand(action));
+ipcRenderer.on('stardust:command', (_e, { action }) => doCommand(action));
+
+// ---------------------------------------------------------------------------
+// In-page ad skipper — complements the network-level blocker. Clicks skip
+// buttons, fast-forwards any ad that still plays, and dismisses upsell popups.
+// ---------------------------------------------------------------------------
+function skipAds() {
+  if (settings && settings.adBlock === false) return;
+  // Click any visible "Skip ad" button.
+  const skip = document.querySelector(
+    '.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button, tp-yt-paper-button.skip'
+  );
+  if (skip) { try { skip.click(); } catch {} }
+
+  // If an ad is actually playing, jump to the end and mute it.
+  const adShowing = document.querySelector(
+    '.ad-showing, .ytp-ad-player-overlay, .ytp-ad-module :not(:empty), ytmusic-player[player-ui-state_="AD"]'
+  );
+  const v = document.querySelector('video');
+  if (v && adShowing) {
+    try { if (isFinite(v.duration) && v.duration > 0) v.currentTime = v.duration; v.muted = true; } catch {}
+  }
+
+  // Dismiss Premium / "get YouTube Music Premium" upsell dialogs.
+  const dismiss = document.querySelector(
+    'ytmusic-mealbar-promo-renderer #dismiss-button button, tp-yt-paper-dialog #dismiss-button, .ytmusic-popup-container #dismiss-button button'
+  );
+  if (dismiss) { try { dismiss.click(); } catch {} }
+}
 
 // ---------------------------------------------------------------------------
 // Control panel UI
@@ -428,47 +456,47 @@ function h(tag, props = {}, children = []) {
   return el;
 }
 
-function section(children) { return h('div', { class: 'ytmplus-section' }, children); }
-function label(text) { return h('div', { class: 'ytmplus-label', text }); }
-function miniBtn(act, text) { return h('button', { class: 'ytmplus-mini-btn', dataset: { act }, text }); }
+function section(children) { return h('div', { class: 'stardust-section' }, children); }
+function label(text) { return h('div', { class: 'stardust-label', text }); }
+function miniBtn(act, text) { return h('button', { class: 'stardust-mini-btn', dataset: { act }, text }); }
 
 function toggleRow(text, setting, id) {
   const input = h('input', { type: 'checkbox', dataset: { setting } });
   if (id) input.id = id;
-  return h('div', { class: 'ytmplus-toggle-row' }, [h('label', { text }), input]);
+  return h('div', { class: 'stardust-toggle-row' }, [h('label', { text }), input]);
 }
 function sliderRow(text, setting, attrs) {
   const input = h('input', Object.assign({ type: 'range', dataset: { setting } }, attrs));
-  return h('div', { class: 'ytmplus-slider-row' }, [h('label', { text }), input]);
+  return h('div', { class: 'stardust-slider-row' }, [h('label', { text }), input]);
 }
 
 function buildUI() {
-  if (document.getElementById('ytmplus-launcher')) return;
+  if (document.getElementById('stardust-launcher')) return;
 
-  const launcher = h('button', { id: 'ytmplus-launcher', title: 'YTM+ themes' }, [
-    h('span', { class: 'ytmplus-orbit', text: '✦' })
+  const launcher = h('button', { id: 'stardust-launcher', title: 'Stardust themes' }, [
+    h('span', { class: 'stardust-orbit', text: '✦' })
   ]);
   document.body.appendChild(launcher);
 
-  const discordIdWrap = h('div', { class: 'ytmplus-discord-id', id: 'ytmplus-discord-id-wrap' }, [
-    h('input', { type: 'text', id: 'ytmplus-discord-id', placeholder: 'Discord application Client ID' })
+  const discordIdWrap = h('div', { class: 'stardust-discord-id', id: 'stardust-discord-id-wrap' }, [
+    h('input', { type: 'text', id: 'stardust-discord-id', placeholder: 'Discord application Client ID' })
   ]);
 
-  const panel = h('div', { id: 'ytmplus-panel' }, [
-    h('div', { class: 'ytmplus-head' }, [
-      h('span', { class: 'ytmplus-logo', text: '✦ YTM+' }),
-      h('button', { class: 'ytmplus-x', dataset: { act: 'close' }, text: '✕' })
+  const panel = h('div', { id: 'stardust-panel' }, [
+    h('div', { class: 'stardust-head' }, [
+      h('span', { class: 'stardust-logo', text: '✦ Stardust' }),
+      h('button', { class: 'stardust-x', dataset: { act: 'close' }, text: '✕' })
     ]),
     section([
       label('Theme'),
-      h('div', { id: 'ytmplus-themes', class: 'ytmplus-themes' }),
-      h('button', { id: 'ytmplus-open-market', class: 'ytmplus-market-cta', dataset: { act: 'open-market' }, text: '✦  Browse the Marketplace' }),
-      h('div', { class: 'ytmplus-row' }, [miniBtn('open-themes', 'Open themes folder'), miniBtn('reload-themes', 'Reload')])
+      h('div', { id: 'stardust-themes', class: 'stardust-themes' }),
+      h('button', { id: 'stardust-open-market', class: 'stardust-market-cta', dataset: { act: 'open-market' }, text: '✦  Browse the Marketplace' }),
+      h('div', { class: 'stardust-row' }, [miniBtn('open-themes', 'Open themes folder'), miniBtn('reload-themes', 'Reload')])
     ]),
     section([
       label('Accent'),
-      h('div', { class: 'ytmplus-row' }, [
-        h('input', { type: 'color', id: 'ytmplus-accent' }),
+      h('div', { class: 'stardust-row' }, [
+        h('input', { type: 'color', id: 'stardust-accent' }),
         miniBtn('reset-accent', 'Use theme accent')
       ])
     ]),
@@ -480,12 +508,13 @@ function buildUI() {
       sliderRow('Glass blur', 'glassBlur', { min: '0', max: '40', step: '1' })
     ]),
     section([
+      toggleRow('Ad blocker', 'adBlock'),
       toggleRow('Mini player', 'miniPlayer'),
       toggleRow('Global hotkeys', 'globalHotkeys'),
-      toggleRow('Discord presence', 'discordRichPresence', 'ytmplus-discord'),
+      toggleRow('Discord presence', 'discordRichPresence', 'stardust-discord'),
       discordIdWrap
     ]),
-    h('div', { class: 'ytmplus-foot', text: 'Drop themes into the folder above • restart-free' })
+    h('div', { class: 'stardust-foot', text: 'Drop themes into the folder above • restart-free' })
   ]);
   document.body.appendChild(panel);
 
@@ -500,7 +529,7 @@ function wirePanel(panel) {
   renderThemes(panel);
 
   // Accent
-  const accentInput = panel.querySelector('#ytmplus-accent');
+  const accentInput = panel.querySelector('#stardust-accent');
   accentInput.value = settings.accentOverride || (activeTheme && activeTheme.accent) || '#8b5cff';
   accentInput.addEventListener('input', async (e) => {
     settings = await setSetting('accentOverride', e.target.value);
@@ -520,12 +549,12 @@ function wirePanel(panel) {
   });
 
   // Discord client id
-  const discordIdWrap = panel.querySelector('#ytmplus-discord-id-wrap');
-  const discordId = panel.querySelector('#ytmplus-discord-id');
+  const discordIdWrap = panel.querySelector('#stardust-discord-id-wrap');
+  const discordId = panel.querySelector('#stardust-discord-id');
   discordId.value = settings.discordClientId || '';
   discordIdWrap.style.display = settings.discordRichPresence ? 'block' : 'none';
   if (!discordAvailable) {
-    const dc = panel.querySelector('#ytmplus-discord');
+    const dc = panel.querySelector('#stardust-discord');
     dc.disabled = true;
     dc.parentElement.title = 'Install the discord-rpc package to enable';
   }
@@ -541,9 +570,9 @@ function wirePanel(panel) {
         accentInput.value = (activeTheme && activeTheme.accent) || '#8b5cff';
         applyVars();
       }
-      if (act === 'open-themes') ipcRenderer.invoke('ytmplus:open-themes-folder');
+      if (act === 'open-themes') ipcRenderer.invoke('stardust:open-themes-folder');
       if (act === 'reload-themes') {
-        themeList = await ipcRenderer.invoke('ytmplus:reload-themes');
+        themeList = await ipcRenderer.invoke('stardust:reload-themes');
         renderThemes(panel);
       }
       if (act === 'open-market') openMarket();
@@ -558,27 +587,27 @@ async function onSetting(key, value) {
   if (key === 'visualizerEnabled') Visualizer.configure(activeTheme.visualizer);
   if (key === 'glassEnabled' || key === 'glassBlur') applyVars();
   if (key === 'discordRichPresence') {
-    document.getElementById('ytmplus-discord-id-wrap').style.display = value ? 'block' : 'none';
+    document.getElementById('stardust-discord-id-wrap').style.display = value ? 'block' : 'none';
   }
 }
 
 function renderThemes(panel) {
-  const wrap = panel.querySelector('#ytmplus-themes');
+  const wrap = panel.querySelector('#stardust-themes');
   while (wrap.firstChild) wrap.removeChild(wrap.firstChild);
   for (const t of themeList) {
     const b = document.createElement('button');
-    b.className = 'ytmplus-theme-btn' + (activeTheme && t.id === activeTheme.id ? ' active' : '');
+    b.className = 'stardust-theme-btn' + (activeTheme && t.id === activeTheme.id ? ' active' : '');
     b.style.setProperty('--swatch', t.accent);
-    const preview = h('div', { class: 'ytmplus-preview' });
+    const preview = h('div', { class: 'stardust-preview' });
     if (t.background) preview.style.background = t.background;
     b.appendChild(preview);
-    b.appendChild(h('span', { class: 'ytmplus-tname', text: t.name }));
-    if (t.source === 'user') b.appendChild(h('span', { class: 'ytmplus-badge', text: 'user' }));
+    b.appendChild(h('span', { class: 'stardust-tname', text: t.name }));
+    if (t.source === 'user') b.appendChild(h('span', { class: 'stardust-badge', text: 'user' }));
     b.addEventListener('click', async () => {
       await setSetting('activeTheme', t.id);
       await applyTheme(t.id);
       renderThemes(panel);
-      const ai = panel.querySelector('#ytmplus-accent');
+      const ai = panel.querySelector('#stardust-accent');
       if (!settings.accentOverride) ai.value = activeTheme.accent;
     });
     wrap.appendChild(b);
@@ -600,14 +629,14 @@ function isEnabled(item) {
 }
 
 async function openMarket() {
-  let modal = document.getElementById('ytmplus-market');
+  let modal = document.getElementById('stardust-market');
   if (!modal) modal = buildMarketShell();
   modal.classList.add('open');
-  const grid = modal.querySelector('#ytmplus-market-grid');
+  const grid = modal.querySelector('#stardust-market-grid');
   while (grid.firstChild) grid.removeChild(grid.firstChild);
-  grid.appendChild(h('div', { class: 'ytmplus-market-loading', text: 'Loading marketplace…' }));
+  grid.appendChild(h('div', { class: 'stardust-market-loading', text: 'Loading marketplace…' }));
   try {
-    const data = await ipcRenderer.invoke('ytmplus:marketplace-catalog');
+    const data = await ipcRenderer.invoke('stardust:marketplace-catalog');
     marketState.items = data.items || [];
     installed = data.installed || installed;
   } catch (e) {
@@ -618,26 +647,26 @@ async function openMarket() {
 
 function buildMarketShell() {
   const tabs = ['all', 'theme', 'font', 'animation', 'feature'].map((t) =>
-    h('button', { class: 'ytmplus-market-tab' + (t === 'all' ? ' active' : ''), dataset: { tab: t },
+    h('button', { class: 'stardust-market-tab' + (t === 'all' ? ' active' : ''), dataset: { tab: t },
       text: t === 'all' ? 'All' : TYPE_LABEL[t] + 's' })
   );
 
-  const search = h('input', { id: 'ytmplus-market-search', type: 'text', placeholder: 'Search themes, fonts, animations…' });
+  const search = h('input', { id: 'stardust-market-search', type: 'text', placeholder: 'Search themes, fonts, animations…' });
 
-  const modal = h('div', { id: 'ytmplus-market' }, [
-    h('div', { class: 'ytmplus-market-card-shell' }, [
-      h('div', { class: 'ytmplus-market-head' }, [
-        h('div', { class: 'ytmplus-market-title' }, [
-          h('span', { class: 'ytmplus-logo', text: '✦ Marketplace' }),
-          h('span', { class: 'ytmplus-market-sub', text: 'Themes · Fonts · Animations · Features' })
+  const modal = h('div', { id: 'stardust-market' }, [
+    h('div', { class: 'stardust-market-card-shell' }, [
+      h('div', { class: 'stardust-market-head' }, [
+        h('div', { class: 'stardust-market-title' }, [
+          h('span', { class: 'stardust-logo', text: '✦ Marketplace' }),
+          h('span', { class: 'stardust-market-sub', text: 'Themes · Fonts · Animations · Features' })
         ]),
-        h('button', { class: 'ytmplus-x', dataset: { mact: 'close' }, text: '✕' })
+        h('button', { class: 'stardust-x', dataset: { mact: 'close' }, text: '✕' })
       ]),
-      h('div', { class: 'ytmplus-market-toolbar' }, [
-        h('div', { class: 'ytmplus-market-tabs' }, tabs),
+      h('div', { class: 'stardust-market-toolbar' }, [
+        h('div', { class: 'stardust-market-tabs' }, tabs),
         search
       ]),
-      h('div', { id: 'ytmplus-market-grid', class: 'ytmplus-market-grid' })
+      h('div', { id: 'stardust-market-grid', class: 'stardust-market-grid' })
     ])
   ]);
   document.body.appendChild(modal);
@@ -646,7 +675,7 @@ function buildMarketShell() {
   modal.querySelector('[data-mact="close"]').addEventListener('click', () => modal.classList.remove('open'));
   tabs.forEach((tb) => tb.addEventListener('click', () => {
     marketState.filter = tb.dataset.tab;
-    modal.querySelectorAll('.ytmplus-market-tab').forEach((x) => x.classList.toggle('active', x === tb));
+    modal.querySelectorAll('.stardust-market-tab').forEach((x) => x.classList.toggle('active', x === tb));
     renderMarketGrid();
   }));
   search.addEventListener('input', () => { marketState.search = search.value.toLowerCase(); renderMarketGrid(); });
@@ -654,7 +683,7 @@ function buildMarketShell() {
 }
 
 function renderMarketGrid() {
-  const grid = document.getElementById('ytmplus-market-grid');
+  const grid = document.getElementById('stardust-market-grid');
   if (!grid) return;
   while (grid.firstChild) grid.removeChild(grid.firstChild);
   const items = marketState.items.filter((it) => {
@@ -664,33 +693,33 @@ function renderMarketGrid() {
     return hay.includes(marketState.search);
   });
   if (!items.length) {
-    grid.appendChild(h('div', { class: 'ytmplus-market-loading', text: 'No matches.' }));
+    grid.appendChild(h('div', { class: 'stardust-market-loading', text: 'No matches.' }));
     return;
   }
   for (const it of items) grid.appendChild(marketCard(it));
 }
 
 function marketCard(item) {
-  const card = h('div', { class: 'ytmplus-market-item' });
-  const preview = h('div', { class: 'ytmplus-market-preview' });
+  const card = h('div', { class: 'stardust-market-item' });
+  const preview = h('div', { class: 'stardust-market-preview' });
   if (item.preview) preview.style.background = item.preview;
-  preview.appendChild(h('span', { class: 'ytmplus-market-type', text: TYPE_LABEL[item.type] || item.type }));
+  preview.appendChild(h('span', { class: 'stardust-market-type', text: TYPE_LABEL[item.type] || item.type }));
   card.appendChild(preview);
 
-  card.appendChild(h('div', { class: 'ytmplus-market-name', text: item.name }));
-  card.appendChild(h('div', { class: 'ytmplus-market-author', text: 'by ' + (item.author || 'community') }));
-  if (item.description) card.appendChild(h('div', { class: 'ytmplus-market-desc', text: item.description }));
+  card.appendChild(h('div', { class: 'stardust-market-name', text: item.name }));
+  card.appendChild(h('div', { class: 'stardust-market-author', text: 'by ' + (item.author || 'community') }));
+  if (item.description) card.appendChild(h('div', { class: 'stardust-market-desc', text: item.description }));
 
-  const actions = h('div', { class: 'ytmplus-market-actions' });
+  const actions = h('div', { class: 'stardust-market-actions' });
   const inst = isInstalled(item);
 
   if (!inst) {
-    const b = h('button', { class: 'ytmplus-market-btn primary', text: 'Install' });
+    const b = h('button', { class: 'stardust-market-btn primary', text: 'Install' });
     b.addEventListener('click', () => doInstall(item, b));
     actions.appendChild(b);
   } else {
     if (item.type === 'theme') {
-      const sel = h('button', { class: 'ytmplus-market-btn' + (isEnabled(item) ? ' on' : ' primary'),
+      const sel = h('button', { class: 'stardust-market-btn' + (isEnabled(item) ? ' on' : ' primary'),
         text: isEnabled(item) ? 'Applied ✓' : 'Apply' });
       sel.addEventListener('click', async () => {
         await setSetting('activeTheme', item.id);
@@ -701,11 +730,11 @@ function marketCard(item) {
       actions.appendChild(sel);
     } else {
       const on = isEnabled(item);
-      const tog = h('button', { class: 'ytmplus-market-btn' + (on ? ' on' : ' primary'), text: on ? 'Enabled ✓' : 'Enable' });
+      const tog = h('button', { class: 'stardust-market-btn' + (on ? ' on' : ' primary'), text: on ? 'Enabled ✓' : 'Enable' });
       tog.addEventListener('click', () => toggleEnable(item));
       actions.appendChild(tog);
     }
-    const rm = h('button', { class: 'ytmplus-market-btn ghost', title: 'Remove', text: 'Remove' });
+    const rm = h('button', { class: 'stardust-market-btn ghost', title: 'Remove', text: 'Remove' });
     rm.addEventListener('click', () => doRemove(item));
     actions.appendChild(rm);
   }
@@ -715,7 +744,7 @@ function marketCard(item) {
 
 async function doInstall(item, btn) {
   if (btn) { btn.textContent = 'Installing…'; btn.disabled = true; }
-  const r = await ipcRenderer.invoke('ytmplus:marketplace-install', item);
+  const r = await ipcRenderer.invoke('stardust:marketplace-install', item);
   installed = r.installed || installed;
   extras = r.extras || extras;
   themeList = r.themes || themeList;
@@ -733,7 +762,7 @@ async function doRemove(item) {
   if (item.type === 'font' && settings.activeFont === item.id) await setSetting('activeFont', null);
   if (item.type === 'animation') await setSetting('enabledAnimations', without(settings.enabledAnimations, item.id));
   if (item.type === 'feature') await setSetting('enabledFeatures', without(settings.enabledFeatures, item.id));
-  const r = await ipcRenderer.invoke('ytmplus:marketplace-remove', { type: item.type, id: item.id });
+  const r = await ipcRenderer.invoke('stardust:marketplace-remove', { type: item.type, id: item.id });
   installed = r.installed || installed;
   extras = r.extras || extras;
   themeList = r.themes || themeList;
@@ -766,7 +795,7 @@ function uniqAdd(arr, id) { return Array.from(new Set([...(arr || []), id])); }
 function without(arr, id) { return (arr || []).filter((x) => x !== id); }
 
 async function setSetting(key, value) {
-  settings = await ipcRenderer.invoke('ytmplus:set-setting', { key, value });
+  settings = await ipcRenderer.invoke('stardust:set-setting', { key, value });
   return settings;
 }
 
@@ -776,12 +805,12 @@ async function setSetting(key, value) {
 async function boot() {
   // Base structural CSS lives in overlay.css next to this preload.
   try {
-    sheet('ytmplus-base').textContent = fs.readFileSync(path.join(__dirname, 'overlay', 'overlay.css'), 'utf8');
+    sheet('stardust-base').textContent = fs.readFileSync(path.join(__dirname, 'overlay', 'overlay.css'), 'utf8');
   } catch (e) {
-    console.error('[YTM+] failed to load overlay.css', e.message);
+    console.error('[Stardust] failed to load overlay.css', e.message);
   }
 
-  const init = await ipcRenderer.invoke('ytmplus:init');
+  const init = await ipcRenderer.invoke('stardust:init');
   settings = init.settings;
   themeList = init.themes;
   discordAvailable = init.discordAvailable;
@@ -793,15 +822,16 @@ async function boot() {
   buildUI();
 
   setInterval(pollNowPlaying, 1000);
+  setInterval(skipAds, 600);
 }
 
 function safeBoot() {
   // Only inject on the actual YTM app, not on Google sign-in pages.
   if (!location.hostname.includes('music.youtube.com')) {
-    console.log('YTM+ skipping injection on', location.hostname);
+    console.log('Stardust skipping injection on', location.hostname);
     return;
   }
-  boot().catch((e) => console.error('YTM+ boot failed:', e && e.stack || e));
+  boot().catch((e) => console.error('Stardust boot failed:', e && e.stack || e));
 }
 
 if (document.readyState === 'loading') {

@@ -34,7 +34,7 @@ async function connect(id) {
     await client.login({ clientId: id });
     return true;
   } catch (err) {
-    console.error('[YTM+] Discord RPC connect failed:', err.message);
+    console.error('[Stardust] Discord RPC connect failed:', err.message);
     client = null;
     ready = false;
     return false;
@@ -57,8 +57,8 @@ function setActivity(np) {
   const activity = {
     details: (np.title || 'YouTube Music').slice(0, 128),
     state: (np.artist ? `by ${np.artist}` : 'Listening').slice(0, 128),
-    largeImageKey: 'ytmplus',
-    largeImageText: np.album || 'YTM+',
+    largeImageKey: 'stardust',
+    largeImageText: np.album || 'Stardust',
     instance: false
   };
   if (np.playing && np.duration && np.position != null) {
@@ -72,7 +72,7 @@ function setActivity(np) {
   try {
     client.setActivity(activity);
   } catch (err) {
-    console.error('[YTM+] Discord setActivity failed:', err.message);
+    console.error('[Stardust] Discord setActivity failed:', err.message);
   }
 }
 

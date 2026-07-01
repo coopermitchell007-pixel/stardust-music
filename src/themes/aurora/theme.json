@@ -1,7 +1,7 @@
 {
   "id": "aurora",
   "name": "Aurora Veil",
-  "author": "YTM+",
+  "author": "Stardust",
   "accent": "#3affa3",
   "background": "radial-gradient(1200px 900px at 50% -8%, #0a3b2c 0%, rgba(10,59,44,0) 62%), #03070a",
   "glass": { "blur": 18, "opacity": 0.46 },

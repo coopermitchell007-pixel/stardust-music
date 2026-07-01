@@ -7,10 +7,10 @@ const barEl = document.getElementById('bar');
 const ppEl = document.getElementById('pp');
 
 document.querySelectorAll('[data-act]').forEach((btn) => {
-  btn.addEventListener('click', () => window.ytmplus.control(btn.dataset.act));
+  btn.addEventListener('click', () => window.stardust.control(btn.dataset.act));
 });
 
-window.ytmplus.onNowPlaying((np) => {
+window.stardust.onNowPlaying((np) => {
   if (!np) return;
   titleEl.textContent = np.title || 'Nothing playing';
   artistEl.textContent = np.artist || '';

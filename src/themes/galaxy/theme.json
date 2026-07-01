@@ -1,7 +1,7 @@
 {
   "id": "galaxy",
   "name": "Spiral Galaxy",
-  "author": "YTM+",
+  "author": "Stardust",
   "accent": "#36d1dc",
   "background": "radial-gradient(1200px 900px at 50% -8%, #0c2f52 0%, rgba(12,47,82,0) 62%), #03060f",
   "glass": { "blur": 18, "opacity": 0.48 },

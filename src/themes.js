@@ -34,7 +34,7 @@ function readThemeFolder(dir, source) {
       css
     };
   } catch (err) {
-    console.error(`[YTM+] bad theme in ${dir}:`, err.message);
+    console.error(`[Stardust] bad theme in ${dir}:`, err.message);
     return null;
   }
 }

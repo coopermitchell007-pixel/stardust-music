@@ -21,12 +21,12 @@ jobs:
         include:
           - os: windows-latest
             platform: --win
-            artifact: ytmplus-windows
+            artifact: stardust-windows
             glob: |
               dist/*.exe
           - os: macos-latest
             platform: --mac
-            artifact: ytmplus-macos
+            artifact: stardust-macos
             glob: |
               dist/*.dmg
               dist/*.zip

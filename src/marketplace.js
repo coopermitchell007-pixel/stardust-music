@@ -11,7 +11,7 @@ const themes = require('./themes');
 // catalog (community-contributed) can override/extend it by id when reachable.
 const BUNDLED_CATALOG = path.join(__dirname, 'marketplace', 'catalog.json');
 const REMOTE_CATALOG_URL =
-  'https://raw.githubusercontent.com/coopermitchell007-pixel/ytm-plus/main/src/marketplace/catalog.json';
+  'https://raw.githubusercontent.com/coopermitchell007-pixel/stardust-music/main/src/marketplace/catalog.json';
 
 // Installed non-theme items live here (themes go through themes.js into Themes/).
 const ROOT = path.join(app.getPath('userData'), 'Marketplace');
@@ -29,7 +29,7 @@ function ensureDirs() {
 
 function readBundled() {
   try { return JSON.parse(fs.readFileSync(BUNDLED_CATALOG, 'utf8')); }
-  catch (e) { console.error('[YTM+] bad bundled catalog:', e.message); return []; }
+  catch (e) { console.error('[Stardust] bad bundled catalog:', e.message); return []; }
 }
 
 function fetchRemote(timeout = 3500) {

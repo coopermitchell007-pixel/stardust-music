@@ -1,6 +1,6 @@
 /* Aurora Veil — shimmering green-teal */
 .title.ytmusic-player-bar {
-  text-shadow: 0 0 16px color-mix(in srgb, var(--ytmplus-accent) 70%, transparent);
+  text-shadow: 0 0 16px color-mix(in srgb, var(--stardust-accent) 70%, transparent);
 }
 ytmusic-player-bar.ytmusic-app-layout {
   box-shadow: 0 -12px 40px rgba(58, 255, 163, 0.16);

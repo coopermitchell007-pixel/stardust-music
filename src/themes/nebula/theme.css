@@ -1,6 +1,6 @@
 /* Nebula Drift — soft violet glow on track titles */
 .title.ytmusic-player-bar {
-  text-shadow: 0 0 18px color-mix(in srgb, var(--ytmplus-accent) 70%, transparent);
+  text-shadow: 0 0 18px color-mix(in srgb, var(--stardust-accent) 70%, transparent);
 }
 ytmusic-player-bar.ytmusic-app-layout {
   box-shadow: 0 -12px 40px rgba(139, 92, 255, 0.18);

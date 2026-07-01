@@ -1,7 +1,7 @@
 {
   "id": "nebula",
   "name": "Nebula Drift",
-  "author": "YTM+",
+  "author": "Stardust",
   "accent": "#8b5cff",
   "background": "radial-gradient(1200px 900px at 50% -8%, #241657 0%, rgba(36,22,87,0) 62%), #05040e",
   "glass": { "blur": 20, "opacity": 0.5 },

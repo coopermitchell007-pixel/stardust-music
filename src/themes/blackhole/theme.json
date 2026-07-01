@@ -1,7 +1,7 @@
 {
   "id": "blackhole",
   "name": "Event Horizon",
-  "author": "YTM+",
+  "author": "Stardust",
   "accent": "#ff8c42",
   "background": "radial-gradient(105% 88% at 50% 36%, #000 0%, #150700 13%, #341300 21%, #5e2807 27%, #94440f 31%, #cf5f18 35%, #ff8c42 39%, #c2541a 44%, #7a3209 50%, #3c1804 60%, #150800 74%, #000 100%), #000",
   "glass": { "blur": 22, "opacity": 0.55 },

@@ -1,6 +1,6 @@
 /* Spiral Galaxy — cool cyan accents */
 .title.ytmusic-player-bar {
-  text-shadow: 0 0 16px color-mix(in srgb, var(--ytmplus-accent) 65%, transparent);
+  text-shadow: 0 0 16px color-mix(in srgb, var(--stardust-accent) 65%, transparent);
 }
 ytmusic-player-bar.ytmusic-app-layout {
   box-shadow: 0 -12px 40px rgba(54, 209, 220, 0.16);

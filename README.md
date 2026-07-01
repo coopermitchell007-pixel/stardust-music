@@ -1,4 +1,4 @@
-# YTM+ ✦
+# Stardust ✦
 
 **Spicetify-style theming for YouTube Music** — a desktop app that wraps
 [music.youtube.com](https://music.youtube.com) and lets you drop in customizable
@@ -33,7 +33,7 @@ The floating **✦** button (bottom-right) opens the control panel.
 
 ## Building installers
 
-YTM+ packages for **Windows**, **macOS**, and **Linux** via
+Stardust packages for **Windows**, **macOS**, and **Linux** via
 [electron-builder](https://www.electron.build/).
 
 ```bash
@@ -54,7 +54,7 @@ npm run dist         # current platform's default targets
 
 The app is fully cross-platform — the same Electron/preload/theme code runs on
 Windows. The NSIS installer creates Start-menu and desktop shortcuts named
-**YTM+**, global **media-key** hotkeys work system-wide, and the Windows icon is
+**Stardust**, global **media-key** hotkeys work system-wide, and the Windows icon is
 generated automatically from `build/icon.png`.
 
 ## Creating a theme
@@ -76,7 +76,7 @@ user themes folder (Panel → **Open themes folder**) and hit **Reload**.
 ```
 
 `theme.css` is injected on top of the base layer — target any YouTube Music
-element and use `var(--ytmplus-accent)` for the active accent color.
+element and use `var(--stardust-accent)` for the active accent color.
 
 ## Marketplace
 

@@ -1,7 +1,7 @@
 {
-  "name": "ytm-plus",
-  "version": "0.2.0",
-  "description": "YTM+ — Spicetify-style theming for YouTube Music, with customizable space themes, a visualizer, glassmorphism, Discord Rich Presence, global hotkeys and a mini player.",
+  "name": "stardust-music",
+  "version": "0.3.0",
+  "description": "Stardust — Spicetify-style theming for YouTube Music, with customizable space themes, a visualizer, glassmorphism, Discord Rich Presence, global hotkeys and a mini player.",
   "main": "src/main.js",
   "author": "Cooper Mitchell",
   "license": "MIT",
@@ -23,8 +23,8 @@
     "discord-rpc": "^4.0.1"
   },
   "build": {
-    "appId": "com.ytmplus.app",
-    "productName": "YTM+",
+    "appId": "com.stardust.app",
+    "productName": "Stardust",
     "copyright": "Copyright © 2026 Cooper Mitchell",
     "afterPack": "build/afterPack.js",
     "directories": {
@@ -52,7 +52,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "YTM+"
+      "shortcutName": "Stardust"
     },
     "linux": {
       "target": ["AppImage"],
