@@ -1217,8 +1217,12 @@ const Lyrics = (() => {
   function updateDebug() {
     if (!dbg) return;
     const v = playingVideo();
+    const first = synced.length ? synced[0].t.toFixed(1) : '-';
+    const last = synced.length ? synced[synced.length - 1].t.toFixed(1) : '-';
     dbg.textContent = 'sd: mode=' + mode + ' lines=' + synced.length + ' idx=' + lastIdx
       + ' t=' + (v ? (v.currentTime || 0).toFixed(1) : 'no-video')
+      + ' dur=' + (v && isFinite(v.duration) ? v.duration.toFixed(0) : '?')
+      + ' first=' + first + ' last=' + last
       + ' paused=' + (v ? v.paused : '?') + ' conn=' + (box ? box.isConnected : '?')
       + ' raf=' + (raf ? 'on' : 'OFF') + ' synth=' + synthMode;
   }
