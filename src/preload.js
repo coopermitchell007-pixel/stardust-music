@@ -723,14 +723,18 @@ const BEHAVIORS = {
 const VinylSpin = (() => {
   let timer = null;
   function markWrap(img) {
+    // Walk up to (and including) the player bar / player page, clearing every
+    // wrapper's background inline (beats YTM's inline styles) so no gray box
+    // shows around the circular art. Stop at the container to avoid over-reach.
     let p = img.parentElement;
-    for (let i = 0; i < 3 && p; i++) {
+    for (let i = 0; i < 6 && p; i++) {
       p.classList.add('stardust-vinyl-wrap');
-      // Inline styles beat YTM's stylesheet — guarantees no gray box behind it.
       try { p.style.background = 'transparent'; p.style.backgroundColor = 'transparent'; p.style.overflow = 'visible'; } catch {}
+      const tag = (p.tagName || '').toLowerCase();
+      if (tag === 'ytmusic-player-bar' || tag === 'ytmusic-player-page') break;
       p = p.parentElement;
     }
-    try { img.style.background = 'transparent'; } catch {}
+    try { img.style.background = 'transparent'; img.style.backgroundColor = 'transparent'; } catch {}
   }
   function tagBar() {
     const bar = document.querySelector('ytmusic-player-bar');
@@ -1238,8 +1242,13 @@ const Lyrics = (() => {
         end: (words[i + 1] && words[i + 1].time != null) ? words[i + 1].time : Math.min(lineEnd, w.time + 1.2)
       }));
     }
-    const PER_CHAR = 0.16, MIN_W = 0.30;
-    const durs = words.map((w) => Math.max(MIN_W, w.len * PER_CHAR));
+    // Weight each word by SYLLABLES (vowel groups) — closer to how long a word
+    // is actually sung than raw character count — plus a small per-word floor.
+    const PER_SYL = 0.34, BASE = 0.16, MIN_W = 0.26;
+    const durs = words.map((w) => {
+      const syl = ((w.text || '').toLowerCase().match(/[aeiouy]+/g) || []).length || 1;
+      return Math.max(MIN_W, BASE + syl * PER_SYL);
+    });
     const natural = durs.reduce((a, b) => a + b, 0);
     const window = Math.max(0.5, lineEnd - line.t);
     // Compress to fit if the line window is short; never stretch beyond the
