@@ -107,6 +107,9 @@ function createMainWindow() {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+    // Closing the main window tears everything down (incl. the mini player).
+    if (miniWindow && !miniWindow.isDestroyed()) miniWindow.close();
+    app.quit();
   });
 }
 
@@ -356,9 +359,9 @@ app.whenReady().then(async () => {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
-  discord.disconnect();
+  try { discord.disconnect(); } catch {}
 });
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
-});
+// Closing the main window quits the app on every platform (no lingering
+// dock-only process that has to be force-quit).
+app.on('window-all-closed', () => app.quit());

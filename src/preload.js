@@ -147,7 +147,7 @@ function hexA(hex, a) {
 }
 const BlackHole = (() => {
   let canvas, ctx, raf = null, cfg = {}, enabled = false, w = 0, h = 0, t = 0, parts = [];
-  const OBJECTS = ['🎵', '🎧', '⭐', '🪐', '☄️', '💿', '✨', '🛸', '🌟'];
+  const SHAPES = ['planet', 'spark', 'shard', 'ring'];
 
   function ensureCanvas() {
     if (canvas) return;
@@ -170,15 +170,40 @@ const BlackHole = (() => {
 
   function spawn(outer) {
     const r = R();
-    const isObj = Math.random() < 0.1;
+    const isObj = Math.random() < 0.09;
     return {
       ang: Math.random() * Math.PI * 2,
       rad: r * (outer ? 7 + Math.random() * 4 : 1.4 + Math.random() * 9),
       spin: 0.5 + Math.random() * 0.7,
       vin: 0.7 + Math.random() * 1.3,
-      size: isObj ? 14 + Math.random() * 12 : 1 + Math.random() * 1.8,
-      obj: isObj ? OBJECTS[Math.floor(Math.random() * OBJECTS.length)] : null
+      size: isObj ? 5 + Math.random() * 6 : 1 + Math.random() * 1.8,
+      rot: Math.random() * Math.PI,
+      shape: isObj ? SHAPES[Math.floor(Math.random() * SHAPES.length)] : null
     };
+  }
+
+  function drawShape(p, x, y, color, alpha) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(p.rot + t * 2);
+    ctx.globalAlpha = alpha;
+    const s = p.size;
+    if (p.shape === 'planet') {
+      ctx.fillStyle = color; ctx.beginPath(); ctx.arc(0, 0, s, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = hexA('#ffffff', 0.7 * alpha); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.ellipse(0, 0, s * 1.7, s * 0.55, 0.5, 0, Math.PI * 2); ctx.stroke();
+    } else if (p.shape === 'spark') {
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.4;
+      for (let i = 0; i < 4; i++) { ctx.rotate(Math.PI / 2); ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -s * 1.6); ctx.stroke(); }
+    } else if (p.shape === 'shard') {
+      ctx.fillStyle = color; ctx.beginPath();
+      ctx.moveTo(0, -s); ctx.lineTo(s * 0.7, 0); ctx.lineTo(0, s); ctx.lineTo(-s * 0.7, 0); ctx.closePath(); ctx.fill();
+    } else { // ring
+      ctx.strokeStyle = color; ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.arc(0, 0, s, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.restore();
+    ctx.globalAlpha = 1;
   }
   function seed() { parts = Array.from({ length: 190 }, () => spawn(false)); }
 
@@ -223,12 +248,8 @@ const BlackHole = (() => {
       if (p.rad <= r * 0.96) Object.assign(p, spawn(true));
       const x = cx + Math.cos(p.ang) * p.rad, y = cy + Math.sin(p.ang) * p.rad;
       const fade = Math.min(1, (p.rad - r) / (r * 2.5));
-      if (p.obj) {
-        ctx.globalAlpha = fade;
-        ctx.font = `${p.size}px sans-serif`;
-        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText(p.obj, x, y);
-        ctx.globalAlpha = 1;
+      if (p.shape) {
+        drawShape(p, x, y, cfg.color || '#ff8c42', fade);
       } else {
         // streak toward the hole for a "being pulled in" feel
         const tx = cx + Math.cos(p.ang - p.spin * 0.06) * (p.rad + p.vin * 6);
@@ -643,6 +664,7 @@ const AmbientGlow = (() => {
 const Lyrics = (() => {
   let active = false, synced = [], plain = null, key = '', poll = null;
   let box = null, body = null, lastIdx = -1, attempts = 0, np = null;
+  let searching = false, host = null;
 
   function enable() {
     active = true;
@@ -655,7 +677,7 @@ const Lyrics = (() => {
   function disable() {
     active = false;
     if (poll) { clearInterval(poll); poll = null; }
-    detach(); synced = []; plain = null; key = '';
+    clearHost(); synced = []; plain = null; key = ''; searching = false;
   }
 
   const lyricsTab = () => [...document.querySelectorAll('ytmusic-player-page tp-yt-paper-tab')]
@@ -677,26 +699,29 @@ const Lyrics = (() => {
     if (!box) { body = h('div', { class: 'stardust-lyric-lines' }); box = h('div', { id: 'stardust-lyrics' }, [body]); }
     return box;
   }
-  function attach() {
-    const host = tabHost(); if (!host) return;
-    ensureBox();
-    if (box.parentElement !== host) host.appendChild(box);
-    host.querySelectorAll('ytmusic-message-renderer').forEach((m) => { m.style.display = 'none'; });
-    if (!body.firstChild) render();
-  }
-  function detach() {
-    if (box && box.parentElement) {
-      box.parentElement.querySelectorAll('ytmusic-message-renderer').forEach((m) => { m.style.display = ''; });
-      box.remove();
-    }
-  }
+  function clearHost() { if (host) { host.classList.remove('stardust-lyrics-on'); host = null; } if (box && box.parentElement) box.remove(); }
 
-  // Each tick: keep tab clickable, and show our lyrics only when the Lyrics tab
-  // is active and YTM has no native lyrics of its own.
+  // State machine (runs on a light poll, only mutates the DOM on change):
+  //  - show OUR lyrics whenever LRCLIB gave us something (or we're still
+  //    searching this track) and the Lyrics tab is open;
+  //  - otherwise get out of the way and let YTM's own tab render.
+  // A single class on the tab host hides YTM's content and shows our box, so it
+  // survives YTM re-rendering the tab without any per-tick thrash.
   function sync() {
     if (!active) return;
     ungray();
-    if (tabSelected() && tabHost() && !nativeLyrics()) attach(); else detach();
+    const h0 = tabHost();
+    const want = h0 && tabSelected() && (synced.length || plain || searching);
+    if (want) {
+      if (host && host !== h0) host.classList.remove('stardust-lyrics-on');
+      host = h0;
+      host.classList.add('stardust-lyrics-on');
+      ensureBox();
+      if (box.parentElement !== host) host.appendChild(box);
+      if (!body.firstChild) render(searching ? 'Searching lyrics…' : undefined);
+    } else {
+      clearHost();
+    }
   }
 
   function parseLRC(text) {
@@ -720,8 +745,8 @@ const Lyrics = (() => {
   function fetchFor(track) {
     if (!track || !track.title) return;
     const k = track.title + '|' + track.artist; if (k === key) return;
-    key = k; np = track; synced = []; plain = null; attempts = 0; lastIdx = -1;
-    render('Searching lyrics…'); doFetch();
+    key = k; np = track; synced = []; plain = null; attempts = 0; lastIdx = -1; searching = true;
+    render('Searching lyrics…'); sync(); doFetch();
   }
   async function doFetch() {
     attempts++;
@@ -730,9 +755,10 @@ const Lyrics = (() => {
     if (!active) return;
     if (res && res.syncedLyrics) { synced = parseLRC(res.syncedLyrics); plain = null; }
     else if (res && res.plainLyrics) { synced = []; plain = res.plainLyrics; }
-    else if (attempts < 3) { setTimeout(() => { if (active) doFetch(); }, 1800); return; } // duration may not be ready yet
+    else if (attempts < 3) { setTimeout(() => { if (active) doFetch(); }, 1800); return; } // still searching; duration may not be ready
     else { synced = []; plain = null; }
-    render();
+    searching = false;
+    render(); sync();
   }
 
   function highlight() {

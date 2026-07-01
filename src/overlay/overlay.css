@@ -8,9 +8,15 @@
    ========================================================================= */
 
 /* --- background + canvases ------------------------------------------------ */
-html, body {
-  background: var(--stardust-bg) fixed !important;
+/* Paint the gradient ONCE on the root (no `background-attachment: fixed`).
+   A fixed background is re-rasterised per composited layer, and YTM stacks a
+   layer per content shelf — the seams between those repaints showed up as faint
+   horizontal "lines between segments". A single non-fixed root paint has none. */
+html {
+  background: var(--stardust-bg) !important;
+  background-attachment: scroll !important;
 }
+body { background: transparent !important; }
 
 /* Glowing nebula bloom behind everything. These are LOCALISED radial blooms
    that fade to transparent over the theme's near-black base — not a full-height
@@ -33,20 +39,8 @@ html::before {
   to   { transform: translate(2%, -1.5%) scale(1.08); opacity: 1; }
 }
 
-/* Soft vignette for depth — transparent in the centre, darkening at the edges.
-   Replaces the old film-grain dither (which read as "grainy"); the banding it
-   was fighting is gone now that every YTM surface is uniformly transparent. */
-body::after {
-  content: '';
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  /* Multi-stop, shallow ramp so the darkening is too gradual to band. */
-  background: radial-gradient(140% 135% at 50% 38%,
-    transparent 0%, transparent 62%,
-    rgba(0,0,0,0.10) 78%, rgba(0,0,0,0.22) 90%, rgba(0,0,0,0.34) 100%);
-}
+/* (Vignette removed — its radial ramp introduced faint banding rings on the
+   very dark themes; the nebula bloom above already gives depth.) */
 
 #stardust-starfield {
   position: fixed;
@@ -631,6 +625,8 @@ input[type="color"]#stardust-accent {
 #stardust-scrolltop:hover { transform: translateY(-3px) scale(1.05); }
 
 /* Synced lyrics rendered inside YTM's own Lyrics tab — flat & native, not a card. */
+/* When our lyrics are active, hide YTM's own tab content and show only ours. */
+#tab-renderer.stardust-lyrics-on > *:not(#stardust-lyrics) { display: none !important; }
 #stardust-lyrics { width: 100%; box-sizing: border-box; padding: 8px 32px 56px; font-family: inherit; }
 .stardust-lyric-lines { display: flex; flex-direction: column; gap: 2px; }
 .stardust-lyric-line {
