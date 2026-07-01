@@ -795,9 +795,9 @@ img.stardust-vinyl.sd-mini {
 }
 /* Our own centered big-record overlay (immune to YTM ancestor transforms). */
 #stardust-vinyl-big {
-  /* Vertically centered, sitting left of centre (clear of lyrics on the right). */
-  position: fixed; left: 7vw; right: auto; top: 0; bottom: 0; margin: auto 0;
-  width: min(42vh, 380px); height: min(42vh, 380px);
+  /* Position + size are set in JS to sit exactly over YTM's art (centered in
+     the left art column). */
+  position: fixed;
   border-radius: 50%; background-size: cover; background-position: center;
   /* Above YTM's player content, below Stardust's own panels/visualizer. */
   z-index: 2147483630; pointer-events: none; display: none;

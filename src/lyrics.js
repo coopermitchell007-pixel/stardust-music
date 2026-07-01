@@ -109,18 +109,27 @@ function scoreCandidate(x, want) {
 // artist string differs, which is the common "couldn't find it" case.
 const MIN_SCORE = 5;
 
-// Resolve as soon as ANY provider returns a SYNCED result (fast), else the best
-// plain result once all settle. So a slow lrclib can't hold everything up.
+// Priority-aware race. Each provider result carries a `kind`:
+//   word  = real per-word timing (NetEase yrc / enhanced LRC)  ← best
+//   line  = real line-level synced (lrclib / Kugou / NetEase lrc)
+//   synth = synthesized line timing (Genius plain spread over the song)
+//   plain = plain text, no timing                              ← last
+// We resolve instantly on a `word` result (that's what "prefer NetEase" means),
+// otherwise wait a short bounded grace for something better, then take the best.
+const KIND_RANK = { word: 4, line: 3, synth: 2, plain: 1 };
 function raceLyrics(promises) {
   return new Promise((resolve) => {
-    let pending = promises.length, resolved = false, plainBest = null;
+    let pending = promises.length, best = null, resolved = false, timer = null;
     if (!pending) return resolve(null);
-    promises.forEach((p) => Promise.resolve(p).then((r) => {
-      if (resolved) return;
-      if (r && r.syncedLyrics) { resolved = true; return resolve(r); }
-      if (r && r.plainLyrics && !plainBest) plainBest = r;
-    }).catch(() => {}).finally(() => {
-      if (!resolved && --pending === 0) resolve(plainBest);
+    const settle = () => { if (!resolved) { resolved = true; clearTimeout(timer); resolve(best); } };
+    const consider = (r) => {
+      if (resolved || !r || !r.kind) return;
+      if (!best || KIND_RANK[r.kind] > KIND_RANK[best.kind]) best = r;
+      if (best.kind === 'word') return settle();     // can't do better — stop now
+      if (!timer) timer = setTimeout(settle, 1000);  // give a better source ~1s
+    };
+    promises.forEach((p) => Promise.resolve(p).then(consider).catch(() => {}).finally(() => {
+      if (!resolved && --pending === 0) settle();
     }));
   });
 }
@@ -167,9 +176,8 @@ async function fetchLrclib({ artist, ct, bare, artist1, duration, wants, altPair
   for (const p of altPairs) reqs.push(getJson('https://lrclib.net/api/search?' + qs({ track_name: p.track, artist_name: p.artist })));
   const [getRes, ...searches] = await Promise.all(reqs);
 
-  if (getRes && (getRes.syncedLyrics || getRes.plainLyrics)) {
-    return { syncedLyrics: getRes.syncedLyrics || '', plainLyrics: getRes.plainLyrics || '' };
-  }
+  const wrap = (r) => ({ syncedLyrics: r.syncedLyrics || '', plainLyrics: r.plainLyrics || '', kind: r.syncedLyrics ? 'line' : 'plain' });
+  if (getRes && (getRes.syncedLyrics || getRes.plainLyrics)) return wrap(getRes);
   let best = null;
   for (const arr of searches) {
     if (!Array.isArray(arr)) continue;
@@ -179,9 +187,7 @@ async function fetchLrclib({ artist, ct, bare, artist1, duration, wants, altPair
     }
   }
   const hit = best && best.score >= MIN_SCORE && best.x;
-  if (hit && (hit.syncedLyrics || hit.plainLyrics)) {
-    return { syncedLyrics: hit.syncedLyrics || '', plainLyrics: hit.plainLyrics || '' };
-  }
+  if (hit && (hit.syncedLyrics || hit.plainLyrics)) return wrap(hit);
   return null;
 }
 
@@ -231,9 +237,9 @@ async function fetchNetease({ title, artist, want }) {
   if (!ly) return null;
   const yrc = ly.yrc && ly.yrc.lyric;
   const lrc = ly.lrc && ly.lrc.lyric;
-  if (yrc) { const enh = yrcToEnhancedLRC(yrc); if (enh) return { syncedLyrics: enh, plainLyrics: '' }; }
-  if (lrc && /\[\d+:\d+/.test(lrc)) return { syncedLyrics: lrc, plainLyrics: '' };
-  if (lrc) return { syncedLyrics: '', plainLyrics: lrc };
+  if (yrc) { const enh = yrcToEnhancedLRC(yrc); if (enh) return { syncedLyrics: enh, plainLyrics: '', kind: 'word' }; }
+  if (lrc && /\[\d+:\d+/.test(lrc)) return { syncedLyrics: lrc, plainLyrics: '', kind: 'line' };
+  if (lrc) return { syncedLyrics: '', plainLyrics: lrc, kind: 'plain' };
   return null;
 }
 
@@ -259,7 +265,7 @@ async function fetchKugou({ title, artist, want }) {
   if (!dl || !dl.content) return null;
   let lrc = '';
   try { lrc = Buffer.from(dl.content, 'base64').toString('utf8'); } catch { return null; }
-  if (/\[\d+:\d+/.test(lrc)) return { syncedLyrics: lrc, plainLyrics: '' };
+  if (/\[\d+:\d+/.test(lrc)) return { syncedLyrics: lrc, plainLyrics: '', kind: 'line' };
   return null;
 }
 
@@ -297,7 +303,29 @@ async function fetchGenius({ title, artist, want }) {
   const html = await getText(hit.url);
   if (!html) return null;
   const text = extractGeniusLyrics(html);
-  return text ? { syncedLyrics: '', plainLyrics: text } : null;
+  if (!text) return null;
+
+  // Genius has no timing. If we know the song duration, SYNTHESIZE line
+  // timestamps by spreading the lines across the track (weighted by syllables),
+  // so it gets line-by-line + word highlighting like a synced source. Skip
+  // section headers like [Chorus] for timing but keep them shown.
+  if (want && want.duration > 0) {
+    const lines = text.split('\n');
+    const sylOf = (s) => ((s || '').toLowerCase().match(/[aeiouy]+/g) || []).length;
+    const weights = lines.map((l) => /^\[.*\]$/.test(l.trim()) ? 0.4 : Math.max(0.5, sylOf(l)));
+    const total = weights.reduce((a, b) => a + b, 0) || 1;
+    // Assume vocals span ~from 3% to ~97% of the track.
+    const start = want.duration * 0.03, span = want.duration * 0.92;
+    let acc = 0; const out = [];
+    for (let i = 0; i < lines.length; i++) {
+      const t = start + span * (acc / total);
+      const mm = Math.floor(t / 60), ss = (t - mm * 60).toFixed(2);
+      out.push('[' + String(mm).padStart(2, '0') + ':' + ss.padStart(5, '0') + ']' + lines[i]);
+      acc += weights[i];
+    }
+    return { syncedLyrics: out.join('\n'), plainLyrics: '', kind: 'synth' };
+  }
+  return { syncedLyrics: '', plainLyrics: text, kind: 'plain' };
 }
 
 module.exports = { fetchLyrics };

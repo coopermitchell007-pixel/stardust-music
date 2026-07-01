@@ -795,14 +795,41 @@ const VinylSpin = (() => {
     if (qualifies) {
       const src = big.currentSrc || big.src;
       if (src) {
-        ensureOverlay().style.backgroundImage = `url("${src}")`;
+        const r = big.getBoundingClientRect();
+        const size = Math.min(r.width, r.height);   // fit a circle to the art
+        ensureOverlay();
+        overlay.style.backgroundImage = `url("${src}")`;
+        // Center the record exactly where YTM's art is (i.e. centered in the
+        // left art column), and size it to the art so it covers any gray box.
+        overlay.style.width = overlay.style.height = size + 'px';
+        overlay.style.left = (r.left + r.width / 2 - size / 2) + 'px';
+        overlay.style.top = (r.top + r.height / 2 - size / 2) + 'px';
         overlay.style.display = 'block';
-        if (hiddenOrig && hiddenOrig !== big) hiddenOrig.classList.remove('sd-orig-hidden');
-        big.classList.add('sd-orig-hidden'); hiddenOrig = big;
+        if (hiddenOrig && hiddenOrig !== big) revealOrig(hiddenOrig);
+        big.classList.add('sd-orig-hidden'); clearBgUp(big); hiddenOrig = big;
       }
     } else {
       if (overlay) overlay.style.display = 'none';
-      if (hiddenOrig) { hiddenOrig.classList.remove('sd-orig-hidden'); hiddenOrig = null; }
+      if (hiddenOrig) { revealOrig(hiddenOrig); hiddenOrig = null; }
+    }
+  }
+  // Clear the gray background off the art's wrappers (inline beats YTM's CSS).
+  function clearBgUp(img) {
+    let p = img.parentElement;
+    for (let i = 0; i < 5 && p; i++) {
+      p.classList.add('sd-cleared-bg');
+      try { p.style.background = 'transparent'; p.style.backgroundColor = 'transparent'; } catch {}
+      const tag = (p.tagName || '').toLowerCase();
+      if (tag === 'ytmusic-player-page') break;
+      p = p.parentElement;
+    }
+  }
+  function revealOrig(img) {
+    img.classList.remove('sd-orig-hidden');
+    let p = img.parentElement;
+    for (let i = 0; i < 5 && p; i++) {
+      if (p.classList.contains('sd-cleared-bg')) { p.classList.remove('sd-cleared-bg'); p.style.background = ''; p.style.backgroundColor = ''; }
+      p = p.parentElement;
     }
   }
   function scan() { try { tagBar(); tagPage(); } catch {} }
