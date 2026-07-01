@@ -304,7 +304,7 @@ function registerIpc() {
 
   ipcMain.handle('stardust:lyrics', (_e, meta) => lyrics.fetchLyrics(meta));
   ipcMain.handle('stardust:transcribe', async (_e, payload) => {
-    try { return await transcribe.transcribe(payload, config.get('transcribeKey')); }
+    try { return await transcribe.transcribe(payload, config.get('transcribeKey'), config.get('shareTranscripts') !== false); }
     catch (err) { return { error: err.message || 'failed' }; }
   });
   ipcMain.handle('stardust:stats', () => stats.get());

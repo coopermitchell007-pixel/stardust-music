@@ -147,7 +147,7 @@ async function fetchLyrics({ artist, title, album, duration } = {}) {
   if (!title) return null;
   // A previously transcribed version of THIS song is the truest match (it's the
   // actual audio's words, word-timed) — use it instantly.
-  try { const c = transcribe.getCached(title, artist); if (c) return { syncedLyrics: c, plainLyrics: '', kind: 'word' }; } catch {}
+  try { const c = transcribe.getCached(title, artist); if (c) return { syncedLyrics: c, plainLyrics: '', kind: 'word', source: 'transcript' }; } catch {}
   if (!(duration > 0)) duration = undefined; // 0/NaN at track start → don't over-constrain
   const ct = cleanTitle(title);
   const bare = title.replace(/\(.*?\)|\[.*?\]/g, '').replace(/\s+/g, ' ').trim() || ct;
@@ -196,7 +196,7 @@ async function fetchLrclib({ artist, ct, bare, artist1, duration, wants, altPair
   for (const p of altPairs) reqs.push(getJson('https://lrclib.net/api/search?' + qs({ track_name: p.track, artist_name: p.artist })));
   const [getRes, ...searches] = await Promise.all(reqs);
 
-  const wrap = (r) => ({ syncedLyrics: r.syncedLyrics || '', plainLyrics: r.plainLyrics || '', kind: r.syncedLyrics ? 'line' : 'plain' });
+  const wrap = (r) => ({ syncedLyrics: r.syncedLyrics || '', plainLyrics: r.plainLyrics || '', kind: r.syncedLyrics ? 'line' : 'plain', source: 'lrclib' });
   if (getRes && (getRes.syncedLyrics || getRes.plainLyrics)) return wrap(getRes);
   let best = null;
   for (const arr of searches) {
@@ -257,9 +257,9 @@ async function fetchNetease({ title, artist, want }) {
   if (!ly) return null;
   const yrc = ly.yrc && ly.yrc.lyric;
   const lrc = ly.lrc && ly.lrc.lyric;
-  if (yrc) { const enh = yrcToEnhancedLRC(yrc); if (enh) return { syncedLyrics: enh, plainLyrics: '', kind: 'word' }; }
-  if (lrc && /\[\d+:\d+/.test(lrc)) return { syncedLyrics: lrc, plainLyrics: '', kind: 'line' };
-  if (lrc) return { syncedLyrics: '', plainLyrics: lrc, kind: 'plain' };
+  if (yrc) { const enh = yrcToEnhancedLRC(yrc); if (enh) return { syncedLyrics: enh, plainLyrics: '', kind: 'word', source: 'netease' }; }
+  if (lrc && /\[\d+:\d+/.test(lrc)) return { syncedLyrics: lrc, plainLyrics: '', kind: 'line', source: 'netease' };
+  if (lrc) return { syncedLyrics: '', plainLyrics: lrc, kind: 'plain', source: 'netease' };
   return null;
 }
 
@@ -285,7 +285,7 @@ async function fetchKugou({ title, artist, want }) {
   if (!dl || !dl.content) return null;
   let lrc = '';
   try { lrc = Buffer.from(dl.content, 'base64').toString('utf8'); } catch { return null; }
-  if (/\[\d+:\d+/.test(lrc)) return { syncedLyrics: lrc, plainLyrics: '', kind: 'line' };
+  if (/\[\d+:\d+/.test(lrc)) return { syncedLyrics: lrc, plainLyrics: '', kind: 'line', source: 'kugou' };
   return null;
 }
 
@@ -359,9 +359,9 @@ async function fetchGenius({ title, artist, want }) {
       out.push('[' + String(mm).padStart(2, '0') + ':' + ss.padStart(5, '0') + ']' + lines[i]);
       acc += weights[i];
     }
-    return { syncedLyrics: out.join('\n'), plainLyrics: '', kind: 'synth' };
+    return { syncedLyrics: out.join('\n'), plainLyrics: '', kind: 'synth', source: 'genius' };
   }
-  return { syncedLyrics: '', plainLyrics: text, kind: 'plain' };
+  return { syncedLyrics: '', plainLyrics: text, kind: 'plain', source: 'genius' };
 }
 
 module.exports = { fetchLyrics };

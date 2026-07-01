@@ -614,22 +614,28 @@ const Visualizer = (() => {
   }
   function setReactiveColor(c) { reactiveColor = c || null; }
 
-  // Smoothed energy in the vocal band (~200Hz–4kHz), 0..1, or -1 if we can't
-  // read real audio. Used to advance lyric words in time with the singing.
-  let veSmooth = 0;
+  // Smoothed energy in the vocal band (~200Hz–4kHz), 0..1, plus that band's
+  // share of the TOTAL spectral energy (bass-drop/percussion-only passages have
+  // energy but a low mid share, so the share helps reject them as "voice").
+  // e is -1 when real audio can't be read.
+  let veSmooth = 0, vrSmooth = 0.5;
   function vocalEnergy() {
     ensureAudio(); // tap the audio even if the visualizer is disabled
-    if (!analyser || !freq || !useReal) return -1;
+    if (!analyser || !freq || !useReal) return { e: -1, ratio: 0 };
     analyser.getByteFrequencyData(freq);
     const bins = analyser.frequencyBinCount;
     const sr = audioCtx ? audioCtx.sampleRate : 44100;
     const lo = Math.max(1, Math.floor(200 / (sr / 2) * bins));
     const hi = Math.min(bins, Math.floor(4000 / (sr / 2) * bins));
-    let sum = 0, n = 0;
-    for (let i = lo; i < hi; i++) { sum += freq[i]; n++; }
+    let sum = 0, n = 0, all = 0;
+    for (let i = 1; i < bins; i++) {
+      all += freq[i];
+      if (i >= lo && i < hi) { sum += freq[i]; n++; }
+    }
     const e = n ? (sum / n) / 255 : 0;
     veSmooth += (e - veSmooth) * 0.4; // light smoothing
-    return veSmooth;
+    vrSmooth += ((all > 0 ? sum / all : 0) - vrSmooth) * 0.3;
+    return { e: veSmooth, ratio: vrSmooth };
   }
 
   // Onset detector: positive spectral flux in the vocal band (sum of frame-to-
@@ -1136,25 +1142,40 @@ const Lyrics = (() => {
   let box = null, body = null, lastIdx = -1, attempts = 0, np = null;
   let mode = 'off', host = null;                     // 'searching' | 'ours' | 'off'
   let curEl = null, curSpans = null, curTiming = null;
-  let curMode = 'est', curWeights = null, curTotalW = 1, curSungDur = 1, lastCT = 0;
-  let synthMode = false, lineSyl = null, cumSyl = null, totalSyl = 1, lastCTs = 0;
+  let curMode = 'est', curSungDur = 1, lastCT = 0;
+  let synthMode = false, lineSyl = null, cumSyl = null, totalSyl = 1;
   let curSyl = null, curSylTotal = 1, sylPtr = 0;
   let floor = 0, sylAcc = 0;                 // adaptive vocal noise-floor + syllables-sung accumulator
   let transcribing = false;
-  let offset = 0, barEl = null, offEl = null; // user sync-offset (s) + toolbar els
-  const SYL_RATE = 3.6;                      // avg sung syllables per second (used while singing)
+  let offset = 0, barEl = null, offEl = null, srcEl = null; // sync-offset (s) + toolbar els
+  let userScrollUntil = 0;                   // pause auto-scroll while the user scrolls
+  const SYL_RATE = 3.6;                      // starting syllables/sec — refined per song
+
+  // Everything we've HEARD of the current track so far. Fed on every tick (even
+  // with the lyrics tab closed) so the model doesn't lose time:
+  //   voiced/elapsed → how much of the song actually has singing,
+  //   silent/resumed → section boundaries (voice returning after a long gap),
+  //   rate           → the song's sung-syllable pace, learned from real
+  //                    line timestamps as lines complete.
+  let hear = null;
+  function resetHear() {
+    hear = { lastT: 0, voiced: 0, elapsed: 0, silent: 0, prevVoice: false, resumed: false, rate: SYL_RATE };
+    floor = 0; sylAcc = 0;
+  }
+  resetHear();
 
   // "Hear" the song this frame: vocal energy, whether a VOICE is present (above
-  // an adaptive noise floor), and whether a syllable ONSET just fired.
+  // an adaptive noise floor AND mid-heavy in spectrum), and whether a syllable
+  // ONSET just fired.
   // The flag must not be called `active`: destructuring that name inside paint()
   // shadows the module-level enabled flag (TDZ → paint throws every frame).
   function listen() {
-    const e = Visualizer.vocalEnergy();
+    const { e, ratio } = Visualizer.vocalEnergy();
     const onset = Visualizer.vocalOnset();
     if (e < 0) return { e: -1, voice: true, onset: 0 }; // can't read audio → behave like time
     // Noise floor falls fast toward quiet, rises slowly — so it tracks the gaps.
     floor += (e - floor) * (e < floor ? 0.25 : 0.01);
-    const voice = e > floor + 0.06 || e > floor * 1.7;
+    const voice = (e > floor + 0.06 || e > floor * 1.7) && ratio > 0.35;
     return { e, voice, onset };
   }
 
@@ -1177,9 +1198,14 @@ const Lyrics = (() => {
   // paused by Chromium when the window is throttled/occluded, which froze the
   // lyrics (paint never ran → idx stuck at -1). ~40ms ≈ 25fps; the CSS --wp
   // transition smooths the fill between ticks.
+  // A swallowed exception here once hid a total freeze — log the first one.
   function startRAF() {
     if (raf) return;
-    raf = setInterval(() => { try { paint(); } catch {} }, 40);
+    raf = setInterval(() => {
+      try { tick(); } catch (e) {
+        if (!startRAF._err) { startRAF._err = true; console.error('[Stardust] lyrics tick failed:', e); }
+      }
+    }, 40);
   }
   // The <video> element YTM is actually playing (prefer a playing one; some
   // pages have a stale/hidden extra video whose time never moves).
@@ -1214,21 +1240,44 @@ const Lyrics = (() => {
     if (!box) {
       body = h('div', { class: 'stardust-lyric-lines' });
       box = h('div', { id: 'stardust-lyrics' }, [buildTools(), body]);
+      // The user scrolling the lyrics pauses auto-centering for a few seconds.
+      const bump = () => { userScrollUntil = Date.now() + 4000; };
+      box.addEventListener('wheel', bump, { passive: true });
+      box.addEventListener('touchmove', bump, { passive: true });
     }
     return box;
   }
-  // Slim toolbar over the lyrics: nudge the sync offset and copy the words.
+  // Slim toolbar over the lyrics: nudge the sync offset, copy the words,
+  // re-transcribe by choice, and show where these lyrics came from.
   function buildTools() {
     const minus = h('button', { class: 'stardust-lyr-tool', title: 'Highlight running ahead of the singing? Delay it', text: '−0.5s' });
     const plus = h('button', { class: 'stardust-lyr-tool', title: 'Highlight lagging behind the singing? Advance it', text: '+0.5s' });
     offEl = h('button', { class: 'stardust-lyr-tool sd-off', title: 'Sync offset — click to reset', text: '0.0s' });
     const copy = h('button', { class: 'stardust-lyr-tool', title: 'Copy the lyrics to the clipboard', text: '⧉ Copy' });
+    const re = h('button', { class: 'stardust-lyr-tool', title: 'Transcribe this song yourself — listens once and replaces these lyrics with word-timed ones (needs a Groq key)', text: '🎙' });
+    srcEl = h('span', { class: 'stardust-lyr-src', text: '' });
     minus.addEventListener('click', () => nudge(-0.5));
     plus.addEventListener('click', () => nudge(0.5));
     offEl.addEventListener('click', () => nudge(0));
     copy.addEventListener('click', copyLyrics);
-    barEl = h('div', { class: 'stardust-lyr-tools' }, [minus, offEl, plus, copy]);
+    re.addEventListener('click', reTranscribe);
+    barEl = h('div', { class: 'stardust-lyr-tools' }, [minus, offEl, plus, copy, re, srcEl]);
     return barEl;
+  }
+  const SRC_LABEL = { lrclib: 'LRCLIB', netease: 'NetEase', kugou: 'KuGou', genius: 'Genius', transcript: 'transcribed' };
+  function setSourceLabel(source, estimated) {
+    if (!srcEl) return;
+    const name = SRC_LABEL[source];
+    srcEl.textContent = name ? ('via ' + name + (estimated ? ' · estimated timing' : '')) : '';
+  }
+  // Even when lyrics were found, the user can choose to transcribe the actual
+  // audio instead (their words may be a cover/remix the databases don't have).
+  function reTranscribe() {
+    if (transcribing) return;
+    synced = []; plain = null; synthMode = false; mode = 'searching';
+    setSourceLabel(null);
+    render('🎙 Preparing to listen…'); sync();
+    startTranscribe(null);
   }
   function nudge(d) {
     offset = d ? Math.round((offset + d) * 10) / 10 : 0;
@@ -1410,9 +1459,9 @@ const Lyrics = (() => {
     const forKey = key;
     // Snapshot the song NOW — np gets reassigned to the next track if autoplay
     // advances, and we must save the transcript under THIS song.
-    const trackTitle = np && np.title, trackArtist = np && np.artist, trackDur = np && np.duration;
+    const trackTitle = np && np.title, trackArtist = np && np.artist, trackAlbum = np && np.album, trackDur = np && np.duration;
     const setStatus = (s) => { const el = body && body.querySelector('.stardust-lyric-status'); if (el) el.textContent = s; };
-    const v = q('video');
+    const v = playingVideo();
     if (!Visualizer.captureStart()) { setStatus('Audio capture unavailable'); transcribing = false; if (btn) btn.disabled = false; return; }
     try { if (v) { v.currentTime = 0; if (v.paused) doCommand('playpause'); } } catch {}
     const fmtT = (s) => { s = Math.max(0, s | 0); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
@@ -1435,7 +1484,7 @@ const Lyrics = (() => {
     let res = null;
     try {
       const buf = new Uint8Array(await blob.arrayBuffer());
-      res = await ipcRenderer.invoke('stardust:transcribe', { title: trackTitle, artist: trackArtist, duration: trackDur, audio: buf });
+      res = await ipcRenderer.invoke('stardust:transcribe', { title: trackTitle, artist: trackArtist, album: trackAlbum, duration: trackDur, audio: buf });
     } catch {}
     if (res && (res.syncedLyrics || res.plainLyrics)) {
       // Show now if we're still on that song (we paused, so usually yes).
@@ -1443,12 +1492,14 @@ const Lyrics = (() => {
       if (nowSame) {
         if (res.syncedLyrics) applySynced(res.syncedLyrics);
         else { synced = []; plain = res.plainLyrics; mode = 'ours'; }
+        setSourceLabel('transcript');
         // We paused near the end to stop autoplay — restart from 0 and PLAY so
         // the karaoke actually runs (otherwise the words just sit there).
-        try { const vv = q('video'); if (vv) { vv.currentTime = 0; if (vv.paused) doCommand('playpause'); } } catch {}
+        try { const vv = playingVideo(); if (vv) { vv.currentTime = 0; if (vv.paused) doCommand('playpause'); } } catch {}
         render(); sync();
       }
-      toast(nowSame ? '✓ Lyrics transcribed — playing' : '✓ Transcribed "' + (trackTitle || 'song') + '" — replay it to see the lyrics');
+      const shared = res.shared ? ' · shared with the community' : '';
+      toast(nowSame ? '✓ Lyrics transcribed — playing' + shared : '✓ Transcribed "' + (trackTitle || 'song') + '"' + shared);
     } else {
       const e = res && res.error;
       const msg = (e === 'no-key') ? 'Add a free Groq API key in the Stardust panel to transcribe'
@@ -1467,7 +1518,9 @@ const Lyrics = (() => {
     const k = track.title + '|' + track.artist; if (k === key) return;
     key = k; np = track; synced = []; plain = null; attempts = 0; lastIdx = -1;
     mode = 'searching'; curEl = null; curSpans = null;
-    nudge(0); // the sync offset is per-song
+    nudge(0);    // the sync offset is per-song
+    resetHear(); // fresh hearing model per song (voiced fraction, pace, floor)
+    setSourceLabel(null);
     render('Searching lyrics…'); sync(); doFetch();
   }
   async function doFetch() {
@@ -1497,7 +1550,8 @@ const Lyrics = (() => {
     // timestamps, so we DRIVE progression by the actual vocal energy.
     synthMode = (synthed || !!(res && res.kind === 'synth')) && synced.length > 0;
     if (synthMode) buildSynthModel();
-    lastIdx = -1; curEl = null; curSpans = null; lastCTs = 0; sylAcc = 0; floor = 0;
+    lastIdx = -1; curEl = null; curSpans = null; sylAcc = 0;
+    setSourceLabel(res && res.source, synthMode || (res && res.kind === 'synth'));
     render(statusText()); sync();
   }
   // Turn plain (untimed) lyrics into an LRC by spreading lines across the track
@@ -1527,8 +1581,67 @@ const Lyrics = (() => {
     totalSyl = totalSyl || 1;
   }
 
-  function paint() {
-    if (!active || !synced.length || !box || !body) return;
+  // Per-tick driver: sample the audio ONCE, keep the hearing model fed even
+  // when the lyrics tab is closed (so re-opening lands in the right place),
+  // then advance + paint whatever timing mode is active.
+  function tick() {
+    if (!active || !synced.length) return;
+    const v = playingVideo(); if (!v) return;
+    const t = (v.currentTime || 0) + offset; // user sync-offset shifts the clock
+    let dt = t - hear.lastT; hear.lastT = t;
+    if (!(dt > 0) || dt > 1.5) dt = 0;       // first frame / pause / seek
+    const L = listen();
+    hear.resumed = false;
+    if (dt > 0 && L.e >= 0) {
+      hear.elapsed += dt;
+      if (L.voice) {
+        hear.resumed = !hear.prevVoice && hear.silent > 2.5;
+        hear.voiced += dt; hear.silent = 0;
+      } else {
+        hear.silent += dt;
+      }
+      hear.prevVoice = L.voice;
+    }
+    if (synthMode && lineSyl && cumSyl) advanceSynth(t, dt, v, L);
+    paint(t, v, L);
+  }
+
+  // Synthesized (Genius / from-plain) timing has no real timestamps, so the
+  // LISTENING model drives it: syllables advance only while a voice is present,
+  // paced so the words finish exactly when the singing is predicted to end
+  // (from the observed voiced fraction), and anchored to voiced-time-HEARD
+  // rather than wall time — so long intros, solos and outros hold still
+  // instead of drifting, and the pace self-corrects as the song plays.
+  function advanceSynth(t, dt, v, L) {
+    const dur = (isFinite(v.duration) && v.duration > 0) ? v.duration : 210;
+    if (L.e < 0) { sylAcc = Math.min(1, Math.max(0, t / dur)) * totalSyl; return; } // can't hear -> even spread
+    const remaining = Math.max(0, dur - t);
+    // Voiced fraction of the song: observed so far, blended with a 0.72 prior
+    // (~40s pseudo-observation) so an intro can't crater the estimate early.
+    const vfEst = Math.max(0.3, Math.min(0.95, (29 + hear.voiced) / (40 + hear.elapsed)));
+    const predVoiced = Math.max(20, hear.voiced + remaining * vfEst);
+    const rate = totalSyl / predVoiced;      // syllables per VOICED second
+    if (dt > 0 && L.voice) {
+      sylAcc += dt * rate * (0.75 + 0.5 * L.e);
+      if (L.onset > 0) sylAcc += 0.35 * L.onset;
+    }
+    // Singing resumed after a real instrumental break -> a section boundary;
+    // snap to the nearest line start so the verse/chorus enters crisp.
+    if (hear.resumed && cumSyl.length > 2) {
+      let best = sylAcc, bd = Infinity;
+      for (const c of cumSyl) { const d = Math.abs(c - sylAcc); if (d < bd) { bd = d; best = c; } }
+      if (bd < totalSyl * 0.06 + 4) sylAcc = best;
+    }
+    // Anchor to voiced-time-heard (NOT wall time). Asymmetric band: lagging a
+    // little reads fine, running ahead of the singer reads terribly.
+    const anchor = Math.min(totalSyl, hear.voiced * rate);
+    sylAcc = Math.max(sylAcc, anchor - totalSyl * 0.10);
+    sylAcc = Math.min(sylAcc, anchor + totalSyl * 0.06);
+    sylAcc = Math.min(totalSyl, Math.max(0, sylAcc));
+  }
+
+  function paint(t, v, L) {
+    if (!box || !body) return;
     // If YTM re-rendered the tab and dropped our box, re-attach it instead of
     // freezing (this was leaving the words static).
     if (!box.isConnected) {
@@ -1536,47 +1649,22 @@ const Lyrics = (() => {
       if (h0 && tabSelected()) { h0.classList.add('stardust-lyrics-on'); if (box.parentElement !== h0) h0.appendChild(box); host = h0; }
       else return;
     }
-    const v = playingVideo(); if (!v) return;
-    const t = (v.currentTime || 0) + offset; // user sync-offset shifts the clock
     const kids = body.children;
 
-    // Synthesized (Genius) timing: DRIVE the whole progression by the song's
-    // actual vocal energy — advance through lines/words while someone is singing,
-    // and stall during instrumental intros/breaks (which is what makes fixed
-    // even-spread timing drift). Anchored loosely to song position so it can't
-    // run away, and it "hears the song" via the analyser.
+    // Synthesized timing: render the line/word position advanceSynth computed.
     if (synthMode && lineSyl && cumSyl) {
-      let dt = t - lastCTs; lastCTs = t;
-      if (dt < 0 || dt > 1) dt = 0;
-      const dur = (isFinite(v.duration) && v.duration > 0) ? v.duration : 210;
-      const timeProg = Math.min(1, Math.max(0, t / dur));
-      const { e, voice, onset } = listen();
-      if (e < 0) {
-        sylAcc = timeProg * totalSyl;               // can't hear → even spread
-      } else {
-        // Only consume syllables WHILE A VOICE IS ACTIVE — so instrumental
-        // intros/solos/outros don't advance the lyrics at all.
-        if (voice) sylAcc += dt * SYL_RATE * (0.5 + e);
-        if (voice && onset > 0) sylAcc += 0.4 * onset;
-        // Safety band around the even-spread position so a bad detection can't
-        // drift more than ~15% of the song either way.
-        const anchor = timeProg * totalSyl;
-        sylAcc = Math.max(sylAcc, anchor - totalSyl * 0.15);
-        sylAcc = Math.min(sylAcc, anchor + totalSyl * 0.15);
-      }
-      sylAcc = Math.min(totalSyl, Math.max(0, sylAcc));
       const target = sylAcc;
       let sidx = 0;
       for (let i = 0; i < cumSyl.length; i++) { if (cumSyl[i] <= target) sidx = i; else break; }
       if (sidx !== lastIdx) {
         if (curEl) { curEl.classList.remove('active'); clearWords(curEl); }
         lastIdx = sidx; curEl = kids[sidx] || null;
-        if (curEl) { curEl.classList.add('active'); curSpans = curEl.querySelectorAll('.w'); curEl.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+        if (curEl) { curEl.classList.add('active'); curSpans = curEl.querySelectorAll('.w'); autoScroll(curEl); }
       }
       if (!curEl || !curSpans || !curSpans.length) return;
       const words = synced[sidx].words || [];
       const lineTot = words.reduce((a, w) => a + (((w.text || '').toLowerCase().match(/[aeiouy]+/g) || []).length || 1), 0) || 1;
-      const wt = ((target - cumSyl[sidx]) / lineSyl[sidx]) * lineTot; // syllables into this line → word space
+      const wt = ((target - cumSyl[sidx]) / lineSyl[sidx]) * lineTot; // syllables into this line -> word space
       let acc = 0;
       for (let i = 0; i < curSpans.length; i++) {
         const ws = ((words[i] && words[i].text || '').toLowerCase().match(/[aeiouy]+/g) || []).length || 1;
@@ -1591,12 +1679,12 @@ const Lyrics = (() => {
     for (let i = 0; i < synced.length; i++) { if (synced[i].t <= t + 0.15) idx = i; else break; }
 
     // Line changed: move .active, reset the old line, scroll, and precompute
-    // the new line's per-word [start,end] timing once (cheap per-frame after).
+    // the new line's per-word timing once (cheap per-frame after).
     if (idx !== lastIdx) {
       if (curEl) { curEl.classList.remove('active'); curEl.style.removeProperty('--wp'); clearWords(curEl); }
       lastIdx = idx;
       curEl = idx >= 0 ? kids[idx] : null;
-      curSpans = curTiming = curWeights = null;
+      curSpans = curTiming = null;
       if (curEl) {
         curEl.classList.add('active');
         curSpans = curEl.querySelectorAll('.w');
@@ -1610,13 +1698,18 @@ const Lyrics = (() => {
         } else {
           curSyl = (line.words || []).map((w) => ((w.text || '').toLowerCase().match(/[aeiouy]+/g) || []).length || 1);
           curSylTotal = curSyl.reduce((a, b) => a + b, 0) || 1;
-          curWeights = curSyl.map((syl) => Math.max(0.26, 0.16 + syl * 0.34));
-          curTotalW = curWeights.reduce((a, b) => a + b, 0) || 1;
           const win = Math.max(0.5, lineEnd - line.t);
-          curSungDur = Math.max(0.5, Math.min(win, curTotalW * 1.5)); // finish within, hold after
+          // LEARN the song's sung pace from the line's REAL timestamps: a short
+          // line-to-line gap means the line is sung throughout, so syllables /
+          // window samples the true rate (rap ~6/s, ballad ~2.5/s). EMA per song.
+          if (win <= 8 && curSylTotal >= 3) {
+            hear.rate += (Math.min(7, Math.max(1.8, curSylTotal / win)) - hear.rate) * 0.25;
+          }
+          // Sing the line at the learned pace; never stretch across a gap.
+          curSungDur = Math.max(0.5, Math.min(win, curSylTotal / hear.rate));
           lastCT = t; sylPtr = 0;
         }
-        curEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        autoScroll(curEl);
       }
     }
     if (!curEl || !curSpans || !curSpans.length) return;
@@ -1634,22 +1727,23 @@ const Lyrics = (() => {
     if (!curSyl) return;
 
     // Estimated timing, driven by LISTENING: advance the sung-syllable pointer
-    // on real vocal onsets, only while a voice is active (so it holds on
-    // instrumental gaps mid-line), and pace it at ~the sung syllable rate.
-    // The clock is just a wide safety band so it can't drift far.
+    // at the song's LEARNED pace while a voice is active (so it holds through
+    // instrumental gaps mid-line), snapping forward on real vocal onsets. The
+    // clock target — also at the learned pace — bounds drift to a band scaled
+    // to the line length.
     let dt = t - lastCT; lastCT = t;
-    if (dt < 0 || dt > 1) { dt = 0; sylPtr = 0; } // seek/pause → resync
+    if (dt < 0 || dt > 1) { dt = 0; sylPtr = 0; } // seek/pause -> resync
     const timeProg = Math.min(1, Math.max(0, (t - line.t) / curSungDur));
     const timeTarget = timeProg * curSylTotal;
-    const { e, voice, onset } = listen();
-    if (e < 0) {
-      sylPtr = timeTarget; // no audio → clock
+    if (L.e < 0) {
+      sylPtr = timeTarget; // no audio -> clock
     } else {
-      if (voice) sylPtr += dt * SYL_RATE * (0.5 + e); // pace by real singing
-      if (voice && onset > 0) sylPtr += 0.5 + 0.7 * onset; // snap on attacks
-      sylPtr += (timeTarget - sylPtr) * 0.015;         // very gentle pull to clock
-      sylPtr = Math.max(sylPtr, timeTarget - 3.2);     // wide safety band
-      sylPtr = Math.min(sylPtr, timeTarget + 3.2);
+      if (L.voice) sylPtr += dt * hear.rate * (0.6 + 0.8 * L.e);                // pace by real singing
+      if (L.voice && L.onset > 0) sylPtr += Math.min(0.9, 0.4 + 0.6 * L.onset); // snap on attacks
+      sylPtr += (timeTarget - sylPtr) * 0.03;   // gentle pull to clock
+      const band = Math.min(3.2, 1.5 + curSylTotal * 0.15);
+      sylPtr = Math.max(sylPtr, timeTarget - band);
+      sylPtr = Math.min(sylPtr, timeTarget + band);
     }
     sylPtr = Math.min(curSylTotal, Math.max(0, sylPtr));
     let acc = 0;
@@ -1658,6 +1752,13 @@ const Lyrics = (() => {
       setWordFill(curSpans[i], Math.min(1, Math.max(0, (sylPtr - acc) / s)));
       acc += s;
     }
+  }
+
+  // Auto-scroll the active line to center — unless the user is scrolling the
+  // lyrics themselves right now (resumes ~4s after their last scroll).
+  function autoScroll(el) {
+    if (Date.now() < userScrollUntil) return;
+    try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch {}
   }
 
   // Build per-word [start,end] times for a line. Uses real timestamps when the
@@ -2050,6 +2151,8 @@ function buildUI() {
       ]),
       h('input', { type: 'password', id: 'stardust-transcribe-key', class: 'stardust-text-input', placeholder: 'Groq API key — for song transcription' }),
       h('div', { class: 'stardust-hint', text: 'Free key at console.groq.com → enables "🎙 Transcribe from the song" when no lyrics are found (word-timed).' }),
+      toggleRow('Share transcriptions', 'shareTranscripts'),
+      h('div', { class: 'stardust-hint', text: 'Publishes your finished transcriptions to the open lrclib.net lyrics database, so nobody has to transcribe the same song twice.' }),
       h('div', { class: 'stardust-hint', text: 'Hotkeys: ⌘/Ctrl+Shift+↑ like · ↓ dislike · S shuffle · C copy link' })
     ]),
     section([

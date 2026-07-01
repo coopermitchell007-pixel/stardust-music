@@ -6,11 +6,13 @@
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
+const { Worker } = require('worker_threads');
 const { app } = require('electron');
 
 const ENDPOINT = 'https://api.groq.com/openai/v1/audio/transcriptions';
 const MODEL = 'whisper-large-v3';
 const CACHE_DIR = path.join(app.getPath('userData'), 'Transcripts');
+const LRCLIB = 'https://lrclib.net/api';
 
 function ensureDir() { try { fs.mkdirSync(CACHE_DIR, { recursive: true }); } catch {} }
 const keyFor = (title, artist) =>
@@ -99,9 +101,87 @@ function postMultipart(url, fieldPairs, fileBuf, apiKey) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Community sharing — publish a finished transcription to lrclib.net, the open
+// lyrics database Stardust already reads first. Once one person transcribes a
+// song, everyone else (any lrclib-backed player) finds it instantly.
+// Publishing is gated by a SHA-256 proof-of-work challenge; we solve it in a
+// worker thread so the app stays responsive, and give up after ~90s.
+// ---------------------------------------------------------------------------
+const stripWordTags = (lrc) => lrc.replace(/<\d+:\d+(?:\.\d+)?>\s*/g, '')
+  .split('\n').map((l) => l.replace(/\s+/g, ' ').trimEnd()).join('\n');
+
+function postJson(url, body, headers = {}) {
+  return new Promise((resolve) => {
+    let u;
+    try { u = new URL(url); } catch { return resolve(null); }
+    const data = Buffer.from(JSON.stringify(body || {}));
+    const req = https.request({
+      hostname: u.hostname, path: u.pathname + u.search, method: 'POST',
+      headers: Object.assign({
+        'Content-Type': 'application/json',
+        'Content-Length': data.length,
+        'User-Agent': 'Stardust (https://github.com/coopermitchell007-pixel/stardust-music)'
+      }, headers), timeout: 15000
+    }, (res) => {
+      let d = '';
+      res.on('data', (c) => (d += c));
+      res.on('end', () => { let json = null; try { json = JSON.parse(d); } catch {} resolve({ status: res.statusCode, json }); });
+    });
+    req.on('error', () => resolve(null));
+    req.on('timeout', () => { try { req.destroy(); } catch {} resolve(null); });
+    req.write(data); req.end();
+  });
+}
+
+// Solve lrclib's proof-of-work: find nonce so that sha256(prefix+nonce) is
+// byte-wise <= target. Runs off-thread; resolves null on timeout/failure.
+function solveChallenge(prefix, target) {
+  return new Promise((resolve) => {
+    let worker;
+    try {
+      worker = new Worker(`
+        const { parentPort, workerData } = require('worker_threads');
+        const crypto = require('crypto');
+        const target = Buffer.from(workerData.target, 'hex');
+        let nonce = 0;
+        for (;;) {
+          const h = crypto.createHash('sha256').update(workerData.prefix + nonce).digest();
+          if (h.compare(target) <= 0) break;
+          if (++nonce > 400e6) { nonce = -1; break; }
+        }
+        parentPort.postMessage(nonce);
+      `, { eval: true, workerData: { prefix, target } });
+    } catch { return resolve(null); }
+    const timer = setTimeout(() => { try { worker.terminate(); } catch {} resolve(null); }, 90000);
+    worker.once('message', (n) => { clearTimeout(timer); try { worker.terminate(); } catch {} resolve(n >= 0 ? String(n) : null); });
+    worker.once('error', () => { clearTimeout(timer); resolve(null); });
+  });
+}
+
+async function publishCommunity({ title, artist, album, duration, lrc }) {
+  if (!title || !artist || !(duration > 0) || !lrc) return false;
+  const ch = await postJson(LRCLIB + '/request-challenge');
+  if (!ch || !ch.json || !ch.json.prefix || !ch.json.target) return false;
+  const nonce = await solveChallenge(ch.json.prefix, ch.json.target);
+  if (!nonce) return false;
+  const synced = stripWordTags(lrc); // lrclib stores standard line-level LRC
+  const res = await postJson(LRCLIB + '/publish', {
+    trackName: String(title).trim(),
+    artistName: String(artist).trim(),
+    albumName: String(album || '').trim(),
+    duration: Math.round(duration),
+    plainLyrics: synced.replace(/^\[\d+:\d+(?:\.\d+)?\] ?/gm, ''),
+    syncedLyrics: synced
+  }, { 'X-Publish-Token': ch.json.prefix + ':' + nonce });
+  const ok = !!res && res.status === 201;
+  console.log('[Stardust] community publish', ok ? 'ok' : ('failed (' + (res && res.status) + ')'), '—', title);
+  return ok;
+}
+
 // audio: Uint8Array/Buffer of the recorded song (webm/opus). Returns
 // { syncedLyrics } on success, or { error } describing what to fix.
-async function transcribe({ title, artist, audio } = {}, apiKey) {
+async function transcribe({ title, artist, album, duration, audio } = {}, apiKey, share) {
   if (!apiKey) return { error: 'no-key' };
   if (!audio || !audio.length) return { error: 'no-audio' };
   const buf = Buffer.isBuffer(audio) ? audio : Buffer.from(audio);
@@ -118,10 +198,16 @@ async function transcribe({ title, artist, audio } = {}, apiKey) {
   if (res.status === 401 || res.status === 403) return { error: 'bad-key' };
   if (res.status !== 200 || !res.json) return { error: 'engine' };
   const lrc = buildLRC(res.json);
-  if (lrc) { putCached(title, artist, lrc); return { syncedLyrics: lrc }; }
+  if (lrc) {
+    putCached(title, artist, lrc);
+    // Fire-and-forget: share with the community DB so the next listener gets
+    // these lyrics for free (their app finds them via the normal lrclib fetch).
+    if (share) publishCommunity({ title, artist, album, duration, lrc }).catch(() => {});
+    return { syncedLyrics: lrc, shared: !!share };
+  }
   // No usable timing but we got text → show it as plain (not cached).
   if (res.json.text && res.json.text.trim()) return { syncedLyrics: '', plainLyrics: res.json.text.trim() };
   return { error: 'empty' };
 }
 
-module.exports = { transcribe, getCached, putCached, CACHE_DIR };
+module.exports = { transcribe, getCached, putCached, publishCommunity, CACHE_DIR };

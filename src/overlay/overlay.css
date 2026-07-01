@@ -838,6 +838,7 @@ body.stardust-playing img.stardust-vinyl { animation-play-state: running !import
   color: #fff;
 }
 .stardust-lyr-tool.sd-off { min-width: 44px; text-align: center; font-variant-numeric: tabular-nums; }
+.stardust-lyr-src { margin-left: auto; font-size: 11px; color: #8b86b3; letter-spacing: 0.3px; white-space: nowrap; }
 .stardust-lyr-tool.sd-off.nonzero {
   color: #fff;
   background: color-mix(in srgb, var(--stardust-accent) 24%, rgba(12,13,28,0.72));
