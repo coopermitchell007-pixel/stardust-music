@@ -1136,32 +1136,34 @@ const Lyrics = (() => {
   let box = null, body = null, lastIdx = -1, attempts = 0, np = null;
   let mode = 'off', host = null;                     // 'searching' | 'ours' | 'off'
   let curEl = null, curSpans = null, curTiming = null;
-  let curMode = 'est', curWeights = null, curTotalW = 1, curSungDur = 1, prog = 0, lastCT = 0;
-  let synthMode = false, lineSyl = null, cumSyl = null, totalSyl = 1, progAll = 0, lastCTs = 0;
+  let curMode = 'est', curWeights = null, curTotalW = 1, curSungDur = 1, lastCT = 0;
+  let synthMode = false, lineSyl = null, cumSyl = null, totalSyl = 1, lastCTs = 0;
   let curSyl = null, curSylTotal = 1, sylPtr = 0;
   let floor = 0, sylAcc = 0;                 // adaptive vocal noise-floor + syllables-sung accumulator
   let transcribing = false;
-  let dbg = null;
+  let offset = 0, barEl = null, offEl = null; // user sync-offset (s) + toolbar els
   const SYL_RATE = 3.6;                      // avg sung syllables per second (used while singing)
 
-  // "Hear" the song this frame: vocal energy, whether a voice is ACTIVE (above an
-  // adaptive noise floor), and whether a syllable ONSET just fired.
+  // "Hear" the song this frame: vocal energy, whether a VOICE is present (above
+  // an adaptive noise floor), and whether a syllable ONSET just fired.
+  // The flag must not be called `active`: destructuring that name inside paint()
+  // shadows the module-level enabled flag (TDZ → paint throws every frame).
   function listen() {
     const e = Visualizer.vocalEnergy();
     const onset = Visualizer.vocalOnset();
-    if (e < 0) return { e: -1, active: true, onset: 0 }; // can't read audio → behave like time
+    if (e < 0) return { e: -1, voice: true, onset: 0 }; // can't read audio → behave like time
     // Noise floor falls fast toward quiet, rises slowly — so it tracks the gaps.
     floor += (e - floor) * (e < floor ? 0.25 : 0.01);
-    const active = e > floor + 0.06 || e > floor * 1.7;
-    return { e, active, onset };
+    const voice = e > floor + 0.06 || e > floor * 1.7;
+    return { e, voice, onset };
   }
 
   function enable() {
     active = true;
     np = readNowPlaying(); fetchFor(np);
     // A light 300ms poll keeps the tab un-greyed and injects when the Lyrics tab
-    // is open. The per-word highlight runs on rAF for a smooth karaoke sweep.
-    poll = setInterval(() => { sync(); updateDebug(); }, 300);
+    // is open. The per-word highlight runs on its own faster tick.
+    poll = setInterval(sync, 300);
     startRAF();
     sync();
   }
@@ -1211,23 +1213,43 @@ const Lyrics = (() => {
   function ensureBox() {
     if (!box) {
       body = h('div', { class: 'stardust-lyric-lines' });
-      dbg = h('div', { id: 'stardust-lyr-debug' });
-      box = h('div', { id: 'stardust-lyrics' }, [dbg, body]);
+      box = h('div', { id: 'stardust-lyrics' }, [buildTools(), body]);
     }
     return box;
   }
-  // Temporary diagnostic — shows why highlighting may be stuck.
-  function updateDebug() {
-    if (!dbg) return;
-    const v = playingVideo();
-    const first = synced.length ? synced[0].t.toFixed(1) : '-';
-    const last = synced.length ? synced[synced.length - 1].t.toFixed(1) : '-';
-    dbg.textContent = 'sd: mode=' + mode + ' lines=' + synced.length + ' idx=' + lastIdx
-      + ' t=' + (v ? (v.currentTime || 0).toFixed(1) : 'no-video')
-      + ' dur=' + (v && isFinite(v.duration) ? v.duration.toFixed(0) : '?')
-      + ' first=' + first + ' last=' + last
-      + ' paused=' + (v ? v.paused : '?') + ' conn=' + (box ? box.isConnected : '?')
-      + ' raf=' + (raf ? 'on' : 'OFF') + ' synth=' + synthMode;
+  // Slim toolbar over the lyrics: nudge the sync offset and copy the words.
+  function buildTools() {
+    const minus = h('button', { class: 'stardust-lyr-tool', title: 'Highlight running ahead of the singing? Delay it', text: '−0.5s' });
+    const plus = h('button', { class: 'stardust-lyr-tool', title: 'Highlight lagging behind the singing? Advance it', text: '+0.5s' });
+    offEl = h('button', { class: 'stardust-lyr-tool sd-off', title: 'Sync offset — click to reset', text: '0.0s' });
+    const copy = h('button', { class: 'stardust-lyr-tool', title: 'Copy the lyrics to the clipboard', text: '⧉ Copy' });
+    minus.addEventListener('click', () => nudge(-0.5));
+    plus.addEventListener('click', () => nudge(0.5));
+    offEl.addEventListener('click', () => nudge(0));
+    copy.addEventListener('click', copyLyrics);
+    barEl = h('div', { class: 'stardust-lyr-tools' }, [minus, offEl, plus, copy]);
+    return barEl;
+  }
+  function nudge(d) {
+    offset = d ? Math.round((offset + d) * 10) / 10 : 0;
+    if (offEl) {
+      offEl.textContent = (offset > 0 ? '+' : '') + offset.toFixed(1) + 's';
+      offEl.classList.toggle('nonzero', offset !== 0);
+    }
+  }
+  function copyLyrics() {
+    const text = synced.length ? synced.map((l) => l.s).filter(Boolean).join('\n') : (plain || '');
+    if (!text) { toast('No lyrics to copy'); return; }
+    navigator.clipboard.writeText(text).then(() => toast('📋 Lyrics copied'), () => toast('Copy failed'));
+  }
+  // Click a line to play from there (offset-corrected so the click lands on
+  // the words you clicked, not where the nudged highlight would be).
+  function seekTo(sec) {
+    const v = playingVideo(); if (!v) return;
+    try {
+      v.currentTime = Math.max(0, sec - offset + 0.01);
+      if (v.paused) doCommand('playpause');
+    } catch {}
   }
   function clearHost() { if (host) { host.classList.remove('stardust-lyrics-on'); host = null; } if (box && box.parentElement) box.remove(); }
 
@@ -1256,13 +1278,16 @@ const Lyrics = (() => {
   }
 
   const toSec = (mm, ss) => parseInt(mm, 10) * 60 + parseFloat(ss);
+  const estWords = (s) => s ? s.split(/\s+/).map((t2) => ({ text: t2, len: Math.max(t2.length, 1), time: null })) : [];
   function parseLRC(text) {
     const out = [];
     for (const line of (text || '').split('\n')) {
-      const m = line.match(/\[(\d+):(\d+(?:\.\d+)?)\](.*)/);
+      // One line can carry SEVERAL leading [mm:ss.xx] stamps (repeated chorus) —
+      // expand each into its own entry, or the extra stamps leak into the text.
+      const m = line.match(/^((?:\s*\[\d+:\d+(?:\.\d+)?\])+)([^]*)$/);
       if (!m) continue;
-      const t = toSec(m[1], m[2]);
-      let rest = m[3];
+      const times = [...m[1].matchAll(/\[(\d+):(\d+(?:\.\d+)?)\]/g)].map((x) => toSec(x[1], x[2]));
+      let rest = m[2];
       // Enhanced LRC (A2): inline <mm:ss.xx> word timestamps → true per-word timing.
       const wordTags = [...rest.matchAll(/<(\d+):(\d+(?:\.\d+)?)>\s*([^<]*)/g)];
       let words;
@@ -1274,15 +1299,23 @@ const Lyrics = (() => {
         rest = words.map((w) => w.text).join(' ');
       } else {
         rest = rest.replace(/<\d+:\d+(?:\.\d+)?>/g, '').trim();
-        words = rest ? rest.split(/\s+/).map((t2) => ({ text: t2, len: Math.max(t2.length, 1), time: null })) : [];
+        words = estWords(rest);
       }
-      out.push({ t, s: rest.trim(), words });
+      rest = rest.trim();
+      for (const t of times) {
+        // Real word times only belong to the first stamp; repeats get estimates.
+        out.push({ t, s: rest, words: t === times[0] ? words : estWords(rest) });
+      }
     }
+    // The current-line search assumes chronological order; repeated-stamp lines
+    // (and some providers) come out of order.
+    out.sort((a, b) => a.t - b.t);
     return out;
   }
   function render(status) {
     if (!body) return;
     while (body.firstChild) body.removeChild(body.firstChild);
+    if (barEl) barEl.style.display = status ? 'none' : 'flex';
     if (status) {
       body.appendChild(h('div', { class: 'stardust-lyric-status', text: status }));
       // No lyrics anywhere → offer to transcribe from the audio.
@@ -1296,7 +1329,7 @@ const Lyrics = (() => {
     }
     if (synced.length) {
       for (const l of synced) {
-        const line = h('div', { class: 'stardust-lyric-line words' });
+        const line = h('div', { class: 'stardust-lyric-line words', title: 'Play from here' });
         // Always split into per-word spans so we can highlight word-by-word.
         // Real timing when the line has it (enhanced LRC / NetEase yrc),
         // estimated (by word length across the line) otherwise.
@@ -1306,6 +1339,7 @@ const Lyrics = (() => {
             if (i < l.words.length - 1) line.appendChild(document.createTextNode(' '));
           });
         } else { line.textContent = l.s || '♪'; }
+        line.addEventListener('click', () => seekTo(l.t));
         body.appendChild(line);
       }
     } else if (plain) {
@@ -1359,7 +1393,12 @@ const Lyrics = (() => {
   function applySynced(text) {
     const titleN = alnum(stripTag(np && np.title));
     synced = parseLRC(text).filter((l, i) => !isBloatLine(l.s, i, titleN));
-    for (const l of synced) { l.s = stripTag(l.s); }
+    for (const l of synced) {
+      const s2 = stripTag(l.s);
+      // The words spans are what actually render — rebuild them if a tag came
+      // off, or the stripped text would still show word by word.
+      if (s2 !== l.s) { l.s = s2; l.words = estWords(s2); }
+    }
     plain = null; mode = 'ours'; synthMode = false;
     lastIdx = -1; curEl = null; curSpans = null;
   }
@@ -1428,6 +1467,7 @@ const Lyrics = (() => {
     const k = track.title + '|' + track.artist; if (k === key) return;
     key = k; np = track; synced = []; plain = null; attempts = 0; lastIdx = -1;
     mode = 'searching'; curEl = null; curSpans = null;
+    nudge(0); // the sync offset is per-song
     render('Searching lyrics…'); sync(); doFetch();
   }
   async function doFetch() {
@@ -1457,7 +1497,7 @@ const Lyrics = (() => {
     // timestamps, so we DRIVE progression by the actual vocal energy.
     synthMode = (synthed || !!(res && res.kind === 'synth')) && synced.length > 0;
     if (synthMode) buildSynthModel();
-    lastIdx = -1; curEl = null; curSpans = null; progAll = 0; lastCTs = 0;
+    lastIdx = -1; curEl = null; curSpans = null; lastCTs = 0; sylAcc = 0; floor = 0;
     render(statusText()); sync();
   }
   // Turn plain (untimed) lyrics into an LRC by spreading lines across the track
@@ -1497,7 +1537,7 @@ const Lyrics = (() => {
       else return;
     }
     const v = playingVideo(); if (!v) return;
-    const t = v.currentTime || 0;
+    const t = (v.currentTime || 0) + offset; // user sync-offset shifts the clock
     const kids = body.children;
 
     // Synthesized (Genius) timing: DRIVE the whole progression by the song's
@@ -1510,14 +1550,14 @@ const Lyrics = (() => {
       if (dt < 0 || dt > 1) dt = 0;
       const dur = (isFinite(v.duration) && v.duration > 0) ? v.duration : 210;
       const timeProg = Math.min(1, Math.max(0, t / dur));
-      const { e, active, onset } = listen();
+      const { e, voice, onset } = listen();
       if (e < 0) {
         sylAcc = timeProg * totalSyl;               // can't hear → even spread
       } else {
         // Only consume syllables WHILE A VOICE IS ACTIVE — so instrumental
         // intros/solos/outros don't advance the lyrics at all.
-        if (active) sylAcc += dt * SYL_RATE * (0.5 + e);
-        if (active && onset > 0) sylAcc += 0.4 * onset;
+        if (voice) sylAcc += dt * SYL_RATE * (0.5 + e);
+        if (voice && onset > 0) sylAcc += 0.4 * onset;
         // Safety band around the even-spread position so a bad detection can't
         // drift more than ~15% of the song either way.
         const anchor = timeProg * totalSyl;
@@ -1574,7 +1614,7 @@ const Lyrics = (() => {
           curTotalW = curWeights.reduce((a, b) => a + b, 0) || 1;
           const win = Math.max(0.5, lineEnd - line.t);
           curSungDur = Math.max(0.5, Math.min(win, curTotalW * 1.5)); // finish within, hold after
-          prog = 0; lastCT = t; sylPtr = 0;
+          lastCT = t; sylPtr = 0;
         }
         curEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
       }
@@ -1601,12 +1641,12 @@ const Lyrics = (() => {
     if (dt < 0 || dt > 1) { dt = 0; sylPtr = 0; } // seek/pause → resync
     const timeProg = Math.min(1, Math.max(0, (t - line.t) / curSungDur));
     const timeTarget = timeProg * curSylTotal;
-    const { e, active, onset } = listen();
+    const { e, voice, onset } = listen();
     if (e < 0) {
       sylPtr = timeTarget; // no audio → clock
     } else {
-      if (active) sylPtr += dt * SYL_RATE * (0.5 + e); // pace by real singing
-      if (active && onset > 0) sylPtr += 0.5 + 0.7 * onset; // snap on attacks
+      if (voice) sylPtr += dt * SYL_RATE * (0.5 + e); // pace by real singing
+      if (voice && onset > 0) sylPtr += 0.5 + 0.7 * onset; // snap on attacks
       sylPtr += (timeTarget - sylPtr) * 0.015;         // very gentle pull to clock
       sylPtr = Math.max(sylPtr, timeTarget - 3.2);     // wide safety band
       sylPtr = Math.min(sylPtr, timeTarget + 3.2);

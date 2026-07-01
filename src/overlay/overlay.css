@@ -820,10 +820,30 @@ body.stardust-playing img.stardust-vinyl { animation-play-state: running !import
 .stardust-text-input:focus { outline: none; border-color: var(--stardust-accent); }
 #stardust-transcribe-btn { margin-top: 16px; }
 
-/* Temporary lyrics diagnostic */
-#stardust-lyr-debug {
-  font-family: ui-monospace, Menlo, monospace; font-size: 11px;
-  color: color-mix(in srgb, var(--stardust-accent) 80%, #fff);
-  background: rgba(0,0,0,0.4); padding: 4px 8px; border-radius: 6px;
-  margin-bottom: 10px; white-space: pre-wrap; word-break: break-word;
+/* ---- Lyrics toolbar: sync nudge + copy ---- */
+.stardust-lyr-tools {
+  display: flex; align-items: center; gap: 6px;
+  margin-bottom: 12px; position: sticky; top: 0; z-index: 2;
 }
+.stardust-lyr-tool {
+  border: 1px solid rgba(255,255,255,0.14); background: rgba(12,13,28,0.72);
+  color: #cfcae6; border-radius: 999px; padding: 4px 11px;
+  font-size: 11px; font-weight: 600; cursor: pointer;
+  backdrop-filter: blur(10px);
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.stardust-lyr-tool:hover {
+  background: color-mix(in srgb, var(--stardust-accent) 26%, rgba(12,13,28,0.72));
+  border-color: color-mix(in srgb, var(--stardust-accent) 55%, transparent);
+  color: #fff;
+}
+.stardust-lyr-tool.sd-off { min-width: 44px; text-align: center; font-variant-numeric: tabular-nums; }
+.stardust-lyr-tool.sd-off.nonzero {
+  color: #fff;
+  background: color-mix(in srgb, var(--stardust-accent) 24%, rgba(12,13,28,0.72));
+  border-color: color-mix(in srgb, var(--stardust-accent) 60%, transparent);
+}
+
+/* Synced lines seek on click */
+.stardust-lyric-line.words { cursor: pointer; }
+.stardust-lyric-line.words:not(.active):hover { color: rgba(255,255,255,0.68); }
