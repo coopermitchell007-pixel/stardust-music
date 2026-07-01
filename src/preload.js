@@ -1312,8 +1312,12 @@ const Lyrics = (() => {
     if (idx < 3 && /\blyrics$/i.test(s)) return true; // "Song Lyrics" header near top
     // Credit lines (support both ':' and full-width '：', and CJK credit words).
     if (/^(lyric|lyrics|music|composed|composer|compose|arrang|produc|written|writer|words|作词|作曲|编曲|制作|词|曲|演唱|歌手|翻译|出品)\w*\s*(by)?\s*[:：]/i.test(s)) return true;
-    // "Title - Artist" header near the top.
-    if (titleN && idx < 3 && n.startsWith(titleN) && n.length <= titleN.length + 28) return true;
+    // CJK source/credit notes, incl. parenthesized ones with no colon
+    // (e.g. "（歌词来源网络）" = "lyrics source: internet").
+    if (/歌词来源|歌詞來源|字幕来源|来源网络|來源網絡|上传者|后期制作|後期製作|由.{0,10}整理|翻譯|监制/.test(s)) return true;
+    if (/^[（(][\s\S]{0,40}[)）]$/.test(s) && /[㐀-鿿]/.test(s)) return true; // short parenthesized CJK note
+    // "Title - Artist" header near the top (any dash/en-dash/full-width dash).
+    if (titleN && idx < 4 && n.startsWith(titleN) && n.length <= titleN.length + 30) return true;
     return false;
   }
   const stripTag = (s) => (s || '').replace(/\s*[([][^)\]]*(?:official|music\s*video|lyric|audio|visuali[sz]er|remaster|sped\s*up|slowed|reverb|extended|\bhd\b|\b4k\b|\blive\b)[^)\]]*[)\]]/gi, '').trim();
