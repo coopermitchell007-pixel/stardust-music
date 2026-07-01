@@ -1,31 +1,41 @@
 'use strict';
 
-// Synced/plain lyrics via lrclib.net (free, no API key). Runs in the main
-// process so there are no CORS restrictions.
+// Multi-source lyrics (all free, no API keys). Runs in the main process so
+// there are no CORS restrictions. Providers: lrclib, NetEase, Kugou (synced) and
+// Genius (plain, scraped) as a last resort.
 const https = require('https');
+const http = require('http');
 
-function getJson(url, extraHeaders) {
+// Core HTTP(S) GET with redirect-following, a hard timeout, and optional raw
+// (non-JSON) body — used for Genius's HTML lyrics pages.
+function httpGet(url, { headers = {}, raw = false, redirects = 3 } = {}) {
   return new Promise((resolve) => {
     let done = false;
     const finish = (v) => { if (!done) { done = true; resolve(v); } };
     let req;
     try {
-      req = https.get(url, {
-        headers: Object.assign({ 'User-Agent': 'Stardust v0.9 (https://github.com/coopermitchell007-pixel/stardust-music)' }, extraHeaders || {}),
+      const mod = url.startsWith('http://') ? http : https;
+      req = mod.get(url, {
+        headers: Object.assign({ 'User-Agent': 'Mozilla/5.0 (Stardust)', 'Accept-Language': 'en' }, headers),
         timeout: 8000
       }, (res) => {
+        if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location && redirects > 0) {
+          res.resume();
+          return finish(httpGet(new URL(res.headers.location, url).href, { headers, raw, redirects: redirects - 1 }));
+        }
         if (res.statusCode !== 200) { res.resume(); return finish(null); }
         let d = '';
         res.on('data', (c) => (d += c));
-        res.on('end', () => { try { finish(JSON.parse(d)); } catch { finish(null); } });
+        res.on('end', () => { if (raw) return finish(d); try { finish(JSON.parse(d)); } catch { finish(null); } });
       });
       req.on('error', () => finish(null));
       req.on('timeout', () => { try { req.destroy(); } catch {} finish(null); });
     } catch { finish(null); }
-    // Hard cap — guards against a connect/DNS hang that never fires 'timeout'.
     setTimeout(() => { try { req && req.destroy(); } catch {} finish(null); }, 9000);
   });
 }
+const getJson = (url, extraHeaders) => httpGet(url, { headers: extraHeaders });
+const getText = (url, extraHeaders) => httpGet(url, { headers: extraHeaders, raw: true });
 
 const qs = (o) => Object.entries(o)
   .filter(([, v]) => v !== undefined && v !== null && v !== '')
@@ -154,15 +164,18 @@ async function fetchLyrics({ artist, title, album, duration } = {}) {
     return { syncedLyrics: hit.syncedLyrics || '', plainLyrics: hit.plainLyrics || '' };
   }
 
-  // Only now (lrclib missed) pay for NetEase. Use the "Song by Artist" reading
-  // for videos (altPairs[0]) with its matching `want` (wants[1]).
-  const neTitle = altPairs[0] ? altPairs[0].track : bare;
-  const neArtist = altPairs[0] ? altPairs[0].artist : artist1;
-  const neWant = altPairs[0] ? wants[1] : want;
-  const ne = await fetchNetease({ title: neTitle, artist: neArtist, want: neWant }).catch(() => null);
-  if (ne) return ne;
-
-  return null; // no confident match — show nothing rather than the wrong song
+  // lrclib missed — fan out to every other provider in parallel. Use the
+  // "Song by Artist" reading for videos (altPairs[0]) with its matching `want`.
+  const fTitle = altPairs[0] ? altPairs[0].track : bare;
+  const fArtist = altPairs[0] ? altPairs[0].artist : artist1;
+  const fWant = altPairs[0] ? wants[1] : want;
+  const [ne, kugou, genius] = await Promise.all([
+    fetchNetease({ title: fTitle, artist: fArtist, want: fWant }).catch(() => null),
+    fetchKugou({ title: fTitle, artist: fArtist, want: fWant }).catch(() => null),
+    fetchGenius({ title: fTitle, artist: fArtist, want: fWant }).catch(() => null)
+  ]);
+  // Prefer synced sources (NetEase yrc/lrc, Kugou lrc); Genius is plain-text last.
+  return ne || kugou || genius || null;
 }
 
 // --- NetEase provider ------------------------------------------------------
@@ -215,6 +228,69 @@ async function fetchNetease({ title, artist, want }) {
   if (lrc && /\[\d+:\d+/.test(lrc)) return { syncedLyrics: lrc, plainLyrics: '' };
   if (lrc) return { syncedLyrics: '', plainLyrics: lrc };
   return null;
+}
+
+// --- Kugou provider (synced, line-level LRC) -------------------------------
+async function fetchKugou({ title, artist, want }) {
+  const q = encodeURIComponent(`${title} ${artist || ''}`.trim());
+  const s = await getJson(`http://mobilecdn.kugou.com/api/v3/search/song?format=json&keyword=${q}&page=1&pagesize=8`);
+  const list = s && s.data && s.data.info;
+  if (!Array.isArray(list) || !list.length) return null;
+
+  let best = null, bestScore = -1;
+  for (const it of list) {
+    const cand = { trackName: it.songname, artistName: it.singername, duration: it.duration || 0, syncedLyrics: 'x' };
+    const sc = scoreCandidate(cand, want);
+    if (sc && sc.score > bestScore) { bestScore = sc.score; best = it; }
+  }
+  if (!best || bestScore < MIN_SCORE) return null;
+
+  const sr = await getJson(`http://krcs.kugou.com/search?ver=1&man=yes&client=mobi&hash=${best.hash}`);
+  const cand = sr && sr.candidates && sr.candidates[0];
+  if (!cand) return null;
+  const dl = await getJson(`http://lyrics.kugou.com/download?ver=1&client=pc&fmt=lrc&charset=utf8&id=${cand.id}&accesskey=${cand.accesskey}`);
+  if (!dl || !dl.content) return null;
+  let lrc = '';
+  try { lrc = Buffer.from(dl.content, 'base64').toString('utf8'); } catch { return null; }
+  if (/\[\d+:\d+/.test(lrc)) return { syncedLyrics: lrc, plainLyrics: '' };
+  return null;
+}
+
+// --- Genius provider (plain text, scraped — last resort, no timing) --------
+function decodeEntities(s) {
+  return s.replace(/&amp;/g, '&').replace(/&#x27;/g, "'").replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"').replace(/&gt;/g, '>').replace(/&lt;/g, '<')
+    .replace(/&#x2f;/gi, '/').replace(/&nbsp;/g, ' ');
+}
+function extractGeniusLyrics(html) {
+  const parts = [...html.matchAll(/data-lyrics-container="true"[^>]*>([\s\S]*?)<\/div>/g)].map((m) => m[1]);
+  if (!parts.length) return '';
+  let t = parts.join('\n').replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '');
+  t = decodeEntities(t);
+  return t.split('\n').map((x) => x.trim()).filter(Boolean).join('\n');
+}
+async function fetchGenius({ title, artist, want }) {
+  const q = encodeURIComponent(`${title} ${artist || ''}`.trim());
+  const s = await getJson(`https://genius.com/api/search/multi?q=${q}`);
+  const sections = s && s.response && s.response.sections;
+  if (!Array.isArray(sections)) return null;
+
+  let hit = null, fallback = null;
+  for (const sec of sections) {
+    for (const h of (sec.hits || [])) {
+      if (h.type !== 'song' || !h.result) continue;
+      if (!fallback) fallback = h.result;
+      const cand = { trackName: h.result.title, artistName: (h.result.primary_artist && h.result.primary_artist.name) || '', duration: 0, syncedLyrics: 'x' };
+      if (scoreCandidate(cand, { ...want, duration: undefined })) { hit = h.result; break; }
+    }
+    if (hit) break;
+  }
+  hit = hit || fallback;
+  if (!hit || !hit.url) return null;
+  const html = await getText(hit.url);
+  if (!html) return null;
+  const text = extractGeniusLyrics(html);
+  return text ? { syncedLyrics: '', plainLyrics: text } : null;
 }
 
 module.exports = { fetchLyrics };
