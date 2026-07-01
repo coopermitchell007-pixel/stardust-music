@@ -1032,7 +1032,7 @@ const Lyrics = (() => {
   let active = false, synced = [], plain = null, key = '', poll = null, raf = null;
   let box = null, body = null, lastIdx = -1, attempts = 0, np = null;
   let mode = 'off', host = null;                     // 'searching' | 'ours' | 'off'
-  let curEl = null, curSpans = null, curEnhanced = false;
+  let curEl = null, curSpans = null, curTiming = null;
 
   function enable() {
     active = true;
@@ -1196,51 +1196,58 @@ const Lyrics = (() => {
     let idx = -1;
     for (let i = 0; i < synced.length; i++) { if (synced[i].t <= t + 0.15) idx = i; else break; }
 
-    // Line changed: move .active, reset the old line, scroll, and cache the new
-    // one so per-frame work stays cheap.
+    // Line changed: move .active, reset the old line, scroll, and precompute
+    // the new line's per-word [start,end] timing once (cheap per-frame after).
     if (idx !== lastIdx) {
       if (curEl) { curEl.classList.remove('active'); curEl.style.removeProperty('--wp'); clearWords(curEl); }
       lastIdx = idx;
       curEl = idx >= 0 ? kids[idx] : null;
+      curSpans = curTiming = null;
       if (curEl) {
         curEl.classList.add('active');
-        const lw = synced[idx] && synced[idx].words;
-        curEnhanced = !!(lw && lw.length && lw[0].time != null); // real per-word timing?
         curSpans = curEl.querySelectorAll('.w');
+        const lineEnd = synced[idx + 1] ? synced[idx + 1].t
+          : (isFinite(v.duration) && v.duration > synced[idx].t ? v.duration : synced[idx].t + 6);
+        curTiming = computeWordTiming(synced[idx], lineEnd);
         curEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
       }
     }
-    if (!curEl || !curSpans || !curSpans.length) return;
+    if (!curEl || !curSpans || !curSpans.length || !curTiming) return;
 
-    const line = synced[idx];
-    const lineEnd = synced[idx + 1] ? synced[idx + 1].t
-      : (isFinite(v.duration) && v.duration > line.t ? v.duration : line.t + Math.max(3, (line.s.length || 8) * 0.09));
-
-    if (curEnhanced) {
-      // Real per-word timing (enhanced LRC / NetEase yrc).
-      for (let i = 0; i < curSpans.length; i++) {
-        const w = line.words[i]; if (!w) continue;
-        const ws = w.time, we = (line.words[i + 1] && line.words[i + 1].time != null) ? line.words[i + 1].time : lineEnd;
-        if (t >= we) setWord(curSpans[i], 'sung');
-        else if (t >= ws) setWord(curSpans[i], 'cur', we > ws ? (t - ws) / (we - ws) : 1);
-        else setWord(curSpans[i], '');
-      }
-    } else {
-      // Estimate: spread the line's elapsed time across its words by length,
-      // so each word lights up in turn (approximate, but word-by-word).
-      const total = line.words.reduce((a, w) => a + w.len, 0) || 1;
-      const dur = Math.max(lineEnd - line.t, 0.001);
-      const p = Math.min(1, Math.max(0, (t - line.t) / dur));
-      const target = p * total;
-      let acc = 0;
-      for (let i = 0; i < curSpans.length; i++) {
-        const wl = line.words[i] ? line.words[i].len : 1;
-        if (acc + wl <= target) setWord(curSpans[i], 'sung');
-        else if (acc < target) setWord(curSpans[i], 'cur', (target - acc) / wl);
-        else setWord(curSpans[i], '');
-        acc += wl;
-      }
+    // Highlight by each word's real [start,end] window. Words that have already
+    // been sung STAY lit (so a gap before the next line doesn't blank the line).
+    for (let i = 0; i < curSpans.length; i++) {
+      const tm = curTiming[i]; if (!tm) continue;
+      if (t >= tm.end) setWord(curSpans[i], 'sung');
+      else if (t >= tm.start) setWord(curSpans[i], 'cur', tm.end > tm.start ? (t - tm.start) / (tm.end - tm.start) : 1);
+      else setWord(curSpans[i], '');
     }
+  }
+
+  // Build per-word [start,end] times for a line. Uses real timestamps when the
+  // line has them (enhanced LRC / NetEase yrc); otherwise estimates each word's
+  // duration from its length at a natural pace and, crucially, lets the words
+  // FINISH within the sung portion instead of being stretched across a long gap
+  // to the next line — so word-by-word keeps working before instrumental breaks.
+  function computeWordTiming(line, lineEnd) {
+    const words = line.words || [];
+    if (!words.length) return [];
+    if (words[0].time != null) {
+      return words.map((w, i) => ({
+        start: w.time,
+        end: (words[i + 1] && words[i + 1].time != null) ? words[i + 1].time : Math.min(lineEnd, w.time + 1.2)
+      }));
+    }
+    const PER_CHAR = 0.16, MIN_W = 0.30;
+    const durs = words.map((w) => Math.max(MIN_W, w.len * PER_CHAR));
+    const natural = durs.reduce((a, b) => a + b, 0);
+    const window = Math.max(0.5, lineEnd - line.t);
+    // Compress to fit if the line window is short; never stretch beyond the
+    // natural pace (leaves the rest of a long gap with all words already lit).
+    const scale = natural > window ? window / natural : 1;
+    let acc = line.t; const out = [];
+    for (const d of durs) { const s = acc; const e = acc + d * scale; out.push({ start: s, end: e }); acc = e; }
+    return out;
   }
   // Set a word's state without redundant DOM writes.
   function setWord(el, state, wp) {
