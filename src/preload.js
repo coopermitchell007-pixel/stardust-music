@@ -801,21 +801,26 @@ const Lyrics = (() => {
   //  - otherwise get out of the way and let YTM's own tab render.
   // A single class on the tab host hides YTM's content and shows our box, so it
   // survives YTM re-rendering the tab without any per-tick thrash.
+  function statusText() {
+    if (mode === 'searching') return 'Searching lyrics…';
+    if (mode === 'off') return 'Lyrics not available for this track';
+    return undefined; // 'ours' → render the lyrics
+  }
   function sync() {
     if (!active) return;
     ungray();
     const h0 = tabHost();
-    // Take over ONLY when we have a confident match for this track. While
-    // searching or when nothing was found, we stay out and leave YTM's own
-    // lyrics tab untouched — so the view never flickers between the two.
-    const want = h0 && tabSelected() && mode === 'ours' && (synced.length || plain);
+    // Stardust fully owns the Lyrics tab whenever it's open — we never fall back
+    // to YTM's own lyrics, so there's nothing to flicker between. The panel just
+    // shows "searching", the lyrics, or "not available".
+    const want = h0 && tabSelected();
     if (want) {
       if (host && host !== h0) host.classList.remove('stardust-lyrics-on');
       host = h0;
       host.classList.add('stardust-lyrics-on');
       ensureBox();
       if (box.parentElement !== host) host.appendChild(box);
-      if (!body.firstChild) render();
+      if (!body.firstChild) render(statusText());
     } else {
       clearHost();
     }
@@ -889,8 +894,7 @@ const Lyrics = (() => {
     const k = track.title + '|' + track.artist; if (k === key) return;
     key = k; np = track; synced = []; plain = null; attempts = 0; lastIdx = -1;
     mode = 'searching'; curEl = null; curSpans = null;
-    clearHost();          // stay out until we have a confident match
-    doFetch();
+    render('Searching lyrics…'); sync(); doFetch();
   }
   async function doFetch() {
     attempts++;
@@ -900,10 +904,10 @@ const Lyrics = (() => {
     if (!active || key !== forKey) return;   // track changed while awaiting
     if (res && res.syncedLyrics) { synced = parseLRC(res.syncedLyrics); plain = null; mode = 'ours'; }
     else if (res && res.plainLyrics) { synced = []; plain = res.plainLyrics; mode = 'ours'; }
-    else if (attempts < 3) { setTimeout(() => { if (active && key === forKey) doFetch(); }, 1800); return; } // duration may not be ready yet
+    else if (attempts < 4) { setTimeout(() => { if (active && key === forKey) doFetch(); }, 1500); return; } // duration may not be ready yet
     else { synced = []; plain = null; mode = 'off'; }
     lastIdx = -1; curEl = null; curSpans = null;
-    render(); sync();
+    render(statusText()); sync();
   }
 
   function paint() {

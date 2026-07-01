@@ -81,12 +81,14 @@ function scoreCandidate(x, want) {
   return { x, score: s, synced: !!x.syncedLyrics, ddiff };
 }
 
-// A match is only trustworthy if the artist genuinely lines up AND the timing
-// is close — enough to keep same-title / different-language covers out.
-const MIN_SCORE = 8;
+// A match is only trustworthy if the artist lines up (or the title is exact)
+// and the script matches — enough to keep different-language covers out while
+// still finding lyrics for the common case.
+const MIN_SCORE = 5;
 
 async function fetchLyrics({ artist, title, album, duration } = {}) {
   if (!title) return null;
+  if (!(duration > 0)) duration = undefined; // 0/NaN at track start → don't over-constrain
   const ct = cleanTitle(title);
 
   // 1) Exact match (lrclib verifies title+artist+duration for us). Try with the
