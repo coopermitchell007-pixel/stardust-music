@@ -80,28 +80,27 @@ function scoreCandidate(x, want) {
 
   const knownDur = !!(x.duration && want.duration);
   const ddiff = knownDur ? Math.abs(x.duration - want.duration) : 999;
-  if (knownDur && ddiff > 8) return null; // wrong length → almost always a different song
-
   const artistExact = !!want.artist && na === want.artist;
   const artistOverlap = !!want.artist && !!na && (na.includes(want.artist) || want.artist.includes(na));
-  const durClose = ddiff <= 4;
 
-  // Acceptance (CJK guard already blocks wrong-language covers):
-  //  - duration KNOWN + within 8s → trust an exact/partial title (right length);
-  //  - duration UNKNOWN → require artist corroboration, so a same-title song by
-  //    a different artist can't be locked in before duration loads (wrong-song bug).
+  // Better way (no exact-artist requirement): DURATION is the disambiguator.
+  //  - duration KNOWN → the right song has the right length; require it within
+  //    ~7s. Artist is NOT required (just scored), so odd artist formatting never
+  //    causes a miss, and the correct version still wins via the score below.
+  //  - duration UNKNOWN → we can't tell same-title songs apart yet, so only
+  //    accept a strong title+artist match; otherwise bail and let it retry once
+  //    the duration has loaded (prevents locking in a wrong same-title song).
   if (knownDur) {
-    if (!titleExact && !durClose && !artistExact && !artistOverlap) return null;
-  } else {
-    if (want.artist) { if (!artistExact && !artistOverlap) return null; }
-    else if (!titleExact) return null; // no artist + no duration → need exact title
+    if (ddiff > 7) return null;
+  } else if (!(titleExact && (artistExact || artistOverlap))) {
+    return null;
   }
 
   let s = 0;
   if (titleExact) s += 4;
   if (artistExact) s += 5; else if (artistOverlap) s += 2;
-  if (x.syncedLyrics) s += 3;
-  if (ddiff <= 2) s += 4; else if (ddiff <= 5) s += 2; else if (ddiff <= 8) s += 1;
+  if (x.syncedLyrics) s += 2;
+  if (ddiff <= 1) s += 6; else if (ddiff <= 3) s += 4; else if (ddiff <= 7) s += 2; // duration closeness dominates
   return { x, score: s, synced: !!x.syncedLyrics, ddiff };
 }
 
@@ -305,17 +304,15 @@ async function fetchGenius({ title, artist, want }) {
   const text = extractGeniusLyrics(html);
   if (!text) return null;
 
-  // Genius has no timing. If we know the song duration, SYNTHESIZE line
-  // timestamps by spreading the lines across the track (weighted by syllables),
-  // so it gets line-by-line + word highlighting like a synced source. Skip
-  // section headers like [Chorus] for timing but keep them shown.
+  // Genius has no timing — synthesize line timestamps by spreading the lines
+  // across the track (weighted by syllables) so it gets line-by-line + word
+  // highlighting. Approximate, but now on the RIGHT song (artist-gated match).
   if (want && want.duration > 0) {
     const lines = text.split('\n');
     const sylOf = (s) => ((s || '').toLowerCase().match(/[aeiouy]+/g) || []).length;
-    const weights = lines.map((l) => /^\[.*\]$/.test(l.trim()) ? 0.4 : Math.max(0.5, sylOf(l)));
+    const weights = lines.map((l) => /^\[.*\]$/.test(l.trim()) ? 0.4 : Math.max(0.6, sylOf(l)));
     const total = weights.reduce((a, b) => a + b, 0) || 1;
-    // Assume vocals span ~from 3% to ~97% of the track.
-    const start = want.duration * 0.03, span = want.duration * 0.92;
+    const start = want.duration * 0.04, span = want.duration * 0.9; // vocals ~4%–94%
     let acc = 0; const out = [];
     for (let i = 0; i < lines.length; i++) {
       const t = start + span * (acc / total);
