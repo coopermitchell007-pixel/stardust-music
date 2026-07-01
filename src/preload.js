@@ -277,6 +277,61 @@ const BlackHole = (() => {
 })();
 
 // ---------------------------------------------------------------------------
+// Background — rendered on a single canvas texture instead of a CSS gradient.
+// A CSS gradient across the full page is rasterised in tiles by Chromium, and
+// the tile seams show as faint horizontal "lines between sections". One canvas
+// image composites as a single layer (no tile seams), and we bake in ±1 dither
+// to kill 8-bit banding without any visible grain.
+// ---------------------------------------------------------------------------
+const BackgroundFX = (() => {
+  let canvas, ctx, cfg = null;
+  function ensure() {
+    if (canvas) return;
+    canvas = document.createElement('canvas');
+    canvas.id = 'stardust-bg';
+    document.body.appendChild(canvas);
+    ctx = canvas.getContext('2d');
+    window.addEventListener('resize', draw);
+  }
+  function configure(bg) {
+    cfg = bg || null;
+    if (!cfg) { if (canvas) canvas.style.display = 'none'; return; }
+    ensure(); canvas.style.display = 'block'; draw();
+  }
+  function draw() {
+    if (!cfg) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = window.innerWidth, h = window.innerHeight;
+    canvas.width = w * dpr; canvas.height = h * dpr;
+    canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = cfg.base || '#05060f';
+    ctx.fillRect(0, 0, w, h);
+    for (const b of (cfg.blooms || [])) {
+      const cx = b.x * w, cy = b.y * h, r = Math.max(w, h) * (b.r || 0.6);
+      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+      g.addColorStop(0, hexA(b.color, b.alpha != null ? b.alpha : 0.5));
+      g.addColorStop(1, hexA(b.color, 0));
+      ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+    }
+    dither(w * dpr, h * dpr);
+  }
+  function dither(pw, ph) {
+    // ±1-level per-pixel noise — dithers the gradient so it can't band, but is
+    // far below the threshold of visible grain.
+    try {
+      const img = ctx.getImageData(0, 0, pw, ph), d = img.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const n = (Math.random() * 2 - 1) * 1.3;
+        d[i] += n; d[i + 1] += n; d[i + 2] += n;
+      }
+      ctx.putImageData(img, 0, 0);
+    } catch {}
+  }
+  return { configure };
+})();
+
+// ---------------------------------------------------------------------------
 // Visualizer — real spectrum bars driven by the actual audio.
 // YTM plays via MediaSource (blob: URLs are same-origin), so we *can* tap the
 // page's media element with a Web Audio AnalyserNode: route
@@ -499,6 +554,7 @@ async function applyTheme(id) {
   activeTheme = theme;
   applyVars();
   sheet('stardust-theme').textContent = theme.css || '';
+  BackgroundFX.configure(theme.bg);
   Starfield.configure(theme.starfield);
   Visualizer.configure(theme.visualizer);
   BlackHole.configure(theme.blackhole);

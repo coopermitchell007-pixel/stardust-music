@@ -6,5 +6,9 @@
   "background": "radial-gradient(1300px 1000px at 50% 30%, #150d2e 0%, rgba(21,13,46,0) 60%), #050409",
   "glass": { "blur": 20, "opacity": 0.5 },
   "starfield": { "enabled": true, "count": 340, "color": "#ece5ff", "speed": 0.25, "size": 1.9, "twinkle": true, "shootingStars": true },
-  "visualizer": { "enabled": true, "color": "#8b5cff", "style": "bars" }
+  "visualizer": { "enabled": true, "color": "#8b5cff", "style": "bars" },
+  "bg": { "base": "#07051c", "blooms": [
+    { "x": 0.5, "y": 0.12, "r": 0.9, "color": "#3a1f7a", "alpha": 0.55 },
+    { "x": 0.92, "y": 1.05, "r": 0.7, "color": "#20306e", "alpha": 0.4 }
+  ] }
 }

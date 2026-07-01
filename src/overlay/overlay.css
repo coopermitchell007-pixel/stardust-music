@@ -42,6 +42,14 @@ html::before {
 /* (No dither overlay — it read as grain. Banding handled by keeping blooms
    soft over near-black bases.) */
 
+/* Canvas background texture — sits behind everything (incl. starfield). */
+#stardust-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+
 #stardust-starfield {
   position: fixed;
   inset: 0;

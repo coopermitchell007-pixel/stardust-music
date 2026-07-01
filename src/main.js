@@ -253,6 +253,7 @@ function registerIpc() {
       starfield: t.starfield,
       visualizer: t.visualizer,
       blackhole: t.blackhole,
+      bg: t.bg,
       css: t.css
     };
   });

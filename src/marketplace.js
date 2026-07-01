@@ -100,7 +100,8 @@ function install(item) {
       const meta = {
         id: item.id, name: item.name, author: item.author || 'community',
         accent: t.accent || item.accent, background: t.background,
-        glass: t.glass, starfield: t.starfield, visualizer: t.visualizer
+        glass: t.glass, starfield: t.starfield, visualizer: t.visualizer,
+        blackhole: t.blackhole || null, bg: t.bg || null
       };
       fs.writeFileSync(path.join(dir, 'theme.json'), JSON.stringify(meta, null, 2));
       fs.writeFileSync(path.join(dir, 'theme.css'), t.css || '');

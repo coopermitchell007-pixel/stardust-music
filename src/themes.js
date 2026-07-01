@@ -31,6 +31,7 @@ function readThemeFolder(dir, source) {
       starfield: meta.starfield || { enabled: true, count: 180, color: '#cdbcff', speed: 0.25, size: 1.6, twinkle: true, shootingStars: true },
       visualizer: meta.visualizer || { enabled: true, color: meta.accent || '#8b5cff', style: 'bars' },
       blackhole: meta.blackhole || null,
+      bg: meta.bg || null,
       source,
       css
     };
