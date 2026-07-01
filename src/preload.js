@@ -1110,6 +1110,20 @@ const Lyrics = (() => {
   let curMode = 'est', curWeights = null, curTotalW = 1, curSungDur = 1, prog = 0, lastCT = 0;
   let synthMode = false, lineSyl = null, cumSyl = null, totalSyl = 1, progAll = 0, lastCTs = 0;
   let curSyl = null, curSylTotal = 1, sylPtr = 0;
+  let floor = 0, sylAcc = 0;                 // adaptive vocal noise-floor + syllables-sung accumulator
+  const SYL_RATE = 3.6;                      // avg sung syllables per second (used while singing)
+
+  // "Hear" the song this frame: vocal energy, whether a voice is ACTIVE (above an
+  // adaptive noise floor), and whether a syllable ONSET just fired.
+  function listen() {
+    const e = Visualizer.vocalEnergy();
+    const onset = Visualizer.vocalOnset();
+    if (e < 0) return { e: -1, active: true, onset: 0 }; // can't read audio → behave like time
+    // Noise floor falls fast toward quiet, rises slowly — so it tracks the gaps.
+    floor += (e - floor) * (e < floor ? 0.25 : 0.01);
+    const active = e > floor + 0.06 || e > floor * 1.7;
+    return { e, active, onset };
+  }
 
   function enable() {
     active = true;
@@ -1254,9 +1268,13 @@ const Lyrics = (() => {
     if (/you might also like/i.test(s)) return true;
     if (/\bembed$/i.test(s)) return true;
     if (idx < 3 && /\blyrics$/i.test(s)) return true; // "Song Lyrics" header near top
+    // Credit lines (support both ':' and full-width '：', and CJK credit words).
+    if (/^(lyric|lyrics|music|composed|composer|compose|arrang|produc|written|writer|words|作词|作曲|编曲|制作|词|曲|演唱|歌手|翻译|出品)\w*\s*(by)?\s*[:：]/i.test(s)) return true;
+    // "Title - Artist" header near the top.
+    if (titleN && idx < 3 && n.startsWith(titleN) && n.length <= titleN.length + 28) return true;
     return false;
   }
-  const stripTag = (s) => (s || '').replace(/\s*[([][^)\]]*(?:official|music\s*video|lyric|audio|visuali[sz]er|remaster)[^)\]]*[)\]]/gi, '').trim();
+  const stripTag = (s) => (s || '').replace(/\s*[([][^)\]]*(?:official|music\s*video|lyric|audio|visuali[sz]er|remaster|sped\s*up|slowed|reverb|extended|\bhd\b|\b4k\b|\blive\b)[^)\]]*[)\]]/gi, '').trim();
 
   function fetchFor(track) {
     if (!track || !track.title) return;
@@ -1317,16 +1335,22 @@ const Lyrics = (() => {
       if (dt < 0 || dt > 1) dt = 0;
       const dur = (isFinite(v.duration) && v.duration > 0) ? v.duration : 210;
       const timeProg = Math.min(1, Math.max(0, t / dur));
-      const e = Visualizer.vocalEnergy();
-      if (e >= 0) {
-        progAll += (e * e) * dt / (dur * 0.5);          // loud vocals → advance; quiet → stall
-        progAll = Math.max(progAll, timeProg * 0.35);    // loose anchor to avoid drift
-        progAll = Math.min(progAll, timeProg * 1.5 + 0.08);
+      const { e, active, onset } = listen();
+      if (e < 0) {
+        sylAcc = timeProg * totalSyl;               // can't hear → even spread
       } else {
-        progAll = timeProg;
+        // Only consume syllables WHILE A VOICE IS ACTIVE — so instrumental
+        // intros/solos/outros don't advance the lyrics at all.
+        if (active) sylAcc += dt * SYL_RATE * (0.5 + e);
+        if (active && onset > 0) sylAcc += 0.4 * onset;
+        // Safety band around the even-spread position so a bad detection can't
+        // drift more than ~15% of the song either way.
+        const anchor = timeProg * totalSyl;
+        sylAcc = Math.max(sylAcc, anchor - totalSyl * 0.15);
+        sylAcc = Math.min(sylAcc, anchor + totalSyl * 0.15);
       }
-      progAll = Math.min(1, Math.max(0, progAll));
-      const target = progAll * totalSyl;
+      sylAcc = Math.min(totalSyl, Math.max(0, sylAcc));
+      const target = sylAcc;
       let sidx = 0;
       for (let i = 0; i < cumSyl.length; i++) { if (cumSyl[i] <= target) sidx = i; else break; }
       if (sidx !== lastIdx) {
@@ -1394,19 +1418,24 @@ const Lyrics = (() => {
     }
     if (!curSyl) return;
 
-    // Estimated timing, ONSET-STEPPED: advance the "sung syllable" pointer on
-    // real vocal attacks (spectral-flux onsets) so words snap to the actual
-    // singing rhythm — pulled gently toward the clock estimate and clamped near
-    // it so it can't drift. Continuous per-word fill (no popping).
+    // Estimated timing, driven by LISTENING: advance the sung-syllable pointer
+    // on real vocal onsets, only while a voice is active (so it holds on
+    // instrumental gaps mid-line), and pace it at ~the sung syllable rate.
+    // The clock is just a wide safety band so it can't drift far.
     let dt = t - lastCT; lastCT = t;
     if (dt < 0 || dt > 1) { dt = 0; sylPtr = 0; } // seek/pause → resync
     const timeProg = Math.min(1, Math.max(0, (t - line.t) / curSungDur));
-    const timeTarget = timeProg * curSylTotal;         // syllables the clock expects by now
-    const onset = Visualizer.vocalOnset();             // >0 on a vocal attack
-    if (onset > 0) sylPtr += 0.6 + 0.8 * onset;        // step forward ~a syllable per attack
-    sylPtr += (timeTarget - sylPtr) * 0.03;            // gentle pull toward the estimate
-    sylPtr = Math.max(sylPtr, timeTarget - 2.2);       // clamp: never lag/lead the clock far
-    sylPtr = Math.min(sylPtr, timeTarget + 2.2);
+    const timeTarget = timeProg * curSylTotal;
+    const { e, active, onset } = listen();
+    if (e < 0) {
+      sylPtr = timeTarget; // no audio → clock
+    } else {
+      if (active) sylPtr += dt * SYL_RATE * (0.5 + e); // pace by real singing
+      if (active && onset > 0) sylPtr += 0.5 + 0.7 * onset; // snap on attacks
+      sylPtr += (timeTarget - sylPtr) * 0.015;         // very gentle pull to clock
+      sylPtr = Math.max(sylPtr, timeTarget - 3.2);     // wide safety band
+      sylPtr = Math.min(sylPtr, timeTarget + 3.2);
+    }
     sylPtr = Math.min(curSylTotal, Math.max(0, sylPtr));
     let acc = 0;
     for (let i = 0; i < curSpans.length; i++) {
