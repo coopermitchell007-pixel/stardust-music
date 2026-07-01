@@ -747,16 +747,30 @@ const VinylSpin = (() => {
     document.body.appendChild(overlay);
     return overlay;
   }
+  // Is the immersive now-playing page actually open (not just present in DOM)?
+  function playerOpen() {
+    const layout = document.querySelector('ytmusic-app-layout');
+    if (layout && (layout.hasAttribute('player-page-open_') || layout.getAttribute('player-page-open_') === 'true')) return true;
+    const page = document.querySelector('ytmusic-player-page');
+    if (!page || page.hasAttribute('hidden')) return false;
+    const r = page.getBoundingClientRect();
+    return r.height > window.innerHeight * 0.5 && r.top < window.innerHeight * 0.4;
+  }
   function tagPage() {
     const page = document.querySelector('ytmusic-player-page');
     let big = null, area = 0;
-    if (page) {
+    // Only consider the art open when the player page is actually up AND the img
+    // is visible on screen — otherwise the overlay lingers after you exit.
+    if (page && playerOpen()) {
       for (const im of page.querySelectorAll('img')) {
-        const r = im.getBoundingClientRect(); const a = r.width * r.height;
+        if (im.offsetParent === null) continue; // not rendered
+        const r = im.getBoundingClientRect();
+        if (r.bottom < 0 || r.top > window.innerHeight) continue; // off screen
+        const a = r.width * r.height;
         if (a > area) { area = a; big = im; }
       }
     }
-    const qualifies = big && area > 40000; // the large now-playing art is on screen
+    const qualifies = big && area > 30000;
     if (qualifies) {
       const src = big.currentSrc || big.src;
       if (src) {
