@@ -1347,23 +1347,38 @@ const Lyrics = (() => {
     setStatus('Transcribing… (about 10–30s)');
     const blob = await Visualizer.captureStop();
     transcribing = false;
-    if (!active || key !== forKey) return;
-    if (!blob || blob.size < 12000) { setStatus('Not enough audio captured — try again from the start'); return; }
+    // NOTE: don't bail on track change here — the recording runs the length of
+    // the song, so it usually finishes AFTER the song ended & auto-advanced. We
+    // still want to save/apply the result for the song we transcribed.
+    const trackTitle = np && np.title, trackArtist = np && np.artist;
+    if (!blob || blob.size < 12000) { setStatus('Not enough audio captured — replay from the start and try again'); reEnableBtn(); return; }
     let res = null;
     try {
       const buf = new Uint8Array(await blob.arrayBuffer());
-      res = await ipcRenderer.invoke('stardust:transcribe', { title: np.title, artist: np.artist, duration: np.duration, audio: buf });
+      res = await ipcRenderer.invoke('stardust:transcribe', { title: trackTitle, artist: trackArtist, duration: np.duration, audio: buf });
     } catch {}
-    if (!active || key !== forKey) return;
-    if (res && res.syncedLyrics) { applySynced(res.syncedLyrics); render(); sync(); }
-    else {
+    if (res && (res.syncedLyrics || res.plainLyrics)) {
+      // Cached in main. If we're STILL on that song, show it now; otherwise it
+      // will load from cache the next time the song plays.
+      const nowSame = active && key === forKey;
+      if (nowSame) {
+        if (res.syncedLyrics) applySynced(res.syncedLyrics);
+        else { synced = []; plain = res.plainLyrics; mode = 'ours'; }
+        render(); sync();
+      }
+      toast(nowSame ? '✓ Lyrics transcribed' : '✓ Transcribed "' + (trackTitle || 'song') + '" — replay it to see the lyrics');
+    } else {
       const e = res && res.error;
-      setStatus(e === 'no-key' || e === 'bad-key' ? 'Add a free Groq API key in the Stardust panel to transcribe'
-        : e === 'empty' ? 'Could not make out the vocals on this track'
-          : 'Transcription failed — try again');
-      const b = body && body.querySelector('#stardust-transcribe-btn'); if (b) b.disabled = false;
+      const msg = (e === 'no-key') ? 'Add a free Groq API key in the Stardust panel to transcribe'
+        : (e === 'bad-key') ? 'That Groq API key was rejected — check it in Settings'
+          : (e === 'empty') ? 'Could not make out the vocals on this track'
+            : (e === 'network') ? 'Network error reaching the transcription service'
+              : 'Transcription failed — try again';
+      if (active && key === forKey) setStatus(msg); else toast(msg);
+      reEnableBtn();
     }
   }
+  function reEnableBtn() { const b = body && body.querySelector('#stardust-transcribe-btn'); if (b) b.disabled = false; }
 
   function fetchFor(track) {
     if (!track || !track.title) return;

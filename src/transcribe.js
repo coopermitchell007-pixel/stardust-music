@@ -114,12 +114,14 @@ async function transcribe({ title, artist, audio } = {}, apiKey) {
   ];
   const res = await postMultipart(ENDPOINT, fields, buf, apiKey);
   if (!res) return { error: 'network' };
-  if (res.status === 401) return { error: 'bad-key' };
+  console.log('[Stardust] transcribe status', res.status, res.json && (res.json.error ? JSON.stringify(res.json.error).slice(0, 200) : ('segments=' + ((res.json.segments || []).length) + ' words=' + ((res.json.words || []).length))));
+  if (res.status === 401 || res.status === 403) return { error: 'bad-key' };
   if (res.status !== 200 || !res.json) return { error: 'engine' };
   const lrc = buildLRC(res.json);
-  if (!lrc) return { error: 'empty' };
-  putCached(title, artist, lrc);
-  return { syncedLyrics: lrc };
+  if (lrc) { putCached(title, artist, lrc); return { syncedLyrics: lrc }; }
+  // No usable timing but we got text → show it as plain (not cached).
+  if (res.json.text && res.json.text.trim()) return { syncedLyrics: '', plainLyrics: res.json.text.trim() };
+  return { error: 'empty' };
 }
 
 module.exports = { transcribe, getCached, putCached, CACHE_DIR };
