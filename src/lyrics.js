@@ -4,10 +4,10 @@
 // process so there are no CORS restrictions.
 const https = require('https');
 
-function getJson(url) {
+function getJson(url, extraHeaders) {
   return new Promise((resolve) => {
     const req = https.get(url, {
-      headers: { 'User-Agent': 'Stardust v0.8 (https://github.com/coopermitchell007-pixel/stardust-music)' },
+      headers: Object.assign({ 'User-Agent': 'Stardust v0.8 (https://github.com/coopermitchell007-pixel/stardust-music)' }, extraHeaders || {}),
       timeout: 4000
     }, (res) => {
       if (res.statusCode !== 200) { res.resume(); return resolve(null); }
@@ -135,7 +135,67 @@ async function fetchLyrics({ artist, title, album, duration } = {}) {
   if (hit && (hit.syncedLyrics || hit.plainLyrics)) {
     return { syncedLyrics: hit.syncedLyrics || '', plainLyrics: hit.plainLyrics || '' };
   }
+
+  // 3) NetEase fallback — bigger catalog + word-level (yrc) timing. Only reached
+  //    when lrclib had nothing, so the common case stays fast.
+  try {
+    const ne = await fetchNetease({ title: bare, artist: artist1, want });
+    if (ne) return ne;
+  } catch {}
+
   return null; // no confident match — show nothing rather than the wrong song
+}
+
+// --- NetEase provider ------------------------------------------------------
+const NE_HEADERS = { Referer: 'https://music.163.com', Cookie: 'NMTID=1', 'User-Agent': 'Mozilla/5.0' };
+
+// yrc (word karaoke) → enhanced LRC: "[mm:ss.xx]<mm:ss.xx>word<mm:ss.xx>word".
+function yrcToEnhancedLRC(yrc) {
+  const stamp = (ms) => {
+    const t = ms / 1000, mm = Math.floor(t / 60), ss = (t - mm * 60).toFixed(2);
+    return String(mm).padStart(2, '0') + ':' + ss.padStart(5, '0');
+  };
+  const out = [];
+  for (const line of yrc.split('\n')) {
+    if (line[0] !== '[') continue;                 // skip metadata (e.g. {"t":..})
+    const head = line.match(/^\[(\d+),(\d+)\]/);
+    if (!head) continue;
+    const words = [...line.matchAll(/\((\d+),(\d+),\d+\)([^(]*)/g)];
+    if (!words.length) continue;
+    let body = '';
+    for (const w of words) body += '<' + stamp(+w[1]) + '>' + w[3];
+    out.push('[' + stamp(+head[1]) + ']' + body);
+  }
+  return out.join('\n');
+}
+
+async function fetchNetease({ title, artist, want }) {
+  const q = encodeURIComponent(`${title} ${artist || ''}`.trim());
+  const s = await getJson(`https://music.163.com/api/search/get?type=1&limit=8&s=${q}`, NE_HEADERS);
+  const songs = s && s.result && s.result.songs;
+  if (!Array.isArray(songs) || !songs.length) return null;
+
+  let bestId = null, bestScore = -1;
+  for (const sg of songs) {
+    const cand = {
+      trackName: sg.name,
+      artistName: (sg.artists || []).map((a) => a.name).join(' '),
+      duration: sg.duration ? Math.round(sg.duration / 1000) : 0,
+      syncedLyrics: 'x' // placeholder so the content check passes; verified below
+    };
+    const sc = scoreCandidate(cand, want);
+    if (sc && sc.score > bestScore) { bestScore = sc.score; bestId = sg.id; }
+  }
+  if (bestId == null || bestScore < MIN_SCORE) return null;
+
+  const ly = await getJson(`https://music.163.com/api/song/lyric/v1?id=${bestId}&lv=1&kv=1&tv=-1&yv=1`, NE_HEADERS);
+  if (!ly) return null;
+  const yrc = ly.yrc && ly.yrc.lyric;
+  const lrc = ly.lrc && ly.lrc.lyric;
+  if (yrc) { const enh = yrcToEnhancedLRC(yrc); if (enh) return { syncedLyrics: enh, plainLyrics: '' }; }
+  if (lrc && /\[\d+:\d+/.test(lrc)) return { syncedLyrics: lrc, plainLyrics: '' };
+  if (lrc) return { syncedLyrics: '', plainLyrics: lrc };
+  return null;
 }
 
 module.exports = { fetchLyrics };
