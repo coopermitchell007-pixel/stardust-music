@@ -17,7 +17,7 @@ function httpGet(url, { headers = {}, raw = false, redirects = 3 } = {}) {
       const mod = url.startsWith('http://') ? http : https;
       req = mod.get(url, {
         headers: Object.assign({ 'User-Agent': 'Mozilla/5.0 (Stardust)', 'Accept-Language': 'en' }, headers),
-        timeout: 8000
+        timeout: 6000
       }, (res) => {
         if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location && redirects > 0) {
           res.resume();
@@ -31,7 +31,7 @@ function httpGet(url, { headers = {}, raw = false, redirects = 3 } = {}) {
       req.on('error', () => finish(null));
       req.on('timeout', () => { try { req.destroy(); } catch {} finish(null); });
     } catch { finish(null); }
-    setTimeout(() => { try { req && req.destroy(); } catch {} finish(null); }, 9000);
+    setTimeout(() => { try { req && req.destroy(); } catch {} finish(null); }, 7000);
   });
 }
 const getJson = (url, extraHeaders) => httpGet(url, { headers: extraHeaders });
@@ -78,27 +78,30 @@ function scoreCandidate(x, want) {
   // this is what produced random Chinese lyrics for English songs.
   if (isCJK(x.trackName) !== want.cjkTitle) return null;
 
-  const ddiff = (x.duration && want.duration) ? Math.abs(x.duration - want.duration) : 999;
-  if (want.duration && x.duration && ddiff > 12) return null;
+  const knownDur = !!(x.duration && want.duration);
+  const ddiff = knownDur ? Math.abs(x.duration - want.duration) : 999;
+  if (knownDur && ddiff > 8) return null; // wrong length → almost always a different song
 
   const artistExact = !!want.artist && na === want.artist;
   const artistOverlap = !!want.artist && !!na && (na.includes(want.artist) || want.artist.includes(na));
   const durClose = ddiff <= 4;
 
-  // Trust rules (the CJK guard above already blocks wrong-language covers):
-  //  - EXACT title  → accept (this is the common case lrclib formats the artist
-  //    differently, which was making us miss basically everything);
-  //  - partial title → require artist correspondence or a close duration.
-  if (!titleExact) {
-    if (want.artist) { if (!artistExact && !artistOverlap && !durClose) return null; }
-    else if (!durClose) return null;
+  // Acceptance (CJK guard already blocks wrong-language covers):
+  //  - duration KNOWN + within 8s → trust an exact/partial title (right length);
+  //  - duration UNKNOWN → require artist corroboration, so a same-title song by
+  //    a different artist can't be locked in before duration loads (wrong-song bug).
+  if (knownDur) {
+    if (!titleExact && !durClose && !artistExact && !artistOverlap) return null;
+  } else {
+    if (want.artist) { if (!artistExact && !artistOverlap) return null; }
+    else if (!titleExact) return null; // no artist + no duration → need exact title
   }
 
   let s = 0;
-  if (titleExact) s += 5;
-  if (artistExact) s += 4; else if (artistOverlap) s += 2;
-  if (x.syncedLyrics) s += 4;
-  if (durClose) s += 3; else if (ddiff <= 8) s += 1;
+  if (titleExact) s += 4;
+  if (artistExact) s += 5; else if (artistOverlap) s += 2;
+  if (x.syncedLyrics) s += 3;
+  if (ddiff <= 2) s += 4; else if (ddiff <= 5) s += 2; else if (ddiff <= 8) s += 1;
   return { x, score: s, synced: !!x.syncedLyrics, ddiff };
 }
 
@@ -106,52 +109,68 @@ function scoreCandidate(x, want) {
 // artist string differs, which is the common "couldn't find it" case.
 const MIN_SCORE = 5;
 
+// Resolve as soon as ANY provider returns a SYNCED result (fast), else the best
+// plain result once all settle. So a slow lrclib can't hold everything up.
+function raceLyrics(promises) {
+  return new Promise((resolve) => {
+    let pending = promises.length, resolved = false, plainBest = null;
+    if (!pending) return resolve(null);
+    promises.forEach((p) => Promise.resolve(p).then((r) => {
+      if (resolved) return;
+      if (r && r.syncedLyrics) { resolved = true; return resolve(r); }
+      if (r && r.plainLyrics && !plainBest) plainBest = r;
+    }).catch(() => {}).finally(() => {
+      if (!resolved && --pending === 0) resolve(plainBest);
+    }));
+  });
+}
+
 async function fetchLyrics({ artist, title, album, duration } = {}) {
   if (!title) return null;
   if (!(duration > 0)) duration = undefined; // 0/NaN at track start → don't over-constrain
   const ct = cleanTitle(title);
   const bare = title.replace(/\(.*?\)|\[.*?\]/g, '').replace(/\s+/g, ' ').trim() || ct;
-  const artist1 = (artist || '').split(/[,&]| feat| ft| x /i)[0].trim(); // primary artist only
+  const artist1 = (artist || '').split(/[,&]| feat| ft| x /i)[0].trim();
 
-  const want = {
-    title: norm(title), artist: norm(artist),
-    duration, cjkTitle: isCJK(title)
-  };
-  let best = null;
-  const rank = (arr) => {
-    if (!Array.isArray(arr)) return;
-    for (const x of arr) {
-      const scored = scoreCandidate(x, want);
-      if (scored && (!best || scored.score > best.score ||
-        (scored.score === best.score && scored.ddiff < best.ddiff))) best = scored;
-    }
-  };
+  const want = { title: norm(title), artist: norm(artist), duration, cjkTitle: isCJK(title) };
 
-  // "Artist - Song" videos: the uploader (artist field) isn't the real artist,
-  // so also try splitting the title on " - ". Both orders, since conventions vary.
+  // "Artist - Song" videos: the uploader isn't the real artist — try the title
+  // split on " - " (both orders).
   const dash = bare.split(/\s[-–—]\s/);
   const altPairs = [];
   if (dash.length === 2) {
     altPairs.push({ track: dash[1].trim(), artist: dash[0].trim() });
     altPairs.push({ track: dash[0].trim(), artist: dash[1].trim() });
   }
+  const wants = [want];
+  for (const p of altPairs) wants.push({ title: norm(p.track), artist: norm(p.artist), duration, cjkTitle: isCJK(p.track) });
+  const fTitle = altPairs[0] ? altPairs[0].track : bare;
+  const fArtist = altPairs[0] ? altPairs[0].artist : artist1;
+  const fWant = altPairs[0] ? wants[1] : want;
 
-  // lrclib first (fast path) — exact-get + searches in parallel. Return as soon
-  // as it answers so we DON'T wait on slow NetEase for songs lrclib already has.
-  const lrclibReqs = [
+  // All providers race in parallel; first confident SYNCED result wins.
+  return raceLyrics([
+    fetchLrclib({ artist, ct, bare, artist1, duration, wants, altPairs }).catch(() => null),
+    fetchNetease({ title: fTitle, artist: fArtist, want: fWant }).catch(() => null),
+    fetchKugou({ title: fTitle, artist: fArtist, want: fWant }).catch(() => null),
+    fetchGenius({ title: fTitle, artist: fArtist, want: fWant }).catch(() => null)
+  ]);
+}
+
+// --- lrclib provider -------------------------------------------------------
+async function fetchLrclib({ artist, ct, bare, artist1, duration, wants, altPairs }) {
+  const reqs = [
     getJson('https://lrclib.net/api/get?' + qs({ artist_name: artist, track_name: ct, duration })),
     getJson('https://lrclib.net/api/search?' + qs({ track_name: bare, artist_name: artist1 })),
     getJson('https://lrclib.net/api/search?' + qs({ track_name: bare }))
   ];
-  for (const p of altPairs) lrclibReqs.push(getJson('https://lrclib.net/api/search?' + qs({ track_name: p.track, artist_name: p.artist })));
-  const [getRes, ...searches] = await Promise.all(lrclibReqs);
+  for (const p of altPairs) reqs.push(getJson('https://lrclib.net/api/search?' + qs({ track_name: p.track, artist_name: p.artist })));
+  const [getRes, ...searches] = await Promise.all(reqs);
 
   if (getRes && (getRes.syncedLyrics || getRes.plainLyrics)) {
     return { syncedLyrics: getRes.syncedLyrics || '', plainLyrics: getRes.plainLyrics || '' };
   }
-  // Score against the parsed title/artist AND the alt "A - B" pairs.
-  const wants = [want];
-  for (const p of altPairs) wants.push({ title: norm(p.track), artist: norm(p.artist), duration, cjkTitle: isCJK(p.track) });
+  let best = null;
   for (const arr of searches) {
     if (!Array.isArray(arr)) continue;
     for (const x of arr) for (const w of wants) {
@@ -159,23 +178,11 @@ async function fetchLyrics({ artist, title, album, duration } = {}) {
       if (scored && (!best || scored.score > best.score || (scored.score === best.score && scored.ddiff < best.ddiff))) best = scored;
     }
   }
-  let hit = best && best.score >= MIN_SCORE && best.x;
+  const hit = best && best.score >= MIN_SCORE && best.x;
   if (hit && (hit.syncedLyrics || hit.plainLyrics)) {
     return { syncedLyrics: hit.syncedLyrics || '', plainLyrics: hit.plainLyrics || '' };
   }
-
-  // lrclib missed — fan out to every other provider in parallel. Use the
-  // "Song by Artist" reading for videos (altPairs[0]) with its matching `want`.
-  const fTitle = altPairs[0] ? altPairs[0].track : bare;
-  const fArtist = altPairs[0] ? altPairs[0].artist : artist1;
-  const fWant = altPairs[0] ? wants[1] : want;
-  const [ne, kugou, genius] = await Promise.all([
-    fetchNetease({ title: fTitle, artist: fArtist, want: fWant }).catch(() => null),
-    fetchKugou({ title: fTitle, artist: fArtist, want: fWant }).catch(() => null),
-    fetchGenius({ title: fTitle, artist: fArtist, want: fWant }).catch(() => null)
-  ]);
-  // Prefer synced sources (NetEase yrc/lrc, Kugou lrc); Genius is plain-text last.
-  return ne || kugou || genius || null;
+  return null;
 }
 
 // --- NetEase provider ------------------------------------------------------

@@ -646,14 +646,27 @@ input[type="color"]#stardust-accent {
 .stardust-lyric-line.active { color: #fff; transform: scale(1.02); text-shadow: 0 0 22px color-mix(in srgb, var(--stardust-accent) 55%, transparent); }
 .stardust-lyric-status { color: rgba(255,255,255,0.5); font-size: 1rem; padding: 24px 0; }
 
-/* Word-level (karaoke) highlighting — only used when the lyrics carry real
-   per-word timestamps (enhanced LRC). */
-.stardust-lyric-line.words.active .w { transition: color 0.1s linear; color: rgba(255,255,255,0.34); }
-.stardust-lyric-line.words.active .w.sung { color: #fff; }
+/* Word-by-word (karaoke) highlighting. Smooth, beautiful-lyrics style: eased
+   colour transitions, a soft feathered fill edge on the current word, and a
+   gentle accent glow so it flows rather than snapping word to word. */
+.stardust-lyric-line.words.active .w {
+  transition: color 0.22s ease, text-shadow 0.22s ease;
+  color: rgba(255, 255, 255, 0.30);
+}
+.stardust-lyric-line.words.active .w.sung {
+  color: #fff;
+  text-shadow: 0 0 16px color-mix(in srgb, var(--stardust-accent) 42%, transparent);
+}
 .stardust-lyric-line.words.active .w.cur {
-  background-image: linear-gradient(90deg, #fff var(--wp, 0%), rgba(255,255,255,0.34) var(--wp, 0%));
+  /* Feathered gradient (±7%) so the fill edge is soft, not a hard line — the
+     --wp value is advanced every animation frame for a continuous sweep. */
+  background-image: linear-gradient(90deg,
+    #fff calc(var(--wp, 0%) - 7%),
+    color-mix(in srgb, #fff 55%, var(--stardust-accent)) var(--wp, 0%),
+    rgba(255, 255, 255, 0.30) calc(var(--wp, 0%) + 7%));
   -webkit-background-clip: text; background-clip: text;
   -webkit-text-fill-color: transparent; color: transparent;
+  text-shadow: 0 0 18px color-mix(in srgb, var(--stardust-accent) 38%, transparent);
 }
 
 /* ---- Quick actions floating bar ---- */
