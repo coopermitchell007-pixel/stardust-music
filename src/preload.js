@@ -618,6 +618,7 @@ const Visualizer = (() => {
   // read real audio. Used to advance lyric words in time with the singing.
   let veSmooth = 0;
   function vocalEnergy() {
+    ensureAudio(); // tap the audio even if the visualizer is disabled
     if (!analyser || !freq || !useReal) return -1;
     analyser.getByteFrequencyData(freq);
     const bins = analyser.frequencyBinCount;
@@ -636,12 +637,13 @@ const Visualizer = (() => {
   // strength (0 when none), with a refractory gap so one attack fires once.
   let fluxPrev = null, fluxAvg = 0, lastOnsetAt = 0;
   function vocalOnset() {
+    ensureAudio();
     if (!analyser || !freq || !useReal) return 0;
     analyser.getByteFrequencyData(freq);
     const bins = analyser.frequencyBinCount;
     const sr = audioCtx ? audioCtx.sampleRate : 44100;
-    const lo = Math.max(1, Math.floor(180 / (sr / 2) * bins));
-    const hi = Math.min(bins, Math.floor(4000 / (sr / 2) * bins));
+    const lo = Math.max(1, Math.floor(300 / (sr / 2) * bins));  // focus on the vocal
+    const hi = Math.min(bins, Math.floor(3400 / (sr / 2) * bins)); // range, less drums
     if (!fluxPrev || fluxPrev.length !== bins) fluxPrev = new Float32Array(bins);
     let flux = 0;
     for (let i = lo; i < hi; i++) { const d = freq[i] - fluxPrev[i]; if (d > 0) flux += d; fluxPrev[i] = freq[i]; }
@@ -1238,6 +1240,24 @@ const Lyrics = (() => {
     }
   }
 
+  // Drop non-lyric bloat: the song-title line, "N Contributors"/"Translations"
+  // headers, "<Title> Lyrics", "You might also like", trailing "Embed", and any
+  // "(Official Music Video)"-style tag that leaked into a line.
+  const alnum = (s) => (s || '').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+  function isBloatLine(text, idx, titleN) {
+    const s = (text || '').trim();
+    if (!s) return true;
+    const n = alnum(s);
+    if (titleN && (n === titleN || n === titleN + 'lyrics')) return true;
+    if (/^\d+\s*contributors?\b/i.test(s)) return true;
+    if (/^translations?\b/i.test(s)) return true;
+    if (/you might also like/i.test(s)) return true;
+    if (/\bembed$/i.test(s)) return true;
+    if (idx < 3 && /\blyrics$/i.test(s)) return true; // "Song Lyrics" header near top
+    return false;
+  }
+  const stripTag = (s) => (s || '').replace(/\s*[([][^)\]]*(?:official|music\s*video|lyric|audio|visuali[sz]er|remaster)[^)\]]*[)\]]/gi, '').trim();
+
   function fetchFor(track) {
     if (!track || !track.title) return;
     const k = track.title + '|' + track.artist; if (k === key) return;
@@ -1252,8 +1272,16 @@ const Lyrics = (() => {
     let res = null;
     try { res = await ipcRenderer.invoke('stardust:lyrics', { artist: np.artist, title: np.title, album: np.album, duration: np.duration }); } catch {}
     if (!active || key !== forKey) return;   // track changed while awaiting
-    if (res && res.syncedLyrics) { synced = parseLRC(res.syncedLyrics); plain = null; mode = 'ours'; }
-    else if (res && res.plainLyrics) { synced = []; plain = res.plainLyrics; mode = 'ours'; }
+    const titleN = alnum(stripTag(np.title));
+    if (res && res.syncedLyrics) {
+      synced = parseLRC(res.syncedLyrics).filter((l, i) => !isBloatLine(l.s, i, titleN));
+      for (const l of synced) { l.s = stripTag(l.s); }
+      plain = null; mode = 'ours';
+    } else if (res && res.plainLyrics) {
+      synced = [];
+      plain = res.plainLyrics.split('\n').filter((l, i) => !isBloatLine(l, i, titleN)).map(stripTag).join('\n');
+      mode = 'ours';
+    }
     // Only retry if the duration wasn't ready yet (metadata still loading) —
     // otherwise a genuine miss shouldn't loop for 20s+. One quick retry max.
     else if (!hadDuration && attempts < 2) { setTimeout(() => { if (active && key === forKey) doFetch(); }, 1200); return; }
