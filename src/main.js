@@ -9,6 +9,7 @@ const discord = require('./discord');
 const marketplace = require('./marketplace');
 const adblock = require('./adblock');
 const lyrics = require('./lyrics');
+const updater = require('./updater');
 
 const YTM_URL = 'https://music.youtube.com/';
 const ICON_PNG = path.join(__dirname, '..', 'assets', 'icon.png');
@@ -378,6 +379,9 @@ app.whenReady().then(async () => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
   });
+
+  // Check for updates shortly after startup (packaged builds only).
+  setTimeout(() => { try { updater.start(); } catch (e) { console.warn('[Stardust] updater:', e.message); } }, 4000);
 });
 
 // Guarantee the process actually exits — if any teardown (discord socket,

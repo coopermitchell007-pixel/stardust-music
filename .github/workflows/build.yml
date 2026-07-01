@@ -24,12 +24,16 @@ jobs:
             artifact: stardust-windows
             glob: |
               dist/*.exe
+              dist/*.exe.blockmap
+              dist/latest.yml
           - os: macos-latest
             platform: --mac
             artifact: stardust-macos
             glob: |
               dist/*.dmg
               dist/*.zip
+              dist/*.blockmap
+              dist/latest-mac.yml
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
