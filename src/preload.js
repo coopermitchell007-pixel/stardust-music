@@ -867,12 +867,15 @@ function extractColor(artUrl, cb) {
   img.src = artUrl;
 }
 
+// Current per-track reactive colour (also fed to the mini player via np.accent).
+let reactiveAccent = null;
+
 // --- Reactive theming: tint accent/visualizer/black-hole from album art ----
 const ReactiveTheme = (() => {
   let active = false, last = '';
   function enable() { active = true; last = ''; onTrack(readNowPlaying()); }
   function disable() {
-    active = false; last = '';
+    active = false; last = ''; reactiveAccent = null;
     document.documentElement.style.removeProperty('--stardust-accent');
     Visualizer.setReactiveColor(null); BlackHole.setColor(null);
   }
@@ -881,8 +884,11 @@ const ReactiveTheme = (() => {
     last = np.art;
     extractColor(np.art, (hex) => {
       if (!active || !hex) return;
+      reactiveAccent = hex;
       document.documentElement.style.setProperty('--stardust-accent', hex);
       Visualizer.setReactiveColor(hex); BlackHole.setColor(hex);
+      // Push the new colour to the mini player immediately.
+      try { const np2 = readNowPlaying(); if (np2) ipcRenderer.send('stardust:nowplaying', np2); } catch {}
     });
   }
   return { enable, disable, onTrack };
@@ -1188,7 +1194,7 @@ function readNowPlaying() {
     // A "real" music track we can trust for stats/lyrics: not an ad, has a
     // parsed title (not the placeholder) and a known duration.
     isTrack: !isAd && !!title && title !== 'YouTube Music' && (video.duration || 0) > 0,
-    accent: (settings && settings.accentOverride) || (activeTheme && activeTheme.accent) || '#8b5cff'
+    accent: reactiveAccent || (settings && settings.accentOverride) || (activeTheme && activeTheme.accent) || '#8b5cff'
   };
 }
 

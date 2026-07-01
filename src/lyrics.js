@@ -7,8 +7,8 @@ const https = require('https');
 function getJson(url) {
   return new Promise((resolve) => {
     const req = https.get(url, {
-      headers: { 'User-Agent': 'Stardust v0.6 (https://github.com/coopermitchell007-pixel/stardust-music)' },
-      timeout: 6000
+      headers: { 'User-Agent': 'Stardust v0.8 (https://github.com/coopermitchell007-pixel/stardust-music)' },
+      timeout: 4000
     }, (res) => {
       if (res.statusCode !== 200) { res.resume(); return resolve(null); }
       let d = '';
@@ -96,13 +96,10 @@ async function fetchLyrics({ artist, title, album, duration } = {}) {
   const bare = title.replace(/\(.*?\)|\[.*?\]/g, '').replace(/\s+/g, ' ').trim() || ct;
   const artist1 = (artist || '').split(/[,&]| feat| ft| x /i)[0].trim(); // primary artist only
 
-  // 1) Exact match (lrclib verifies title+artist+duration for us). Try several
-  //    title/artist shapes, and finally without duration/album constraints.
+  // 1) Two fast exact lookups (lrclib verifies title+artist+duration). Keep it
+  //    to two so this stays quick — the search step below is the real net.
   const getVariants = [
-    { artist_name: artist, track_name: ct, album_name: album, duration },
     { artist_name: artist, track_name: ct, duration },
-    { artist_name: artist1, track_name: bare, duration },
-    { artist_name: artist, track_name: title },
     { artist_name: artist1, track_name: bare }
   ];
   for (const v of getVariants) {
@@ -112,31 +109,26 @@ async function fetchLyrics({ artist, title, album, duration } = {}) {
     }
   }
 
-  // 2) Search fallback — accept only a confidently-matching result so we never
-  //    show lyrics for a different (same-title / different-language) song.
+  // 2) Search fallback — one broad query, then score every candidate and accept
+  //    the best confident one. A single search returns plenty to rank, so we
+  //    don't need multiple round-trips (that's what made it slow).
   const want = {
     title: norm(title), artist: norm(artist),
     duration, cjkTitle: isCJK(title)
   };
-  const queries = [
-    { track_name: ct, artist_name: artist1 },
-    { track_name: bare, artist_name: artist1 },
-    { track_name: bare },          // title only, still gated by score + CJK guard
-    { q: `${bare} ${artist1}`.trim() }
-  ];
-  const seen = new Set();
   let best = null;
-  for (const query of queries) {
-    const arr = await getJson('https://lrclib.net/api/search?' + qs(query));
-    if (!Array.isArray(arr)) continue;
+  const rank = (arr) => {
+    if (!Array.isArray(arr)) return;
     for (const x of arr) {
-      if (!x || seen.has(x.id)) continue;
-      seen.add(x.id);
       const scored = scoreCandidate(x, want);
       if (scored && (!best || scored.score > best.score ||
         (scored.score === best.score && scored.ddiff < best.ddiff))) best = scored;
     }
-    if (best && best.synced && best.score >= 11) break; // strong synced hit, stop early
+  };
+  rank(await getJson('https://lrclib.net/api/search?' + qs({ track_name: bare, artist_name: artist1 })));
+  // Only widen to a title-only search if we didn't already find something good.
+  if (!best || best.score < MIN_SCORE) {
+    rank(await getJson('https://lrclib.net/api/search?' + qs({ track_name: bare })));
   }
 
   const hit = best && best.score >= MIN_SCORE && best.x;
