@@ -1171,10 +1171,13 @@ const Lyrics = (() => {
     stopRAF();
     clearHost(); synced = []; plain = null; key = ''; mode = 'off';
   }
+  // Drive the highlight on a setInterval, NOT requestAnimationFrame: rAF is
+  // paused by Chromium when the window is throttled/occluded, which froze the
+  // lyrics (paint never ran → idx stuck at -1). ~40ms ≈ 25fps; the CSS --wp
+  // transition smooths the fill between ticks.
   function startRAF() {
     if (raf) return;
-    const loop = () => { raf = requestAnimationFrame(loop); try { paint(); } catch {} };
-    raf = requestAnimationFrame(loop);
+    raf = setInterval(() => { try { paint(); } catch {} }, 40);
   }
   // The <video> element YTM is actually playing (prefer a playing one; some
   // pages have a stale/hidden extra video whose time never moves).
@@ -1188,7 +1191,7 @@ const Lyrics = (() => {
     }
     return best || vids[0];
   }
-  function stopRAF() { if (raf) { cancelAnimationFrame(raf); raf = null; } }
+  function stopRAF() { if (raf) { clearInterval(raf); raf = null; } }
 
   const lyricsTab = () => [...document.querySelectorAll('ytmusic-player-page tp-yt-paper-tab')]
     .find((t) => /lyric/i.test(t.textContent || ''));
