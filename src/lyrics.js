@@ -161,13 +161,18 @@ async function fetchLyrics({ artist, title, album, duration } = {}) {
   const fArtist = altPairs[0] ? altPairs[0].artist : artist1;
   const fWant = altPairs[0] ? wants[1] : want;
 
-  // All providers race in parallel; first confident SYNCED result wins.
-  return raceLyrics([
+  // Stage 1: the REAL synced sources race in parallel (first word-timed wins).
+  const primary = await raceLyrics([
     fetchLrclib({ artist, ct, bare, artist1, duration, wants, altPairs }).catch(() => null),
     fetchNetease({ title: fTitle, artist: fArtist, want: fWant }).catch(() => null),
-    fetchKugou({ title: fTitle, artist: fArtist, want: fWant }).catch(() => null),
-    fetchGenius({ title: fTitle, artist: fArtist, want: fWant }).catch(() => null)
+    fetchKugou({ title: fTitle, artist: fArtist, want: fWant }).catch(() => null)
   ]);
+  if (primary) return primary;
+
+  // Stage 2 (WORST CASE ONLY): Genius, and only because everything else came up
+  // empty — its timing is synthesized/approximate, so it must never pre-empt a
+  // real synced source (that's why it's not in the stage-1 race).
+  return await fetchGenius({ title: fTitle, artist: fArtist, want: fWant }).catch(() => null);
 }
 
 // --- lrclib provider -------------------------------------------------------
