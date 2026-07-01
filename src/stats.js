@@ -7,9 +7,13 @@ const path = require('path');
 const { app } = require('electron');
 
 const FILE = path.join(app.getPath('userData'), 'stats.json');
-const PLAY_THRESHOLD_MS = 20000; // count a "play" once a track is heard this long
+const PLAY_THRESHOLD_MS = 30000; // count a "play" once a track is heard this long
 const MAX_GAP_MS = 6000;         // ignore gaps bigger than this (paused/asleep)
 const RECENT_CAP = 150;
+
+// Titles that are ads / placeholders / interstitials, never real music.
+const JUNK = /^youtube music$|will play after ad|^advertisement$|listened to a banger/i;
+const isJunkTrack = (t) => !t || !t.title || JUNK.test(t.title);
 
 let data = load();
 let last = { key: '', ts: 0, ms: 0, counted: false, np: null };
@@ -18,13 +22,17 @@ let saveTimer = null;
 function load() {
   try {
     const d = JSON.parse(fs.readFileSync(FILE, 'utf8'));
-    return {
+    const out = {
       totalMs: d.totalMs || 0,
       byDay: d.byDay || {},
       tracks: d.tracks || {},
       artists: d.artists || {},
       recent: d.recent || []
     };
+    // Scrub any junk (ads/placeholders) recorded before filtering existed.
+    for (const [k, t] of Object.entries(out.tracks)) if (isJunkTrack(t)) delete out.tracks[k];
+    out.recent = out.recent.filter((r) => !isJunkTrack(r));
+    return out;
   } catch {
     return { totalMs: 0, byDay: {}, tracks: {}, artists: {}, recent: [] };
   }
@@ -42,7 +50,7 @@ const dayKey = () => new Date().toISOString().slice(0, 10);
 const keyOf = (np) => (np.title || '') + '' + (np.artist || '');
 
 function record(np) {
-  if (!np || !np.title) return;
+  if (!np || !np.title || isJunkTrack(np)) return;
   const key = keyOf(np);
   const now = Date.now();
 

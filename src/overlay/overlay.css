@@ -643,16 +643,8 @@ input[type="color"]#stardust-accent {
   transition: color 0.25s ease, transform 0.25s ease; transform-origin: left center;
 }
 .stardust-lyric-line.plain { font-size: 1.15rem; font-weight: 500; color: rgba(255,255,255,0.72); }
-.stardust-lyric-line.active { transform: scale(1.02); text-shadow: 0 0 22px color-mix(in srgb, var(--stardust-accent) 55%, transparent); }
+.stardust-lyric-line.active { color: #fff; transform: scale(1.02); text-shadow: 0 0 22px color-mix(in srgb, var(--stardust-accent) 55%, transparent); }
 .stardust-lyric-status { color: rgba(255,255,255,0.5); font-size: 1rem; padding: 24px 0; }
-
-/* Active line with only line-level timing: a smooth left→right fill sweep. */
-.stardust-lyric-line.active.sweep {
-  background-image: linear-gradient(90deg, #fff var(--wp, 0%), rgba(255,255,255,0.4) var(--wp, 0%));
-  -webkit-background-clip: text; background-clip: text;
-  -webkit-text-fill-color: transparent; color: transparent;
-  text-shadow: none;
-}
 
 /* Word-level (karaoke) highlighting — only used when the lyrics carry real
    per-word timestamps (enhanced LRC). */

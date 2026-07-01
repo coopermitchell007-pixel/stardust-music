@@ -291,7 +291,7 @@ function registerIpc() {
   // From the YTM page: current track + playback state.
   ipcMain.on('stardust:nowplaying', (_e, np) => {
     lastNowPlaying = np;
-    try { stats.record(np); } catch {}
+    if (np && np.isTrack) { try { stats.record(np); } catch {} }
     if (config.get('discordRichPresence')) discord.setActivity(np);
     if (miniWindow && !miniWindow.isDestroyed()) {
       miniWindow.webContents.send('stardust:nowplaying', np);

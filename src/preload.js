@@ -989,8 +989,10 @@ const Lyrics = (() => {
     const lineEnd = synced[idx + 1] ? synced[idx + 1].t
       : (isFinite(v.duration) && v.duration > line.t ? v.duration : line.t + Math.max(3, (line.s.length || 8) * 0.09));
 
+    // Per-word karaoke ONLY when we have real word timing (enhanced LRC).
+    // Otherwise a solid active-line highlight — accurate at the line level and
+    // never pretends to know word timing we don't have.
     if (curEnhanced && curSpans && curSpans.length) {
-      // Enhanced LRC: real per-word timing → discrete word highlight.
       for (let i = 0; i < curSpans.length; i++) {
         const w = line.words[i]; if (!w) continue;
         const ws = w.time, we = (line.words[i + 1] && line.words[i + 1].time != null) ? line.words[i + 1].time : lineEnd;
@@ -998,13 +1000,6 @@ const Lyrics = (() => {
         else if (t >= ws) setWord(curSpans[i], 'cur', we > ws ? (t - ws) / (we - ws) : 1);
         else setWord(curSpans[i], '');
       }
-    } else {
-      // Line-level timing → smooth continuous fill across the whole line.
-      const dur = Math.max(lineEnd - line.t, 0.001);
-      const p = Math.min(1, Math.max(0, (t - line.t) / dur));
-      curEl.classList.add('sweep');
-      const pct = (p * 100).toFixed(1) + '%';
-      if (curEl.style.getPropertyValue('--wp') !== pct) curEl.style.setProperty('--wp', pct);
     }
   }
   // Set a word's state without redundant DOM writes.
@@ -1036,6 +1031,9 @@ function readNowPlaying() {
   const byline = (bar.querySelector('.byline')?.textContent || '').trim();
   const parts = byline.split('•').map((s) => s.trim());
   const img = bar.querySelector('img');
+  const isAd = !!document.querySelector(
+    '.ad-showing, .ytp-ad-player-overlay, ytmusic-player[player-ui-state_="AD"], .ytp-ad-text'
+  );
   return {
     title: title || 'YouTube Music',
     artist: parts[0] || '',
@@ -1044,6 +1042,10 @@ function readNowPlaying() {
     playing: !video.paused && !video.ended,
     position: Math.floor(video.currentTime || 0),
     duration: Math.floor(video.duration || 0),
+    isAd,
+    // A "real" music track we can trust for stats/lyrics: not an ad, has a
+    // parsed title (not the placeholder) and a known duration.
+    isTrack: !isAd && !!title && title !== 'YouTube Music' && (video.duration || 0) > 0,
     accent: (settings && settings.accentOverride) || (activeTheme && activeTheme.accent) || '#8b5cff'
   };
 }
@@ -1057,8 +1059,10 @@ function pollNowPlaying() {
   document.body.classList.toggle('stardust-playing', np.playing);
   if (rateMode) enforceRate();
 
+  // Only react to genuine track changes — ignore ads and the placeholder so
+  // lyrics keep the current song and stats don't log junk.
   const track = `${np.title}|${np.artist}`;
-  if (track !== lastTrack) {
+  if (track !== lastTrack && np.isTrack) {
     lastTrack = track;
     AmbientGlow.onTrack(np);
     Lyrics.onTrack(np);
