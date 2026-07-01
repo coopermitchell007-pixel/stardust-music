@@ -1403,6 +1403,26 @@ function watchAds() {
       attributeFilter: ['player-ui-state_', 'class']
     });
   } catch {}
+  hookVideoForAds();
+  setInterval(hookVideoForAds, 2000); // the <video> can be recreated
+}
+
+// Attach ad-guards directly to the media element so an ad is caught the instant
+// it starts playing (before any audible blip), not just on the poll/observer.
+let adHookedEl = null;
+function hookVideoForAds() {
+  const v = document.querySelector('video');
+  if (!v || v === adHookedEl) return;
+  adHookedEl = v;
+  const guard = () => {
+    if (settings && settings.adBlock === false) return;
+    if (document.querySelector(AD_SELECTOR)) {
+      try { v.muted = true; weMutedForAd = true; if (isFinite(v.duration) && v.duration > 0) v.currentTime = v.duration; } catch {}
+    }
+  };
+  ['loadstart', 'loadedmetadata', 'play', 'playing', 'timeupdate', 'durationchange'].forEach((ev) => {
+    try { v.addEventListener(ev, guard); } catch {}
+  });
 }
 
 // ---------------------------------------------------------------------------

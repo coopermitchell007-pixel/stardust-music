@@ -25,7 +25,18 @@ const BLOCK = [
   '/get_video_info?',          // legacy ad/info endpoint
   'doubleclickbygoogle',
   '/pcs/activeview',
-  '/generate_204'
+  '/generate_204',
+  'securepubads.g.doubleclick',
+  'static.doubleclick',
+  'imasdk.googleapis.com',
+  'googleads.g.doubleclick',
+  '/pagead/interaction',
+  '/pagead/viewthroughconversion',
+  '/ad_break',
+  '/get_ads',
+  '/log_interaction',
+  '/qoe?',
+  'ade.googlesyndication'
 ];
 
 let enabled = true;
