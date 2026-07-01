@@ -657,16 +657,20 @@ input[type="color"]#stardust-accent {
   color: #fff;
   text-shadow: 0 0 16px color-mix(in srgb, var(--stardust-accent) 42%, transparent);
 }
+/* Animatable fill position so Chromium interpolates between animation frames —
+   removes any residual per-frame stepping for a seamless sweep. */
+@property --wp { syntax: '<percentage>'; inherits: false; initial-value: 0%; }
 .stardust-lyric-line.words.active .w.cur {
-  /* Feathered gradient (±7%) so the fill edge is soft, not a hard line — the
-     --wp value is advanced every animation frame for a continuous sweep. */
+  /* Wide feather (±10%) so the fill edge is a soft glow, not a hard line. */
+  --wp: 0%;
   background-image: linear-gradient(90deg,
-    #fff calc(var(--wp, 0%) - 7%),
-    color-mix(in srgb, #fff 55%, var(--stardust-accent)) var(--wp, 0%),
-    rgba(255, 255, 255, 0.30) calc(var(--wp, 0%) + 7%));
+    #fff calc(var(--wp) - 10%),
+    color-mix(in srgb, #fff 55%, var(--stardust-accent)) var(--wp),
+    rgba(255, 255, 255, 0.30) calc(var(--wp) + 10%));
   -webkit-background-clip: text; background-clip: text;
   -webkit-text-fill-color: transparent; color: transparent;
   text-shadow: 0 0 18px color-mix(in srgb, var(--stardust-accent) 38%, transparent);
+  transition: --wp 0.12s linear;
 }
 
 /* ---- Quick actions floating bar ---- */

@@ -1163,6 +1163,7 @@ const Lyrics = (() => {
     for (const s of lineEl.querySelectorAll('.w')) {
       if (s.className !== 'w') s.className = 'w';
       if (s.style.getPropertyValue('--wp')) s.style.removeProperty('--wp');
+      s._wp = null;
     }
   }
 
@@ -1218,13 +1219,14 @@ const Lyrics = (() => {
     }
     if (!curEl || !curSpans || !curSpans.length || !curTiming) return;
 
-    // Highlight by each word's real [start,end] window. Words that have already
-    // been sung STAY lit (so a gap before the next line doesn't blank the line).
+    // EVERY word carries its own continuous fill (0..1) each frame — not a
+    // binary sung/current flip — so the highlight flows seamlessly across the
+    // line with no per-word popping. A word past its window sits at 1 (lit),
+    // before its window at 0 (dim), and fills smoothly in between.
     for (let i = 0; i < curSpans.length; i++) {
       const tm = curTiming[i]; if (!tm) continue;
-      if (t >= tm.end) setWord(curSpans[i], 'sung');
-      else if (t >= tm.start) setWord(curSpans[i], 'cur', tm.end > tm.start ? (t - tm.start) / (tm.end - tm.start) : 1);
-      else setWord(curSpans[i], '');
+      const f = tm.end > tm.start ? (t - tm.start) / (tm.end - tm.start) : (t >= tm.start ? 1 : 0);
+      setWordFill(curSpans[i], Math.min(1, Math.max(0, f)));
     }
   }
 
@@ -1251,23 +1253,20 @@ const Lyrics = (() => {
     });
     const natural = durs.reduce((a, b) => a + b, 0);
     const window = Math.max(0.5, lineEnd - line.t);
-    // Compress to fit if the line window is short; never stretch beyond the
-    // natural pace (leaves the rest of a long gap with all words already lit).
-    const scale = natural > window ? window / natural : 1;
+    // Scale to the line window, but clamped: compress busy lines (down to 0.5x),
+    // stretch a little to better fill the sung time (up to 1.5x), and NEVER
+    // stretch across a long instrumental gap (the 1.5x cap means the words
+    // finish at a natural pace and then hold lit until the next line).
+    const scale = Math.max(0.5, Math.min(1.5, window / natural));
     let acc = line.t; const out = [];
     for (const d of durs) { const s = acc; const e = acc + d * scale; out.push({ start: s, end: e }); acc = e; }
     return out;
   }
-  // Set a word's state without redundant DOM writes.
-  function setWord(el, state, wp) {
-    const cls = state ? 'w ' + state : 'w';
-    if (el.className !== cls) el.className = cls;
-    if (state === 'cur') {
-      const pct = Math.round(Math.min(1, Math.max(0, wp)) * 100) + '%';
-      if (el.style.getPropertyValue('--wp') !== pct) el.style.setProperty('--wp', pct);
-    } else if (el.style.getPropertyValue('--wp')) {
-      el.style.removeProperty('--wp');
-    }
+  // Every active word uses the same continuous-fill style; only --wp changes.
+  function setWordFill(el, f) {
+    if (el.className !== 'w cur') el.className = 'w cur';
+    const pct = (f * 100).toFixed(1) + '%';
+    if (el._wp !== pct) { el.style.setProperty('--wp', pct); el._wp = pct; }
   }
 
   function onTrack(track) { if (active) fetchFor(track); }
