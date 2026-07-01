@@ -1141,6 +1141,7 @@ const Lyrics = (() => {
   let curSyl = null, curSylTotal = 1, sylPtr = 0;
   let floor = 0, sylAcc = 0;                 // adaptive vocal noise-floor + syllables-sung accumulator
   let transcribing = false;
+  let dbg = null;
   const SYL_RATE = 3.6;                      // avg sung syllables per second (used while singing)
 
   // "Hear" the song this frame: vocal energy, whether a voice is ACTIVE (above an
@@ -1160,7 +1161,7 @@ const Lyrics = (() => {
     np = readNowPlaying(); fetchFor(np);
     // A light 300ms poll keeps the tab un-greyed and injects when the Lyrics tab
     // is open. The per-word highlight runs on rAF for a smooth karaoke sweep.
-    poll = setInterval(() => { sync(); }, 300);
+    poll = setInterval(() => { sync(); updateDebug(); }, 300);
     startRAF();
     sync();
   }
@@ -1205,8 +1206,21 @@ const Lyrics = (() => {
   }
 
   function ensureBox() {
-    if (!box) { body = h('div', { class: 'stardust-lyric-lines' }); box = h('div', { id: 'stardust-lyrics' }, [body]); }
+    if (!box) {
+      body = h('div', { class: 'stardust-lyric-lines' });
+      dbg = h('div', { id: 'stardust-lyr-debug' });
+      box = h('div', { id: 'stardust-lyrics' }, [dbg, body]);
+    }
     return box;
+  }
+  // Temporary diagnostic — shows why highlighting may be stuck.
+  function updateDebug() {
+    if (!dbg) return;
+    const v = playingVideo();
+    dbg.textContent = 'sd: mode=' + mode + ' lines=' + synced.length + ' idx=' + lastIdx
+      + ' t=' + (v ? (v.currentTime || 0).toFixed(1) : 'no-video')
+      + ' paused=' + (v ? v.paused : '?') + ' conn=' + (box ? box.isConnected : '?')
+      + ' raf=' + (raf ? 'on' : 'OFF') + ' synth=' + synthMode;
   }
   function clearHost() { if (host) { host.classList.remove('stardust-lyrics-on'); host = null; } if (box && box.parentElement) box.remove(); }
 

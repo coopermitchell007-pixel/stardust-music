@@ -819,3 +819,11 @@ body.stardust-playing img.stardust-vinyl { animation-play-state: running !import
 }
 .stardust-text-input:focus { outline: none; border-color: var(--stardust-accent); }
 #stardust-transcribe-btn { margin-top: 16px; }
+
+/* Temporary lyrics diagnostic */
+#stardust-lyr-debug {
+  font-family: ui-monospace, Menlo, monospace; font-size: 11px;
+  color: color-mix(in srgb, var(--stardust-accent) 80%, #fff);
+  background: rgba(0,0,0,0.4); padding: 4px 8px; border-radius: 6px;
+  margin-bottom: 10px; white-space: pre-wrap; word-break: break-word;
+}
