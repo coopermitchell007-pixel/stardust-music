@@ -1398,23 +1398,46 @@ const Lyrics = (() => {
     try { res = await ipcRenderer.invoke('stardust:lyrics', { artist: np.artist, title: np.title, album: np.album, duration: np.duration }); } catch {}
     if (!active || key !== forKey) return;   // track changed while awaiting
     const titleN = alnum(stripTag(np.title));
+    let synthed = false;
     if (res && res.syncedLyrics) {
       applySynced(res.syncedLyrics);
     } else if (res && res.plainLyrics) {
-      synced = [];
-      plain = res.plainLyrics.split('\n').filter((l, i) => !isBloatLine(l, i, titleN)).map(stripTag).join('\n');
-      mode = 'ours';
+      const clean = res.plainLyrics.split('\n').filter((l, i) => !isBloatLine(l, i, titleN)).map(stripTag).join('\n');
+      // Give plain lyrics timing too: synthesize line timestamps so they get
+      // line + word highlighting (energy-driven), instead of sitting still.
+      const lrc = synthFromPlain(clean);
+      if (lrc) { applySynced(lrc); synthed = true; }
+      else { synced = []; plain = clean; mode = 'ours'; }
     }
     // Only retry if the duration wasn't ready yet (metadata still loading) —
     // otherwise a genuine miss shouldn't loop for 20s+. One quick retry max.
     else if (!hadDuration && attempts < 2) { setTimeout(() => { if (active && key === forKey) doFetch(); }, 1200); return; }
     else { synced = []; plain = null; mode = 'off'; }
-    // Synthesized (Genius) timing has no real timestamps, so we DRIVE its
-    // progression by the actual vocal energy instead of the even-spread guess.
-    synthMode = !!(res && res.kind === 'synth') && synced.length > 0;
+    // Synthesized timing (Genius, or synthesized-from-plain) has no real
+    // timestamps, so we DRIVE progression by the actual vocal energy.
+    synthMode = (synthed || !!(res && res.kind === 'synth')) && synced.length > 0;
     if (synthMode) buildSynthModel();
     lastIdx = -1; curEl = null; curSpans = null; progAll = 0; lastCTs = 0;
     render(statusText()); sync();
+  }
+  // Turn plain (untimed) lyrics into an LRC by spreading lines across the track
+  // (weighted by syllables) so they can be highlighted line + word by listening.
+  function synthFromPlain(text) {
+    const lines = (text || '').split('\n').map((x) => x.trim()).filter(Boolean);
+    const dur = np && np.duration > 0 ? np.duration : 0;
+    if (!dur || lines.length < 2) return null;
+    const sylOf = (s) => ((s || '').toLowerCase().match(/[aeiouy]+/g) || []).length;
+    const weights = lines.map((l) => Math.max(0.6, sylOf(l)));
+    const total = weights.reduce((a, b) => a + b, 0) || 1;
+    const start = dur * 0.04, span = dur * 0.9;
+    let acc = 0; const out = [];
+    for (let i = 0; i < lines.length; i++) {
+      const t = start + span * (acc / total);
+      const mm = Math.floor(t / 60), ss = (t - mm * 60).toFixed(2);
+      out.push('[' + String(mm).padStart(2, '0') + ':' + ss.padStart(5, '0') + ']' + lines[i]);
+      acc += weights[i];
+    }
+    return out.join('\n');
   }
   // Per-line syllable weights for energy-driven progression of synth lyrics.
   function buildSynthModel() {
