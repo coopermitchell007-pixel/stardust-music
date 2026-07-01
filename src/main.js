@@ -245,7 +245,8 @@ function registerIpc() {
     settings: config.load(),
     discordAvailable: discord.isAvailable(),
     installed: marketplace.installedIds(),
-    extras: marketplace.installedExtras()
+    extras: marketplace.installedExtras(),
+    version: app.getVersion()
   }));
 
   // --- Marketplace ---

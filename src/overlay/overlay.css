@@ -776,16 +776,18 @@ img.stardust-vinyl.sd-mini {
   box-shadow: 0 0 0 3px rgba(0,0,0,.55), 0 0 0 6px color-mix(in srgb, var(--stardust-accent) 75%, transparent) !important;
   animation: stardustVinyl 4s linear infinite; animation-play-state: paused;
 }
-img.stardust-vinyl.sd-big {
-  /* Dead-center the big record on screen (inset:0 + margin:auto with a fixed
-     square size; no transform, so the spin animation still works). */
-  position: fixed !important; inset: 0 !important; margin: auto !important;
-  width: min(50vh, 440px) !important; height: min(50vh, 440px) !important;
-  border-radius: 50% !important; object-fit: cover !important;
-  background: transparent !important; z-index: 6 !important;
-  box-shadow: 0 0 0 6px rgba(0,0,0,.5), 0 0 0 12px color-mix(in srgb, var(--stardust-accent) 60%, transparent) !important;
+/* Our own centered big-record overlay (immune to YTM ancestor transforms). */
+#stardust-vinyl-big {
+  position: fixed; inset: 0; margin: auto;
+  width: min(50vh, 440px); height: min(50vh, 440px);
+  border-radius: 50%; background-size: cover; background-position: center;
+  z-index: 6; pointer-events: none; display: none;
+  box-shadow: 0 0 0 6px rgba(0,0,0,.5), 0 0 0 12px color-mix(in srgb, var(--stardust-accent) 60%, transparent);
   animation: stardustVinyl 8s linear infinite; animation-play-state: paused;
 }
+body.stardust-playing #stardust-vinyl-big { animation-play-state: running; }
+/* Hide YouTube's original big art while our centered record is shown. */
+.sd-orig-hidden { visibility: hidden !important; }
 .stardust-vinyl-wrap { background: transparent !important; overflow: visible !important; }
 body.stardust-playing img.stardust-vinyl { animation-play-state: running !important; }
 @keyframes stardustVinyl { to { transform: rotate(360deg); } }

@@ -13,6 +13,7 @@ let settings = null;
 let themeList = [];
 let activeTheme = null; // full theme object incl. starfield/visualizer config
 let discordAvailable = false;
+let appVersion = '';
 let installed = { theme: [], font: [], animation: [], feature: [], audio: [] };
 let extras = { font: [], animation: [], feature: [], audio: [] }; // payloads of installed extras
 let panelEl = null;
@@ -736,6 +737,16 @@ const VinylSpin = (() => {
     const img = bar && bar.querySelector('img');
     if (img) { img.classList.add('stardust-vinyl', 'sd-mini'); markWrap(img); }
   }
+  // The big record is our OWN centered overlay (not YTM's img), so an ancestor
+  // transform can't offset it. We mirror the album art into it and hide YTM's.
+  let overlay = null, hiddenOrig = null;
+  function ensureOverlay() {
+    if (overlay) return overlay;
+    overlay = document.createElement('div');
+    overlay.id = 'stardust-vinyl-big';
+    document.body.appendChild(overlay);
+    return overlay;
+  }
   function tagPage() {
     const page = document.querySelector('ytmusic-player-page');
     let big = null, area = 0;
@@ -745,16 +756,22 @@ const VinylSpin = (() => {
         if (a > area) { area = a; big = im; }
       }
     }
-    const qualifies = big && area > 40000;   // only the large now-playing art
-    // Untag any previously-big img that is no longer the large one (e.g. the
-    // player page collapsed) so the centered record never floats elsewhere.
-    document.querySelectorAll('img.sd-big').forEach((im) => {
-      if (im !== big || !qualifies) { im.classList.remove('stardust-vinyl', 'sd-big'); im.style.background = ''; }
-    });
-    if (qualifies) { big.classList.add('stardust-vinyl', 'sd-big'); markWrap(big); }
+    const qualifies = big && area > 40000; // the large now-playing art is on screen
+    if (qualifies) {
+      const src = big.currentSrc || big.src;
+      if (src) {
+        ensureOverlay().style.backgroundImage = `url("${src}")`;
+        overlay.style.display = 'block';
+        if (hiddenOrig && hiddenOrig !== big) hiddenOrig.classList.remove('sd-orig-hidden');
+        big.classList.add('sd-orig-hidden'); hiddenOrig = big;
+      }
+    } else {
+      if (overlay) overlay.style.display = 'none';
+      if (hiddenOrig) { hiddenOrig.classList.remove('sd-orig-hidden'); hiddenOrig = null; }
+    }
   }
   function scan() { try { tagBar(); tagPage(); } catch {} }
-  function on() { if (timer) return; scan(); timer = setInterval(scan, 1500); }
+  function on() { if (timer) return; scan(); timer = setInterval(scan, 1200); }
   function off() {
     if (timer) { clearInterval(timer); timer = null; }
     document.querySelectorAll('.stardust-vinyl').forEach((e) => { e.classList.remove('stardust-vinyl', 'sd-mini', 'sd-big'); e.style.background = ''; });
@@ -762,6 +779,8 @@ const VinylSpin = (() => {
       e.classList.remove('stardust-vinyl-wrap');
       e.style.background = ''; e.style.backgroundColor = ''; e.style.overflow = '';
     });
+    if (overlay) { overlay.remove(); overlay = null; }
+    if (hiddenOrig) { hiddenOrig.classList.remove('sd-orig-hidden'); hiddenOrig = null; }
   }
   return { on, off };
 })();
@@ -1046,7 +1065,7 @@ const Lyrics = (() => {
 
   function statusText() {
     if (mode === 'searching') return 'Searching lyrics…';
-    if (mode === 'off') return 'Lyrics not available for this track';
+    if (mode === 'off') return 'Lyrics not available — searched: "' + ((np && np.title) || '?') + '" · ' + ((np && np.artist) || '?');
     return undefined; // 'ours' → render the lyrics
   }
   // Render INTO YouTube's own Lyrics tab whenever it's open (Stardust owns it,
@@ -1567,7 +1586,7 @@ function buildUI() {
       toggleRow('Discord presence', 'discordRichPresence', 'stardust-discord'),
       discordIdWrap
     ]),
-    h('div', { class: 'stardust-foot', text: 'Drop themes into the folder above • restart-free' })
+    h('div', { class: 'stardust-foot', text: 'Stardust v' + (appVersion || '?') + ' • drop themes into the folder above' })
   ]);
   document.body.appendChild(panel);
 
@@ -2011,6 +2030,7 @@ async function boot() {
   discordAvailable = init.discordAvailable;
   installed = init.installed || installed;
   extras = init.extras || extras;
+  appVersion = init.version || '';
 
   await applyTheme(settings.activeTheme || (themeList[0] && themeList[0].id));
   applyExtras();
