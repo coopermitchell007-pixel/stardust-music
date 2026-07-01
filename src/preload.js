@@ -1118,13 +1118,11 @@ const Lyrics = (() => {
     if (status) { body.appendChild(h('div', { class: 'stardust-lyric-status', text: status })); return; }
     if (synced.length) {
       for (const l of synced) {
-        const line = h('div', { class: 'stardust-lyric-line' });
-        // Only split into per-word spans when we have REAL word timing
-        // (enhanced LRC). Otherwise keep it as one line and sweep it smoothly —
-        // faking per-word timing from line timing looks stuttery.
-        const enhanced = l.words && l.words.length && l.words[0].time != null;
-        if (enhanced) {
-          line.classList.add('words');
+        const line = h('div', { class: 'stardust-lyric-line words' });
+        // Always split into per-word spans so we can highlight word-by-word.
+        // Real timing when the line has it (enhanced LRC / NetEase yrc),
+        // estimated (by word length across the line) otherwise.
+        if (l.words && l.words.length) {
           l.words.forEach((w, i) => {
             line.appendChild(h('span', { class: 'w', text: w.text }));
             if (i < l.words.length - 1) line.appendChild(document.createTextNode(' '));
@@ -1192,27 +1190,41 @@ const Lyrics = (() => {
       curEl = idx >= 0 ? kids[idx] : null;
       if (curEl) {
         curEl.classList.add('active');
-        curEnhanced = curEl.classList.contains('words');
-        curSpans = curEnhanced ? curEl.querySelectorAll('.w') : null;
+        const lw = synced[idx] && synced[idx].words;
+        curEnhanced = !!(lw && lw.length && lw[0].time != null); // real per-word timing?
+        curSpans = curEl.querySelectorAll('.w');
         curEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
       }
     }
-    if (!curEl) return;
+    if (!curEl || !curSpans || !curSpans.length) return;
 
     const line = synced[idx];
     const lineEnd = synced[idx + 1] ? synced[idx + 1].t
       : (isFinite(v.duration) && v.duration > line.t ? v.duration : line.t + Math.max(3, (line.s.length || 8) * 0.09));
 
-    // Per-word karaoke ONLY when we have real word timing (enhanced LRC).
-    // Otherwise a solid active-line highlight — accurate at the line level and
-    // never pretends to know word timing we don't have.
-    if (curEnhanced && curSpans && curSpans.length) {
+    if (curEnhanced) {
+      // Real per-word timing (enhanced LRC / NetEase yrc).
       for (let i = 0; i < curSpans.length; i++) {
         const w = line.words[i]; if (!w) continue;
         const ws = w.time, we = (line.words[i + 1] && line.words[i + 1].time != null) ? line.words[i + 1].time : lineEnd;
         if (t >= we) setWord(curSpans[i], 'sung');
         else if (t >= ws) setWord(curSpans[i], 'cur', we > ws ? (t - ws) / (we - ws) : 1);
         else setWord(curSpans[i], '');
+      }
+    } else {
+      // Estimate: spread the line's elapsed time across its words by length,
+      // so each word lights up in turn (approximate, but word-by-word).
+      const total = line.words.reduce((a, w) => a + w.len, 0) || 1;
+      const dur = Math.max(lineEnd - line.t, 0.001);
+      const p = Math.min(1, Math.max(0, (t - line.t) / dur));
+      const target = p * total;
+      let acc = 0;
+      for (let i = 0; i < curSpans.length; i++) {
+        const wl = line.words[i] ? line.words[i].len : 1;
+        if (acc + wl <= target) setWord(curSpans[i], 'sung');
+        else if (acc < target) setWord(curSpans[i], 'cur', (target - acc) / wl);
+        else setWord(curSpans[i], '');
+        acc += wl;
       }
     }
   }

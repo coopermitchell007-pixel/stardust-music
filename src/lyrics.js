@@ -117,25 +117,49 @@ async function fetchLyrics({ artist, title, album, duration } = {}) {
     }
   };
 
-  // Fire EVERYTHING in one parallel batch: lrclib exact-get, lrclib search
-  // (with artist and title-only), and NetEase. Parallel means total latency is
-  // ~one slow request, not the sum — so a slow lrclib can't stall us, and if
-  // lrclib is unreachable, NetEase (fired at the same time) still answers.
-  const [getRes, sArtist, sTitle, ne] = await Promise.all([
+  // "Artist - Song" videos: the uploader (artist field) isn't the real artist,
+  // so also try splitting the title on " - ". Both orders, since conventions vary.
+  const dash = bare.split(/\s[-–—]\s/);
+  const altPairs = [];
+  if (dash.length === 2) {
+    altPairs.push({ track: dash[1].trim(), artist: dash[0].trim() });
+    altPairs.push({ track: dash[0].trim(), artist: dash[1].trim() });
+  }
+
+  // lrclib first (fast path) — exact-get + searches in parallel. Return as soon
+  // as it answers so we DON'T wait on slow NetEase for songs lrclib already has.
+  const lrclibReqs = [
     getJson('https://lrclib.net/api/get?' + qs({ artist_name: artist, track_name: ct, duration })),
     getJson('https://lrclib.net/api/search?' + qs({ track_name: bare, artist_name: artist1 })),
-    getJson('https://lrclib.net/api/search?' + qs({ track_name: bare })),
-    fetchNetease({ title: bare, artist: artist1, want }).catch(() => null)
-  ]);
+    getJson('https://lrclib.net/api/search?' + qs({ track_name: bare }))
+  ];
+  for (const p of altPairs) lrclibReqs.push(getJson('https://lrclib.net/api/search?' + qs({ track_name: p.track, artist_name: p.artist })));
+  const [getRes, ...searches] = await Promise.all(lrclibReqs);
 
   if (getRes && (getRes.syncedLyrics || getRes.plainLyrics)) {
     return { syncedLyrics: getRes.syncedLyrics || '', plainLyrics: getRes.plainLyrics || '' };
   }
-  rank(sArtist); rank(sTitle);
-  const hit = best && best.score >= MIN_SCORE && best.x;
+  // Score against the parsed title/artist AND the alt "A - B" pairs.
+  const wants = [want];
+  for (const p of altPairs) wants.push({ title: norm(p.track), artist: norm(p.artist), duration, cjkTitle: isCJK(p.track) });
+  for (const arr of searches) {
+    if (!Array.isArray(arr)) continue;
+    for (const x of arr) for (const w of wants) {
+      const scored = scoreCandidate(x, w);
+      if (scored && (!best || scored.score > best.score || (scored.score === best.score && scored.ddiff < best.ddiff))) best = scored;
+    }
+  }
+  let hit = best && best.score >= MIN_SCORE && best.x;
   if (hit && (hit.syncedLyrics || hit.plainLyrics)) {
     return { syncedLyrics: hit.syncedLyrics || '', plainLyrics: hit.plainLyrics || '' };
   }
+
+  // Only now (lrclib missed) pay for NetEase. Use the "Song by Artist" reading
+  // for videos (altPairs[0]) with its matching `want` (wants[1]).
+  const neTitle = altPairs[0] ? altPairs[0].track : bare;
+  const neArtist = altPairs[0] ? altPairs[0].artist : artist1;
+  const neWant = altPairs[0] ? wants[1] : want;
+  const ne = await fetchNetease({ title: neTitle, artist: neArtist, want: neWant }).catch(() => null);
   if (ne) return ne;
 
   return null; // no confident match — show nothing rather than the wrong song
