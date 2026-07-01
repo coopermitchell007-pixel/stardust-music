@@ -1306,7 +1306,9 @@ const Lyrics = (() => {
     if (/^\d+\s*contributors?\b/i.test(s)) return true;
     if (/^translations?\b/i.test(s)) return true;
     if (/you might also like/i.test(s)) return true;
-    if (/\bembed$/i.test(s)) return true;
+    if (/\d*\s*embed$/i.test(s)) return true;          // "…123Embed"
+    if (/\bget tickets\b/i.test(s)) return true;       // concert promo
+    if (/^see .+ live/i.test(s)) return true;
     if (idx < 3 && /\blyrics$/i.test(s)) return true; // "Song Lyrics" header near top
     // Credit lines (support both ':' and full-width '：', and CJK credit words).
     if (/^(lyric|lyrics|music|composed|composer|compose|arrang|produc|written|writer|words|作词|作曲|编曲|制作|词|曲|演唱|歌手|翻译|出品)\w*\s*(by)?\s*[:：]/i.test(s)) return true;

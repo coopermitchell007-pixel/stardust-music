@@ -96,9 +96,13 @@ function scoreCandidate(x, want) {
   //  - duration UNKNOWN → we can't tell same-title songs apart yet, so only
   //    accept a strong title+artist match; otherwise bail and let it retry once
   //    the duration has loaded (prevents locking in a wrong same-title song).
-  if (knownDur) {
+  // Sped-up / slowed / nightcore / remix versions have a DIFFERENT length than
+  // the original lyrics entry, so the duration gate would wrongly reject them
+  // (and we'd fall through to Genius). For those, ignore duration and require an
+  // artist match instead — the same words, re-timed by the listening engine.
+  if (knownDur && !want.relaxDur) {
     if (ddiff > 7) return null;
-  } else if (!(titleExact && (artistExact || artistOverlap))) {
+  } else if (!(titleExact && (artistExact || artistOverlap)) && !(titleOverlap && artistExact)) {
     return null;
   }
 
@@ -149,7 +153,10 @@ async function fetchLyrics({ artist, title, album, duration } = {}) {
   const bare = title.replace(/\(.*?\)|\[.*?\]/g, '').replace(/\s+/g, ' ').trim() || ct;
   const artist1 = (artist || '').split(/[,&]| feat| ft| x /i)[0].trim();
 
-  const want = { title: norm(title), artist: norm(artist), duration, cjkTitle: isCJK(title) };
+  // Re-timed versions (sped up / slowed / nightcore / remix) have a different
+  // length than the original lyrics, so ignore duration when matching them.
+  const relaxDur = /\b(sped\s*up|slow(ed)?|nightcore|remix|reverb|8d|bass\s*boost)\b/i.test(title);
+  const want = { title: norm(title), artist: norm(artist), duration, cjkTitle: isCJK(title), relaxDur };
 
   // "Artist - Song" videos: the uploader isn't the real artist — try the title
   // split on " - " (both orders).
@@ -160,7 +167,7 @@ async function fetchLyrics({ artist, title, album, duration } = {}) {
     altPairs.push({ track: dash[0].trim(), artist: dash[1].trim() });
   }
   const wants = [want];
-  for (const p of altPairs) wants.push({ title: norm(p.track), artist: norm(p.artist), duration, cjkTitle: isCJK(p.track) });
+  for (const p of altPairs) wants.push({ title: norm(p.track), artist: norm(p.artist), duration, cjkTitle: isCJK(p.track), relaxDur });
   const fTitle = altPairs[0] ? altPairs[0].track : bare;
   const fArtist = altPairs[0] ? altPairs[0].artist : artist1;
   const fWant = altPairs[0] ? wants[1] : want;
@@ -308,7 +315,9 @@ function extractGeniusLyrics(html) {
     t = t.replace(/^\s*\d+\s*Contributors?[\s\S]*?(?=\n)/i, '');
   }
   t = t.replace(/You might also like/gi, '\n');
-  t = t.replace(/\d*\s*Embed\s*$/i, '');
+  t = t.replace(/\d*\s*Embed\b/gi, '');                 // "123Embed" anywhere
+  t = t.replace(/^.*\bGet tickets\b.*$/gim, '');         // concert promo
+  t = t.replace(/^\s*See .+ Live.*$/gim, '');
   return t.split('\n').map((x) => x.trim()).filter(Boolean).join('\n');
 }
 async function fetchGenius({ title, artist, want }) {
@@ -317,17 +326,17 @@ async function fetchGenius({ title, artist, want }) {
   const sections = s && s.response && s.response.sections;
   if (!Array.isArray(sections)) return null;
 
-  let hit = null, fallback = null;
+  // Only accept a CONFIDENT title+artist match — no loose "first hit" fallback
+  // (that's what produced wrong-song Genius lyrics).
+  let hit = null;
   for (const sec of sections) {
     for (const h of (sec.hits || [])) {
       if (h.type !== 'song' || !h.result) continue;
-      if (!fallback) fallback = h.result;
       const cand = { trackName: h.result.title, artistName: (h.result.primary_artist && h.result.primary_artist.name) || '', duration: 0, syncedLyrics: 'x' };
-      if (scoreCandidate(cand, { ...want, duration: undefined })) { hit = h.result; break; }
+      if (scoreCandidate(cand, { ...want, duration: undefined, relaxDur: false })) { hit = h.result; break; }
     }
     if (hit) break;
   }
-  hit = hit || fallback;
   if (!hit || !hit.url) return null;
   const html = await getText(hit.url);
   if (!html) return null;
