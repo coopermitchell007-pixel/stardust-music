@@ -614,7 +614,24 @@ const Visualizer = (() => {
   }
   function setReactiveColor(c) { reactiveColor = c || null; }
 
-  return { configure, setPlaying, resumeAudio, fx, getBars, setReactiveColor };
+  // Smoothed energy in the vocal band (~200Hz–4kHz), 0..1, or -1 if we can't
+  // read real audio. Used to advance lyric words in time with the singing.
+  let veSmooth = 0;
+  function vocalEnergy() {
+    if (!analyser || !freq || !useReal) return -1;
+    analyser.getByteFrequencyData(freq);
+    const bins = analyser.frequencyBinCount;
+    const sr = audioCtx ? audioCtx.sampleRate : 44100;
+    const lo = Math.max(1, Math.floor(200 / (sr / 2) * bins));
+    const hi = Math.min(bins, Math.floor(4000 / (sr / 2) * bins));
+    let sum = 0, n = 0;
+    for (let i = lo; i < hi; i++) { sum += freq[i]; n++; }
+    const e = n ? (sum / n) / 255 : 0;
+    veSmooth += (e - veSmooth) * 0.4; // light smoothing
+    return veSmooth;
+  }
+
+  return { configure, setPlaying, resumeAudio, fx, getBars, setReactiveColor, vocalEnergy };
 })();
 
 // A user gesture is required before an AudioContext can produce sound/data.
@@ -1037,6 +1054,7 @@ const Lyrics = (() => {
   let box = null, body = null, lastIdx = -1, attempts = 0, np = null;
   let mode = 'off', host = null;                     // 'searching' | 'ours' | 'off'
   let curEl = null, curSpans = null, curTiming = null;
+  let curMode = 'est', curWeights = null, curTotalW = 1, curSungDur = 1, prog = 0, lastCT = 0;
 
   function enable() {
     active = true;
@@ -1207,26 +1225,65 @@ const Lyrics = (() => {
       if (curEl) { curEl.classList.remove('active'); curEl.style.removeProperty('--wp'); clearWords(curEl); }
       lastIdx = idx;
       curEl = idx >= 0 ? kids[idx] : null;
-      curSpans = curTiming = null;
+      curSpans = curTiming = curWeights = null;
       if (curEl) {
         curEl.classList.add('active');
         curSpans = curEl.querySelectorAll('.w');
+        const line = synced[idx];
         const lineEnd = synced[idx + 1] ? synced[idx + 1].t
-          : (isFinite(v.duration) && v.duration > synced[idx].t ? v.duration : synced[idx].t + 6);
-        curTiming = computeWordTiming(synced[idx], lineEnd);
+          : (isFinite(v.duration) && v.duration > line.t ? v.duration : line.t + 6);
+        const real = line.words && line.words.length && line.words[0].time != null;
+        curMode = real ? 'real' : 'est';
+        if (real) {
+          curTiming = computeWordTiming(line, lineEnd);
+        } else {
+          curWeights = (line.words || []).map((w) => {
+            const syl = ((w.text || '').toLowerCase().match(/[aeiouy]+/g) || []).length || 1;
+            return Math.max(0.26, 0.16 + syl * 0.34);
+          });
+          curTotalW = curWeights.reduce((a, b) => a + b, 0) || 1;
+          const win = Math.max(0.5, lineEnd - line.t);
+          curSungDur = Math.max(0.5, Math.min(win, curTotalW * 1.5)); // finish within, hold after
+          prog = 0; lastCT = t;
+        }
         curEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
       }
     }
-    if (!curEl || !curSpans || !curSpans.length || !curTiming) return;
+    if (!curEl || !curSpans || !curSpans.length) return;
+    const line = synced[idx];
 
-    // EVERY word carries its own continuous fill (0..1) each frame — not a
-    // binary sung/current flip — so the highlight flows seamlessly across the
-    // line with no per-word popping. A word past its window sits at 1 (lit),
-    // before its window at 0 (dim), and fills smoothly in between.
+    if (curMode === 'real' && curTiming) {
+      // Exact per-word timing — continuous fill per word.
+      for (let i = 0; i < curSpans.length; i++) {
+        const tm = curTiming[i]; if (!tm) continue;
+        const f = tm.end > tm.start ? (t - tm.start) / (tm.end - tm.start) : (t >= tm.start ? 1 : 0);
+        setWordFill(curSpans[i], Math.min(1, Math.max(0, f)));
+      }
+      return;
+    }
+    if (!curWeights) return;
+
+    // Estimated timing, but ADVANCED BY THE ACTUAL VOCAL ENERGY: words move
+    // faster when the singing is loud, slower when quiet — anchored to clock
+    // time so it can't drift. Every word gets a continuous fill (no popping).
+    let dt = t - lastCT; lastCT = t;
+    if (dt < 0 || dt > 1) dt = 0; // seek/pause guard
+    const e = Visualizer.vocalEnergy();
+    const timeProg = Math.min(1, Math.max(0, (t - line.t) / curSungDur));
+    if (e >= 0) {
+      prog += (dt / curSungDur) * (0.45 + 1.3 * e);
+      prog = Math.max(prog, timeProg - 0.18);   // stay anchored to the clock
+      prog = Math.min(prog, timeProg + 0.30);
+    } else {
+      prog = timeProg; // no audio reading → pure time
+    }
+    prog = Math.min(1, Math.max(0, prog));
+    const target = prog * curTotalW;
+    let acc = 0;
     for (let i = 0; i < curSpans.length; i++) {
-      const tm = curTiming[i]; if (!tm) continue;
-      const f = tm.end > tm.start ? (t - tm.start) / (tm.end - tm.start) : (t >= tm.start ? 1 : 0);
-      setWordFill(curSpans[i], Math.min(1, Math.max(0, f)));
+      const wt = curWeights[i] || 0.3;
+      setWordFill(curSpans[i], Math.min(1, Math.max(0, (target - acc) / wt)));
+      acc += wt;
     }
   }
 
