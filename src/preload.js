@@ -669,10 +669,11 @@ function applyExtras() {
     .join('\n');
   sheet('stardust-features').textContent = feats;
 
-  // Behaviours (audio effects + smart features) — JS side
+  // Behaviours (audio effects + smart features + JS-driven animations) — JS side
   const desired = new Set([
     ...(settings.enabledFeatures || []),
-    ...(settings.enabledAudio || [])
+    ...(settings.enabledAudio || []),
+    ...(settings.enabledAnimations || [])
   ].filter((id) => BEHAVIORS[id]));
   reconcileBehaviors(desired);
 }
@@ -712,8 +713,42 @@ const BEHAVIORS = {
   'feat-auto-dj':       { on: () => AutoDJ.enable(),    off: () => AutoDJ.disable() },
   'feat-reactive-theme':{ on: () => ReactiveTheme.enable(), off: () => ReactiveTheme.disable() },
   'feat-crossfade':     { on: () => Crossfade.enable(), off: () => Crossfade.disable() },
-  'feat-playlist-tools':{ on: () => PlaylistTools.show(), off: () => PlaylistTools.hide() }
+  'feat-playlist-tools':{ on: () => PlaylistTools.show(), off: () => PlaylistTools.hide() },
+  'anim-vinyl-spin':    { on: () => VinylSpin.on(), off: () => VinylSpin.off() }
 };
+
+// --- Vinyl Spin: find the actual artwork <img> at runtime (YTM class names are
+// unreliable) and tag it + its wrapper, then style our own classes via CSS. ---
+const VinylSpin = (() => {
+  let timer = null;
+  function markWrap(img) {
+    let p = img.parentElement;
+    for (let i = 0; i < 2 && p; i++) { p.classList.add('stardust-vinyl-wrap'); p = p.parentElement; }
+  }
+  function tagBar() {
+    const bar = document.querySelector('ytmusic-player-bar');
+    const img = bar && bar.querySelector('img');
+    if (img) { img.classList.add('stardust-vinyl', 'sd-mini'); markWrap(img); }
+  }
+  function tagPage() {
+    const page = document.querySelector('ytmusic-player-page');
+    if (!page) return;
+    let big = null, area = 0;
+    for (const im of page.querySelectorAll('img')) {
+      const r = im.getBoundingClientRect(); const a = r.width * r.height;
+      if (a > area) { area = a; big = im; }
+    }
+    if (big && area > 20000) { big.classList.add('stardust-vinyl', 'sd-big'); markWrap(big); }
+  }
+  function scan() { try { tagBar(); tagPage(); } catch {} }
+  function on() { if (timer) return; scan(); timer = setInterval(scan, 1500); }
+  function off() {
+    if (timer) { clearInterval(timer); timer = null; }
+    document.querySelectorAll('.stardust-vinyl').forEach((e) => e.classList.remove('stardust-vinyl', 'sd-mini', 'sd-big'));
+    document.querySelectorAll('.stardust-vinyl-wrap').forEach((e) => e.classList.remove('stardust-vinyl-wrap'));
+  }
+  return { on, off };
+})();
 
 // --- Sleep timer: floating pill with 15/30/60-min presets ------------------
 const SleepTimer = (() => {
@@ -988,40 +1023,33 @@ const Lyrics = (() => {
   }
 
   function ensureBox() {
-    if (!box) { body = h('div', { class: 'stardust-lyric-lines' }); box = h('div', { id: 'stardust-lyrics' }, [body]); }
+    if (box) return box;
+    body = h('div', { class: 'stardust-lyric-lines' });
+    const close = h('button', { class: 'stardust-lyr-x', title: 'Hide lyrics', text: '✕' });
+    close.addEventListener('click', () => {
+      onSetting('enabledFeatures', (settings.enabledFeatures || []).filter((x) => x !== 'feat-lyrics'));
+    });
+    const head = h('div', { class: 'stardust-lyr-head' }, [h('span', { class: 'stardust-lyr-title', text: '✦ Lyrics' }), close]);
+    box = h('div', { id: 'stardust-lyrics', class: 'stardust-lyrics-panel' }, [head, body]);
     return box;
   }
-  function clearHost() { if (host) { host.classList.remove('stardust-lyrics-on'); host = null; } if (box && box.parentElement) box.remove(); }
+  function clearHost() { if (box && box.parentElement) box.remove(); host = null; }
 
-  // State machine (runs on a light poll, only mutates the DOM on change):
-  //  - show OUR lyrics whenever LRCLIB gave us something (or we're still
-  //    searching this track) and the Lyrics tab is open;
-  //  - otherwise get out of the way and let YTM's own tab render.
-  // A single class on the tab host hides YTM's content and shows our box, so it
-  // survives YTM re-rendering the tab without any per-tick thrash.
   function statusText() {
     if (mode === 'searching') return 'Searching lyrics…';
     if (mode === 'off') return 'Lyrics not available for this track';
     return undefined; // 'ours' → render the lyrics
   }
+  // Self-contained floating panel — always shown while the feature is on, so it
+  // does NOT depend on detecting/injecting into YouTube's own lyrics tab (that
+  // detection was fragile and silently showed nothing).
   function sync() {
     if (!active) return;
-    ungray();
-    const h0 = tabHost();
-    // Stardust fully owns the Lyrics tab whenever it's open — we never fall back
-    // to YTM's own lyrics, so there's nothing to flicker between. The panel just
-    // shows "searching", the lyrics, or "not available".
-    const want = h0 && tabSelected();
-    if (want) {
-      if (host && host !== h0) host.classList.remove('stardust-lyrics-on');
-      host = h0;
-      host.classList.add('stardust-lyrics-on');
-      ensureBox();
-      if (box.parentElement !== host) host.appendChild(box);
-      if (!body.firstChild) render(statusText());
-    } else {
-      clearHost();
-    }
+    ungray(); // still un-grey YTM's own tab button, harmless if absent
+    ensureBox();
+    if (box.parentElement !== document.body) document.body.appendChild(box);
+    box.style.display = 'flex';
+    if (!body.firstChild) render(statusText());
   }
 
   const toSec = (mm, ss) => parseInt(mm, 10) * 60 + parseFloat(ss);
@@ -1508,6 +1536,9 @@ function buildUI() {
     section([
       label('Smart'),
       h('button', { class: 'stardust-market-cta', dataset: { act: 'open-stats' }, text: '✦  Listening Stats' }),
+      h('div', { class: 'stardust-row' }, [
+        miniBtn('toggle-lyrics', 'Lyrics: off')
+      ]),
       h('div', { class: 'stardust-hint', text: 'Hotkeys: ⌘/Ctrl+Shift+↑ like · ↓ dislike · S shuffle · C copy link' })
     ]),
     section([
@@ -1581,8 +1612,19 @@ function wirePanel(panel) {
       if (act === 'open-market') openMarket();
       if (act === 'open-stats') openStats();
       if (act === 'discord-portal') ipcRenderer.invoke('stardust:open-external', 'https://discord.com/developers/applications');
+      if (act === 'toggle-lyrics') {
+        const on = (settings.enabledFeatures || []).includes('feat-lyrics');
+        const next = on
+          ? (settings.enabledFeatures || []).filter((x) => x !== 'feat-lyrics')
+          : uniqAdd(settings.enabledFeatures, 'feat-lyrics');
+        await onSetting('enabledFeatures', next);
+        btn.textContent = on ? 'Lyrics: off' : 'Lyrics: on';
+      }
     });
   });
+  // Reflect current lyrics state on the toggle.
+  const lt = panel.querySelector('[data-act="toggle-lyrics"]');
+  if (lt) lt.textContent = (settings.enabledFeatures || []).includes('feat-lyrics') ? 'Lyrics: on' : 'Lyrics: off';
 }
 
 // ---------------------------------------------------------------------------
@@ -1651,6 +1693,9 @@ async function onSetting(key, value) {
   if (key === 'starfieldEnabled' || key === 'starfieldDensity') Starfield.configure(activeTheme.starfield);
   if (key === 'visualizerEnabled') Visualizer.configure(activeTheme.visualizer);
   if (key === 'glassEnabled' || key === 'glassBlur') applyVars();
+  // Marketplace extras (fonts/animations/features/audio) need re-applying so
+  // their CSS + JS behaviours toggle on/off.
+  if (key === 'enabledFeatures' || key === 'enabledAnimations' || key === 'enabledAudio' || key === 'activeFont') applyExtras();
   if (key === 'discordRichPresence') {
     document.getElementById('stardust-discord-id-wrap').style.display = value ? 'block' : 'none';
   }

@@ -5,18 +5,52 @@
     "name": "Cosmic Bloom",
     "author": "Stardust",
     "description": "Vibrant violet & magenta nebula clouds over deep space.",
-    "tags": ["vibrant", "purple", "nebula"],
+    "tags": [
+      "vibrant",
+      "purple",
+      "nebula"
+    ],
     "preview": "radial-gradient(120% 100% at 30% 0%, #c061ff, transparent 60%), radial-gradient(120% 100% at 90% 30%, #5a1b80, transparent 60%), #07040f",
     "theme": {
       "accent": "#c061ff",
       "background": "radial-gradient(1100px 820px at 28% -6%, #3a1466 0%, rgba(58,20,102,0) 60%), radial-gradient(940px 720px at 88% 8%, #6a1f8c 0%, rgba(106,31,140,0) 58%), #07040f",
-      "glass": { "blur": 22, "opacity": 0.5 },
-      "starfield": { "enabled": true, "count": 380, "color": "#f3d6ff", "speed": 0.26, "size": 1.9, "twinkle": true, "shootingStars": true },
-      "visualizer": { "enabled": true, "color": "#c061ff", "style": "bars" },
-      "bg": { "base": "#07040f", "blooms": [
-        { "x": 0.28, "y": 0.0, "r": 0.85, "color": "#3a1466", "alpha": 0.6 },
-        { "x": 0.88, "y": 0.08, "r": 0.7, "color": "#6a1f8c", "alpha": 0.45 }
-      ] },
+      "glass": {
+        "blur": 22,
+        "opacity": 0.5
+      },
+      "starfield": {
+        "enabled": true,
+        "count": 380,
+        "color": "#f3d6ff",
+        "speed": 0.26,
+        "size": 1.9,
+        "twinkle": true,
+        "shootingStars": true
+      },
+      "visualizer": {
+        "enabled": true,
+        "color": "#c061ff",
+        "style": "bars"
+      },
+      "bg": {
+        "base": "#07040f",
+        "blooms": [
+          {
+            "x": 0.28,
+            "y": 0,
+            "r": 0.85,
+            "color": "#3a1466",
+            "alpha": 0.6
+          },
+          {
+            "x": 0.88,
+            "y": 0.08,
+            "r": 0.7,
+            "color": "#6a1f8c",
+            "alpha": 0.45
+          }
+        ]
+      },
       "css": ""
     }
   },
@@ -26,18 +60,52 @@
     "name": "Neon Drive",
     "author": "Stardust",
     "description": "Retro-futuristic synthwave: magenta + cyan glow over indigo.",
-    "tags": ["neon", "synthwave", "dark"],
+    "tags": [
+      "neon",
+      "synthwave",
+      "dark"
+    ],
     "preview": "linear-gradient(180deg, #12204a, #05030d 70%), radial-gradient(80% 60% at 50% 110%, #ff2bd6, transparent 60%)",
     "theme": {
       "accent": "#ff2bd6",
       "background": "radial-gradient(1200px 720px at 50% 118%, #2a0a4a 0%, rgba(42,10,74,0) 60%), radial-gradient(900px 620px at 50% -10%, #13224d 0%, rgba(19,34,77,0) 55%), #05030d",
-      "glass": { "blur": 20, "opacity": 0.52 },
-      "starfield": { "enabled": true, "count": 300, "color": "#9becff", "speed": 0.3, "size": 1.6, "twinkle": true, "shootingStars": true },
-      "visualizer": { "enabled": true, "color": "#2be0ff", "style": "bars" },
-      "bg": { "base": "#05030d", "blooms": [
-        { "x": 0.5, "y": 1.05, "r": 0.95, "color": "#2a0a4a", "alpha": 0.6 },
-        { "x": 0.5, "y": 0.0, "r": 0.75, "color": "#13224d", "alpha": 0.45 }
-      ] },
+      "glass": {
+        "blur": 20,
+        "opacity": 0.52
+      },
+      "starfield": {
+        "enabled": true,
+        "count": 300,
+        "color": "#9becff",
+        "speed": 0.3,
+        "size": 1.6,
+        "twinkle": true,
+        "shootingStars": true
+      },
+      "visualizer": {
+        "enabled": true,
+        "color": "#2be0ff",
+        "style": "bars"
+      },
+      "bg": {
+        "base": "#05030d",
+        "blooms": [
+          {
+            "x": 0.5,
+            "y": 1.05,
+            "r": 0.95,
+            "color": "#2a0a4a",
+            "alpha": 0.6
+          },
+          {
+            "x": 0.5,
+            "y": 0,
+            "r": 0.75,
+            "color": "#13224d",
+            "alpha": 0.45
+          }
+        ]
+      },
       "css": "ytmusic-nav-bar.ytmusic-app-layout { box-shadow: 0 1px 0 0 color-mix(in srgb, var(--stardust-accent) 40%, transparent), 0 0 22px color-mix(in srgb, var(--stardust-accent) 25%, transparent) !important; }"
     }
   },
@@ -47,17 +115,45 @@
     "name": "Deep Void",
     "author": "Stardust",
     "description": "Sleek near-black minimalism with a faint periwinkle glow.",
-    "tags": ["minimal", "dark", "clean"],
+    "tags": [
+      "minimal",
+      "dark",
+      "clean"
+    ],
     "preview": "radial-gradient(100% 80% at 50% 0%, #16183a, transparent 60%), #030307",
     "theme": {
       "accent": "#7f8bff",
       "background": "radial-gradient(820px 600px at 50% -10%, #11132f 0%, rgba(17,19,47,0) 60%), #030307",
-      "glass": { "blur": 16, "opacity": 0.58 },
-      "starfield": { "enabled": true, "count": 150, "color": "#cfd4ff", "speed": 0.16, "size": 1.3, "twinkle": true, "shootingStars": false },
-      "visualizer": { "enabled": true, "color": "#7f8bff", "style": "bars" },
-      "bg": { "base": "#030307", "blooms": [
-        { "x": 0.5, "y": 0.0, "r": 0.7, "color": "#11132f", "alpha": 0.6 }
-      ] },
+      "glass": {
+        "blur": 16,
+        "opacity": 0.58
+      },
+      "starfield": {
+        "enabled": true,
+        "count": 150,
+        "color": "#cfd4ff",
+        "speed": 0.16,
+        "size": 1.3,
+        "twinkle": true,
+        "shootingStars": false
+      },
+      "visualizer": {
+        "enabled": true,
+        "color": "#7f8bff",
+        "style": "bars"
+      },
+      "bg": {
+        "base": "#030307",
+        "blooms": [
+          {
+            "x": 0.5,
+            "y": 0,
+            "r": 0.7,
+            "color": "#11132f",
+            "alpha": 0.6
+          }
+        ]
+      },
       "css": ""
     }
   },
@@ -67,28 +163,57 @@
     "name": "Emerald Nebula",
     "author": "Stardust",
     "description": "Teal-green cosmic haze with mint stars.",
-    "tags": ["green", "nebula"],
+    "tags": [
+      "green",
+      "nebula"
+    ],
     "preview": "radial-gradient(120% 100% at 50% 0%, #2be6a0, transparent 60%), #03070a",
     "theme": {
       "accent": "#2be6a0",
       "background": "radial-gradient(1100px 820px at 50% -8%, #0a3a2c 0%, rgba(10,58,44,0) 62%), #03070a",
-      "glass": { "blur": 18, "opacity": 0.5 },
-      "starfield": { "enabled": true, "count": 320, "color": "#cffded", "speed": 0.24, "size": 1.8, "twinkle": true, "shootingStars": true },
-      "visualizer": { "enabled": true, "color": "#2be6a0", "style": "bars" },
-      "bg": { "base": "#03070a", "blooms": [
-        { "x": 0.5, "y": 0.0, "r": 0.9, "color": "#0a3a2c", "alpha": 0.6 }
-      ] },
+      "glass": {
+        "blur": 18,
+        "opacity": 0.5
+      },
+      "starfield": {
+        "enabled": true,
+        "count": 320,
+        "color": "#cffded",
+        "speed": 0.24,
+        "size": 1.8,
+        "twinkle": true,
+        "shootingStars": true
+      },
+      "visualizer": {
+        "enabled": true,
+        "color": "#2be6a0",
+        "style": "bars"
+      },
+      "bg": {
+        "base": "#03070a",
+        "blooms": [
+          {
+            "x": 0.5,
+            "y": 0,
+            "r": 0.9,
+            "color": "#0a3a2c",
+            "alpha": 0.6
+          }
+        ]
+      },
       "css": ""
     }
   },
-
   {
     "id": "font-orbitron",
     "type": "font",
     "name": "Orbitron",
     "author": "Google Fonts",
     "description": "Geometric sci-fi display font — full UI.",
-    "tags": ["futuristic", "display"],
+    "tags": [
+      "futuristic",
+      "display"
+    ],
     "preview": "linear-gradient(135deg, #1a1040, #0a0720)",
     "font": {
       "family": "Orbitron",
@@ -101,7 +226,10 @@
     "name": "Inter",
     "author": "Google Fonts",
     "description": "Crisp, modern neutral sans — easy on the eyes.",
-    "tags": ["clean", "modern"],
+    "tags": [
+      "clean",
+      "modern"
+    ],
     "preview": "linear-gradient(135deg, #20243a, #0c0e1a)",
     "font": {
       "family": "Inter",
@@ -114,7 +242,10 @@
     "name": "Comfortaa",
     "author": "Google Fonts",
     "description": "Soft, rounded, friendly geometric font.",
-    "tags": ["rounded", "friendly"],
+    "tags": [
+      "rounded",
+      "friendly"
+    ],
     "preview": "linear-gradient(135deg, #2a1d3a, #120a1a)",
     "font": {
       "family": "Comfortaa",
@@ -127,23 +258,28 @@
     "name": "JetBrains Mono",
     "author": "Google Fonts",
     "description": "Monospaced terminal vibes for the whole UI.",
-    "tags": ["mono", "techy"],
+    "tags": [
+      "mono",
+      "techy"
+    ],
     "preview": "linear-gradient(135deg, #0e2030, #04101a)",
     "font": {
       "family": "JetBrains Mono",
       "css": "@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap'); ytmusic-app, ytmusic-app yt-formatted-string, ytmusic-app .title, ytmusic-app span, ytmusic-app a, ytmusic-app div, ytmusic-app button, ytmusic-app input { font-family: 'JetBrains Mono', ui-monospace, monospace !important; }"
     }
   },
-
   {
     "id": "anim-vinyl-spin",
     "type": "animation",
     "name": "Vinyl Spin",
     "author": "Stardust",
-    "description": "The now-playing artwork becomes a spinning vinyl record.",
-    "tags": ["nowplaying", "fun"],
+    "description": "The now-playing artwork becomes a spinning vinyl record (bar + full player).",
+    "tags": [
+      "nowplaying",
+      "fun"
+    ],
     "preview": "radial-gradient(circle at 50% 50%, #111 18%, #333 19%, #111 40%, #444 41%, #111 60%)",
-    "css": "ytmusic-player-bar yt-img-shadow, ytmusic-player-bar #song-image, ytmusic-player-bar .thumbnail.ytmusic-player-bar { width: var(--stardust-vinyl, 52px) !important; height: var(--stardust-vinyl, 52px) !important; min-width: var(--stardust-vinyl, 52px) !important; min-height: var(--stardust-vinyl, 52px) !important; border-radius: 50% !important; overflow: hidden !important; background: transparent !important; position: relative !important; bottom: 11px !important; box-shadow: 0 0 0 3px rgba(0,0,0,.55), 0 0 0 6px color-mix(in srgb, var(--stardust-accent) 75%, transparent) !important; animation: stardustVinyl 4s linear infinite; animation-play-state: paused; } ytmusic-player-bar yt-img-shadow img, ytmusic-player-bar #song-image img, ytmusic-player-bar img.image { width: 100% !important; height: 100% !important; object-fit: cover !important; border-radius: 50% !important; background: transparent !important; } ytmusic-player-page yt-img-shadow, ytmusic-player-page #song-image, ytmusic-player-page #thumbnail { aspect-ratio: 1 / 1 !important; border-radius: 50% !important; overflow: hidden !important; background: transparent !important; box-shadow: 0 0 0 6px rgba(0,0,0,.5), 0 0 0 12px color-mix(in srgb, var(--stardust-accent) 60%, transparent) !important; animation: stardustVinyl 8s linear infinite; animation-play-state: paused; } ytmusic-player-page yt-img-shadow img, ytmusic-player-page #song-image img, ytmusic-player-page #thumbnail img, ytmusic-player-page .image img { width: 100% !important; height: 100% !important; object-fit: cover !important; border-radius: 50% !important; background: transparent !important; } body.stardust-playing ytmusic-player-bar yt-img-shadow, body.stardust-playing ytmusic-player-bar #song-image, body.stardust-playing ytmusic-player-bar .thumbnail.ytmusic-player-bar, body.stardust-playing ytmusic-player-page yt-img-shadow, body.stardust-playing ytmusic-player-page #song-image, body.stardust-playing ytmusic-player-page #thumbnail { animation-play-state: running; } @keyframes stardustVinyl { to { transform: rotate(360deg); } }"
+    "css": ""
   },
   {
     "id": "anim-gradient-headings",
@@ -151,7 +287,10 @@
     "name": "Gradient Headings",
     "author": "Stardust",
     "description": "Section titles shimmer with an animated accent gradient.",
-    "tags": ["text", "accent"],
+    "tags": [
+      "text",
+      "accent"
+    ],
     "preview": "linear-gradient(90deg, #8b5cff, #fff, #8b5cff)",
     "css": ".ytmusic-carousel-shelf-basic-header-renderer .text, ytmusic-carousel-shelf-basic-header-renderer yt-formatted-string, ytmusic-shelf-renderer > .title, .title.ytmusic-immersive-header-renderer { background: linear-gradient(90deg, var(--stardust-accent), #ffffff, var(--stardust-accent)); background-size: 200% auto; -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; animation: stardustGrad 6s linear infinite; } @keyframes stardustGrad { to { background-position: 200% center; } }"
   },
@@ -161,7 +300,10 @@
     "name": "Card Lift",
     "author": "Stardust",
     "description": "Cards lift and glow with your accent on hover.",
-    "tags": ["hover", "cards"],
+    "tags": [
+      "hover",
+      "cards"
+    ],
     "preview": "linear-gradient(180deg, #2a2350, #14122a)",
     "css": "ytmusic-two-row-item-renderer, ytmusic-responsive-list-item-renderer { transition: transform .2s cubic-bezier(.2,.9,.3,1.3), box-shadow .2s ease; } ytmusic-two-row-item-renderer:hover { transform: translateY(-6px) scale(1.02); box-shadow: 0 14px 34px color-mix(in srgb, var(--stardust-accent) 45%, transparent); border-radius: 14px; }"
   },
@@ -171,18 +313,23 @@
     "name": "Pulse Play",
     "author": "Stardust",
     "description": "The play/pause button breathes with a soft accent halo.",
-    "tags": ["player", "glow"],
+    "tags": [
+      "player",
+      "glow"
+    ],
     "preview": "radial-gradient(circle at 50% 50%, #8b5cff, transparent 60%), #0c0b22",
     "css": "#play-pause-button { border-radius: 50% !important; animation: stardustPulse 2.4s ease-in-out infinite; } @keyframes stardustPulse { 0%,100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--stardust-accent) 55%, transparent); } 50% { box-shadow: 0 0 0 10px transparent; } }"
   },
-
   {
     "id": "feat-rounded-everything",
     "type": "feature",
     "name": "Rounded Everything",
     "author": "Stardust",
     "description": "Softly rounds all artwork and thumbnails.",
-    "tags": ["layout", "polish"],
+    "tags": [
+      "layout",
+      "polish"
+    ],
     "preview": "linear-gradient(135deg, #241a44, #0e0b1e)",
     "css": "ytmusic-thumbnail-renderer, ytmusic-thumbnail-renderer img, img.ytmusic-thumbnail-renderer, yt-img-shadow img { border-radius: 16px !important; overflow: hidden; }"
   },
@@ -192,7 +339,10 @@
     "name": "Compact Density",
     "author": "Stardust",
     "description": "Tightens list/row spacing to fit more on screen.",
-    "tags": ["layout", "density"],
+    "tags": [
+      "layout",
+      "density"
+    ],
     "preview": "linear-gradient(180deg, #1c2238, #0a0e1a)",
     "css": "ytmusic-responsive-list-item-renderer { padding-top: 2px !important; padding-bottom: 2px !important; } ytmusic-shelf-renderer #contents.ytmusic-shelf-renderer { gap: 2px !important; } ytmusic-carousel { --ytmusic-carousel-items-per-row: 7; }"
   },
@@ -202,7 +352,9 @@
     "name": "Hide Upgrade",
     "author": "Stardust",
     "description": "Removes the Premium 'Upgrade' entries from the UI.",
-    "tags": ["cleanup"],
+    "tags": [
+      "cleanup"
+    ],
     "preview": "linear-gradient(135deg, #2a1430, #0e0a16)",
     "css": "ytmusic-guide-entry-renderer a[title=\"Upgrade\"], ytmusic-pivot-bar-item-renderer[tab-id=\"FEmusic_offline\"], a[href*=\"musicpremium\"], ytmusic-guide-entry-renderer:has(yt-formatted-string[title=\"Upgrade\"]) { display: none !important; }"
   },
@@ -212,18 +364,23 @@
     "name": "Focus Dim",
     "author": "Stardust",
     "description": "Dims other cards in a row when you hover one.",
-    "tags": ["hover", "focus"],
+    "tags": [
+      "hover",
+      "focus"
+    ],
     "preview": "linear-gradient(180deg, #201a3a, #0c0a18)",
     "css": "ytmusic-carousel:hover ytmusic-two-row-item-renderer:not(:hover) { opacity: .45; transition: opacity .25s ease; }"
   },
-
   {
     "id": "audio-bass-boost",
     "type": "audio",
     "name": "Bass Boost",
     "author": "Stardust",
     "description": "Punchy low-end lift via a low-shelf EQ on the live audio.",
-    "tags": ["eq", "bass"],
+    "tags": [
+      "eq",
+      "bass"
+    ],
     "preview": "linear-gradient(135deg, #3a1466, #0a0720)"
   },
   {
@@ -232,7 +389,10 @@
     "name": "Treble Boost",
     "author": "Stardust",
     "description": "Crisp, airy highs via a high-shelf EQ.",
-    "tags": ["eq", "treble"],
+    "tags": [
+      "eq",
+      "treble"
+    ],
     "preview": "linear-gradient(135deg, #123a4a, #04101a)"
   },
   {
@@ -241,7 +401,10 @@
     "name": "Volume Boost",
     "author": "Stardust",
     "description": "Extra loudness beyond 100% with make-up gain.",
-    "tags": ["gain", "loud"],
+    "tags": [
+      "gain",
+      "loud"
+    ],
     "preview": "linear-gradient(135deg, #4a2a10, #160a04)"
   },
   {
@@ -250,7 +413,10 @@
     "name": "8D Audio",
     "author": "Stardust",
     "description": "The sound pans slowly around your head. Best on headphones.",
-    "tags": ["spatial", "fun"],
+    "tags": [
+      "spatial",
+      "fun"
+    ],
     "preview": "radial-gradient(circle at 28% 50%, #8b5cff, transparent 55%), radial-gradient(circle at 72% 50%, #2be0ff, transparent 55%), #0a0720"
   },
   {
@@ -259,7 +425,10 @@
     "name": "Nightcore",
     "author": "Stardust",
     "description": "Speeds playback up (~1.2x) for a brighter, faster feel.",
-    "tags": ["speed", "fun"],
+    "tags": [
+      "speed",
+      "fun"
+    ],
     "preview": "linear-gradient(135deg, #ff2bd6, #3a1466)"
   },
   {
@@ -268,17 +437,23 @@
     "name": "Slowed + Reverb",
     "author": "Stardust",
     "description": "Slows playback (~0.85x) with a dreamy reverb tail.",
-    "tags": ["speed", "reverb", "chill"],
+    "tags": [
+      "speed",
+      "reverb",
+      "chill"
+    ],
     "preview": "linear-gradient(135deg, #123a4a, #0a0720)"
   },
-
   {
     "id": "feat-lyrics",
     "type": "feature",
     "name": "Synced Lyrics",
     "author": "Stardust",
     "description": "Time-synced, auto-scrolling lyrics fetched from LRCLIB.",
-    "tags": ["lyrics", "smart"],
+    "tags": [
+      "lyrics",
+      "smart"
+    ],
     "preview": "linear-gradient(180deg, #241a44, #0e0b1e)"
   },
   {
@@ -287,7 +462,10 @@
     "name": "Sleep Timer",
     "author": "Stardust",
     "description": "Auto-pause after 15/30/60 min — a floating countdown pill.",
-    "tags": ["smart", "sleep"],
+    "tags": [
+      "smart",
+      "sleep"
+    ],
     "preview": "linear-gradient(135deg, #1c2238, #0a0e1a)"
   },
   {
@@ -296,7 +474,10 @@
     "name": "Scroll to Top",
     "author": "Stardust",
     "description": "A floating button to jump back to the top of any page.",
-    "tags": ["smart", "nav"],
+    "tags": [
+      "smart",
+      "nav"
+    ],
     "preview": "linear-gradient(135deg, #20243a, #0c0e1a)"
   },
   {
@@ -305,7 +486,10 @@
     "name": "Ambient Glow",
     "author": "Stardust",
     "description": "Tints the backdrop with the current album-art colour.",
-    "tags": ["smart", "color"],
+    "tags": [
+      "smart",
+      "color"
+    ],
     "preview": "radial-gradient(circle at 50% 0%, #c061ff, transparent 60%), #07040f"
   },
   {
@@ -314,7 +498,11 @@
     "name": "Quick Actions Bar",
     "author": "Stardust",
     "description": "A floating bar: like, dislike, shuffle, copy song link, save to playlist.",
-    "tags": ["smart", "playlist", "controls"],
+    "tags": [
+      "smart",
+      "playlist",
+      "controls"
+    ],
     "preview": "linear-gradient(135deg, #2a1f4a, #0c0a1a)"
   },
   {
@@ -323,7 +511,11 @@
     "name": "Auto-DJ",
     "author": "Stardust",
     "description": "Keeps the music going — enables autoplay/radio as the queue runs out.",
-    "tags": ["smart", "playlist", "queue"],
+    "tags": [
+      "smart",
+      "playlist",
+      "queue"
+    ],
     "preview": "linear-gradient(135deg, #1f2f4a, #0a0e1a)"
   },
   {
@@ -332,7 +524,11 @@
     "name": "Reactive Theming",
     "author": "Stardust",
     "description": "Tints the accent, visualizer and black hole to match each song's album art.",
-    "tags": ["smart", "color", "reactive"],
+    "tags": [
+      "smart",
+      "color",
+      "reactive"
+    ],
     "preview": "radial-gradient(circle at 30% 20%, #ff2bd6, transparent 55%), radial-gradient(circle at 80% 80%, #2be0ff, transparent 55%), #0a0a18"
   },
   {
@@ -341,7 +537,10 @@
     "name": "Crossfade",
     "author": "Stardust",
     "description": "Smoothly fades tracks out and in as they change, instead of hard cuts.",
-    "tags": ["smart", "audio"],
+    "tags": [
+      "smart",
+      "audio"
+    ],
     "preview": "linear-gradient(90deg, #1a1030, #3a1f7a, #1a1030)"
   },
   {
@@ -350,7 +549,11 @@
     "name": "Smart Playlist Tools",
     "author": "Stardust",
     "description": "Floating shortcuts: start radio, go to artist/album, play random, save queue.",
-    "tags": ["smart", "playlist", "queue"],
+    "tags": [
+      "smart",
+      "playlist",
+      "queue"
+    ],
     "preview": "linear-gradient(135deg, #2a1f4a, #0c0a1a)"
   }
 ]
