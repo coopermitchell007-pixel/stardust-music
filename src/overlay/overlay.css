@@ -663,3 +663,61 @@ input[type="color"]#stardust-accent {
   -webkit-background-clip: text; background-clip: text;
   -webkit-text-fill-color: transparent; color: transparent;
 }
+
+/* ---- Quick actions floating bar ---- */
+#stardust-quickbar {
+  position: fixed; right: 18px; bottom: 150px; z-index: 2147483640;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.stardust-qa {
+  width: 40px; height: 40px; border-radius: 50%; cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--stardust-accent) 40%, transparent);
+  background: color-mix(in srgb, var(--stardust-accent) 14%, rgba(10,10,20,0.72));
+  backdrop-filter: blur(10px); font-size: 17px; line-height: 1; color: #fff;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.stardust-qa:hover { transform: scale(1.1); box-shadow: 0 0 18px color-mix(in srgb, var(--stardust-accent) 55%, transparent); }
+
+/* ---- Toast ---- */
+#stardust-toast {
+  position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%) translateY(12px);
+  z-index: 2147483647; padding: 10px 18px; border-radius: 999px; font-size: 13px; font-weight: 600;
+  color: #fff; background: color-mix(in srgb, var(--stardust-accent) 24%, rgba(12,12,22,0.92));
+  border: 1px solid color-mix(in srgb, var(--stardust-accent) 45%, transparent);
+  backdrop-filter: blur(12px); opacity: 0; pointer-events: none; transition: opacity 0.2s ease, transform 0.2s ease;
+}
+#stardust-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ---- Generic modal (Stats) ---- */
+.stardust-modal {
+  position: fixed; inset: 0; z-index: 2147483647; display: flex; align-items: center; justify-content: center;
+  background: rgba(4,4,12,0.55); backdrop-filter: blur(6px);
+  opacity: 0; pointer-events: none; transition: opacity 0.2s ease;
+}
+.stardust-modal.open { opacity: 1; pointer-events: auto; }
+.stardust-modal-card {
+  width: min(760px, 92vw); max-height: 84vh; overflow: auto;
+  background: linear-gradient(180deg, rgba(20,18,40,0.98), rgba(10,9,22,0.98));
+  border: 1px solid color-mix(in srgb, var(--stardust-accent) 30%, rgba(255,255,255,0.08));
+  border-radius: 18px; padding: 20px; box-shadow: 0 30px 80px rgba(0,0,0,0.6);
+}
+.stardust-hint { font-size: 12px; color: #8b86b3; margin-top: 6px; line-height: 1.5; }
+
+.stardust-stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 14px 0 22px; }
+.stardust-stat { background: rgba(255,255,255,0.04); border-radius: 12px; padding: 14px; text-align: center; }
+.stardust-stat-n { font-size: 22px; font-weight: 800; color: #fff; }
+.stardust-stat-l { font-size: 11px; color: #b7b2dd; letter-spacing: 0.4px; margin-top: 2px; }
+.stardust-stat-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+.stardust-stat-col .stardust-label { margin-bottom: 8px; }
+.stardust-stat-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+.stardust-stat-rank { width: 20px; color: color-mix(in srgb, var(--stardust-accent) 80%, #fff); font-weight: 700; font-size: 13px; }
+.stardust-stat-main { flex: 1; color: #eee; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stardust-stat-sub { color: #8b86b3; font-size: 11px; white-space: nowrap; }
+
+/* ---- Discord easy setup ---- */
+.stardust-discord-help { font-size: 12px; color: #b7b2dd; line-height: 1.5; margin-bottom: 8px; }
+.stardust-discord-id .stardust-mini-btn { margin-bottom: 8px; }
+.stardust-discord-id input {
+  width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 8px;
+  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12); color: #fff; font-size: 12px;
+}

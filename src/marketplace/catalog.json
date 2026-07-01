@@ -307,5 +307,23 @@
     "description": "Tints the backdrop with the current album-art colour.",
     "tags": ["smart", "color"],
     "preview": "radial-gradient(circle at 50% 0%, #c061ff, transparent 60%), #07040f"
+  },
+  {
+    "id": "feat-quick-actions",
+    "type": "feature",
+    "name": "Quick Actions Bar",
+    "author": "Stardust",
+    "description": "A floating bar: like, dislike, shuffle, copy song link, save to playlist.",
+    "tags": ["smart", "playlist", "controls"],
+    "preview": "linear-gradient(135deg, #2a1f4a, #0c0a1a)"
+  },
+  {
+    "id": "feat-auto-dj",
+    "type": "feature",
+    "name": "Auto-DJ",
+    "author": "Stardust",
+    "description": "Keeps the music going — enables autoplay/radio as the queue runs out.",
+    "tags": ["smart", "playlist", "queue"],
+    "preview": "linear-gradient(135deg, #1f2f4a, #0a0e1a)"
   }
 ]

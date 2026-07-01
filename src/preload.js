@@ -662,7 +662,9 @@ const BEHAVIORS = {
   'feat-sleep-timer':   { on: () => SleepTimer.show(),  off: () => SleepTimer.hide() },
   'feat-scroll-top':    { on: () => ScrollTop.show(),   off: () => ScrollTop.hide() },
   'feat-ambient-glow':  { on: () => AmbientGlow.enable(), off: () => AmbientGlow.disable() },
-  'feat-lyrics':        { on: () => Lyrics.enable(),    off: () => Lyrics.disable() }
+  'feat-lyrics':        { on: () => Lyrics.enable(),    off: () => Lyrics.disable() },
+  'feat-quick-actions': { on: () => QuickActions.show(), off: () => QuickActions.hide() },
+  'feat-auto-dj':       { on: () => AutoDJ.enable(),    off: () => AutoDJ.disable() }
 };
 
 // --- Sleep timer: floating pill with 15/30/60-min presets ------------------
@@ -740,6 +742,54 @@ const AmbientGlow = (() => {
     img.src = np.art;
   }
   return { enable, disable, onTrack };
+})();
+
+// --- Quick actions: a floating bar of one-tap controls ---------------------
+const QuickActions = (() => {
+  let el = null;
+  const BTNS = [
+    ['👍', 'like', 'Like'],
+    ['👎', 'dislike', 'Dislike'],
+    ['🔀', 'shuffle', 'Shuffle'],
+    ['🔗', 'copy-link', 'Copy song link'],
+    ['➕', 'add-playlist', 'Save to playlist']
+  ];
+  function show() {
+    if (el) return;
+    el = h('div', { id: 'stardust-quickbar' }, BTNS.map(([icon, act, title]) => {
+      const b = h('button', { class: 'stardust-qa', title, text: icon });
+      b.addEventListener('click', () => doCommand(act));
+      return b;
+    }));
+    document.body.appendChild(el);
+  }
+  function hide() { if (el) { el.remove(); el = null; } }
+  return { show, hide };
+})();
+
+// --- Auto-DJ: keep the music going by enabling autoplay/radio near the end --
+const AutoDJ = (() => {
+  let timer = null;
+  function enable() {
+    if (timer) return;
+    tick();
+    timer = setInterval(tick, 5000);
+  }
+  function disable() { if (timer) { clearInterval(timer); timer = null; } }
+  function tick() {
+    const v = q('video'); if (!v || !isFinite(v.duration) || v.duration <= 0) return;
+    // Within the last 25s of the final queued track, kick off a radio so the
+    // session never dead-ends. Best-effort against YTM's DOM.
+    const items = document.querySelectorAll('ytmusic-player-queue-item');
+    const sel = document.querySelector('ytmusic-player-queue-item[selected]');
+    const isLast = items.length && sel === items[items.length - 1];
+    if (isLast && (v.duration - v.currentTime) < 25) {
+      // Turn on the built-in Autoplay toggle if it's exposed.
+      const toggle = document.querySelector('ytmusic-player-bar tp-yt-paper-toggle-button, #autoplay tp-yt-paper-toggle-button');
+      if (toggle && toggle.getAttribute('aria-pressed') === 'false') { try { toggle.click(); } catch {} }
+    }
+  }
+  return { enable, disable };
 })();
 
 // --- Synced lyrics — integrated into YTM's own Lyrics tab ------------------
@@ -1022,6 +1072,31 @@ function pollNowPlaying() {
 }
 let lastTrack = '';
 
+// Click the first element inside the player bar whose aria-label/title matches.
+function clickByLabel(re) {
+  const bar = q('ytmusic-player-bar'); if (!bar) return false;
+  for (const el of bar.querySelectorAll('button, tp-yt-paper-icon-button, yt-button-shape')) {
+    const lbl = (el.getAttribute('aria-label') || el.getAttribute('title') || '').trim();
+    if (lbl && re.test(lbl)) { try { el.click(); return true; } catch {} }
+  }
+  return false;
+}
+// Best-effort: current watch URL for the playing track (for "copy link").
+function currentTrackUrl() {
+  const sel = document.querySelector('ytmusic-player-queue-item[selected] a[href*="watch?v="], ytmusic-player-queue-item[play-button-state="playing"] a[href*="watch?v="]');
+  const href = sel && sel.getAttribute('href');
+  const m = href && href.match(/[?&]v=([\w-]+)/);
+  if (m) return 'https://music.youtube.com/watch?v=' + m[1];
+  const u = location.href.match(/[?&]v=([\w-]+)/);
+  return u ? 'https://music.youtube.com/watch?v=' + u[1] : null;
+}
+function toast(msg) {
+  let t = document.getElementById('stardust-toast');
+  if (!t) { t = h('div', { id: 'stardust-toast' }); document.body.appendChild(t); }
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('show'), 1800);
+}
+
 function doCommand(action) {
   const click = (sel) => { const el = q(sel); if (el) { el.click(); return true; } return false; };
   switch (action) {
@@ -1035,6 +1110,25 @@ function doCommand(action) {
       break;
     case 'previous':
       click('ytmusic-player-bar .previous-button');
+      break;
+    case 'like':
+      toast(clickByLabel(/^(un)?like\b|thumbs up/i) ? '👍 Like' : 'Like unavailable');
+      break;
+    case 'dislike':
+      toast(clickByLabel(/dislike|thumbs down/i) ? '👎 Disliked' : 'Dislike unavailable');
+      break;
+    case 'shuffle':
+      toast(clickByLabel(/shuffle/i) ? '🔀 Shuffle toggled' : 'Shuffle unavailable');
+      break;
+    case 'copy-link': {
+      const url = currentTrackUrl();
+      if (url) { navigator.clipboard.writeText(url).then(() => toast('🔗 Link copied'), () => toast('Copy failed')); }
+      else toast('No link found');
+      break;
+    }
+    case 'add-playlist':
+      // Surface YTM's own menu so the user can pick a playlist (reliable path).
+      toast(clickByLabel(/more actions|menu/i) ? 'Choose a playlist ↑' : 'Menu unavailable');
       break;
   }
   setTimeout(pollNowPlaying, 250);
@@ -1110,7 +1204,9 @@ function buildUI() {
   document.body.appendChild(launcher);
 
   const discordIdWrap = h('div', { class: 'stardust-discord-id', id: 'stardust-discord-id-wrap' }, [
-    h('input', { type: 'text', id: 'stardust-discord-id', placeholder: 'Discord application Client ID' })
+    h('div', { class: 'stardust-discord-help', text: 'One-time setup: open the portal, create an app, paste its Application ID below.' }),
+    h('button', { class: 'stardust-mini-btn', dataset: { act: 'discord-portal' }, text: '↗ Open Discord Developer Portal' }),
+    h('input', { type: 'text', id: 'stardust-discord-id', placeholder: 'Paste Application ID (18-digit number)' })
   ]);
 
   const panel = h('div', { id: 'stardust-panel' }, [
@@ -1137,6 +1233,11 @@ function buildUI() {
       toggleRow('Visualizer', 'visualizerEnabled'),
       toggleRow('Glassmorphism', 'glassEnabled'),
       sliderRow('Glass blur', 'glassBlur', { min: '0', max: '40', step: '1' })
+    ]),
+    section([
+      label('Smart'),
+      h('button', { class: 'stardust-market-cta', dataset: { act: 'open-stats' }, text: '✦  Listening Stats' }),
+      h('div', { class: 'stardust-hint', text: 'Hotkeys: ⌘/Ctrl+Shift+↑ like · ↓ dislike · S shuffle · C copy link' })
     ]),
     section([
       toggleRow('Ad blocker', 'adBlock'),
@@ -1207,8 +1308,70 @@ function wirePanel(panel) {
         renderThemes(panel);
       }
       if (act === 'open-market') openMarket();
+      if (act === 'open-stats') openStats();
+      if (act === 'discord-portal') ipcRenderer.invoke('stardust:open-external', 'https://discord.com/developers/applications');
     });
   });
+}
+
+// ---------------------------------------------------------------------------
+// Listening Stats modal
+// ---------------------------------------------------------------------------
+let statsModal = null;
+async function openStats() {
+  const s = await ipcRenderer.invoke('stardust:stats');
+  if (!statsModal) {
+    statsModal = h('div', { id: 'stardust-stats', class: 'stardust-modal' }, [
+      h('div', { class: 'stardust-modal-card' }, [
+        h('div', { class: 'stardust-head' }, [
+          h('span', { class: 'stardust-logo', text: '✦ Listening Stats' }),
+          h('div', { class: 'stardust-row' }, [
+            h('button', { class: 'stardust-mini-btn', dataset: { sact: 'reset' }, text: 'Reset' }),
+            h('button', { class: 'stardust-x', dataset: { sact: 'close' }, text: '✕' })
+          ])
+        ]),
+        h('div', { id: 'stardust-stats-body' })
+      ])
+    ]);
+    document.body.appendChild(statsModal);
+    statsModal.addEventListener('click', async (e) => {
+      const a = e.target.closest('[data-sact]'); if (!a && e.target !== statsModal) return;
+      const act = a && a.dataset.sact;
+      if (!a || act === 'close') { statsModal.classList.remove('open'); return; }
+      if (act === 'reset') { await ipcRenderer.invoke('stardust:stats-reset'); openStats(); }
+    });
+  }
+  renderStats(s);
+  statsModal.classList.add('open');
+}
+function fmtDur(ms) {
+  const min = Math.round(ms / 60000);
+  if (min < 60) return min + ' min';
+  const h2 = Math.floor(min / 60), m = min % 60;
+  return h2 + 'h ' + m + 'm';
+}
+function renderStats(s) {
+  const body = statsModal.querySelector('#stardust-stats-body');
+  while (body.firstChild) body.removeChild(body.firstChild);
+  const stat = (n, l) => h('div', { class: 'stardust-stat' }, [h('div', { class: 'stardust-stat-n', text: n }), h('div', { class: 'stardust-stat-l', text: l })]);
+  body.appendChild(h('div', { class: 'stardust-stat-grid' }, [
+    stat(fmtDur(s.totalMs), 'Total listened'),
+    stat(fmtDur(s.todayMs), 'Today'),
+    stat(String(s.distinctSongs), 'Songs'),
+    stat(String(s.distinctArtists), 'Artists')
+  ]));
+  const list = (title, items, line) => {
+    const rows = items.length ? items.map((it, i) => h('div', { class: 'stardust-stat-row' }, [
+      h('span', { class: 'stardust-stat-rank', text: String(i + 1) }),
+      h('span', { class: 'stardust-stat-main', text: line(it) }),
+      h('span', { class: 'stardust-stat-sub', text: it.count ? it.count + ' plays' : fmtDur(it.ms || 0) })
+    ])) : [h('div', { class: 'stardust-hint', text: 'Nothing yet — play some music!' })];
+    return h('div', { class: 'stardust-stat-col' }, [h('div', { class: 'stardust-label', text: title }), ...rows]);
+  };
+  body.appendChild(h('div', { class: 'stardust-stat-cols' }, [
+    list('Top songs', s.topSongs, (t) => t.title + (t.artist ? ' — ' + t.artist : '')),
+    list('Top artists', s.topArtists, (a) => a.name)
+  ]));
 }
 
 async function onSetting(key, value) {

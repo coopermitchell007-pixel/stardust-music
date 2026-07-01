@@ -10,6 +10,7 @@ const marketplace = require('./marketplace');
 const adblock = require('./adblock');
 const lyrics = require('./lyrics');
 const updater = require('./updater');
+const stats = require('./stats');
 
 const YTM_URL = 'https://music.youtube.com/';
 const ICON_PNG = path.join(__dirname, '..', 'assets', 'icon.png');
@@ -196,7 +197,11 @@ function registerHotkeys() {
     MediaPreviousTrack: 'previous',
     'CommandOrControl+Shift+Space': 'playpause',
     'CommandOrControl+Shift+Right': 'next',
-    'CommandOrControl+Shift+Left': 'previous'
+    'CommandOrControl+Shift+Left': 'previous',
+    'CommandOrControl+Shift+Up': 'like',
+    'CommandOrControl+Shift+Down': 'dislike',
+    'CommandOrControl+Shift+S': 'shuffle',
+    'CommandOrControl+Shift+C': 'copy-link'
   };
   for (const [accel, action] of Object.entries(map)) {
     try {
@@ -270,16 +275,23 @@ function registerIpc() {
     shell.openPath(themes.USER_DIR);
     return themes.USER_DIR;
   });
+  ipcMain.handle('stardust:open-external', (_e, url) => {
+    if (typeof url === 'string' && /^https?:\/\//.test(url)) shell.openExternal(url);
+    return true;
+  });
 
   ipcMain.handle('stardust:reload-themes', () => lightThemeList());
 
   ipcMain.handle('stardust:get-nowplaying', () => lastNowPlaying);
 
   ipcMain.handle('stardust:lyrics', (_e, meta) => lyrics.fetchLyrics(meta));
+  ipcMain.handle('stardust:stats', () => stats.get());
+  ipcMain.handle('stardust:stats-reset', () => { stats.reset(); return true; });
 
   // From the YTM page: current track + playback state.
   ipcMain.on('stardust:nowplaying', (_e, np) => {
     lastNowPlaying = np;
+    try { stats.record(np); } catch {}
     if (config.get('discordRichPresence')) discord.setActivity(np);
     if (miniWindow && !miniWindow.isDestroyed()) {
       miniWindow.webContents.send('stardust:nowplaying', np);
