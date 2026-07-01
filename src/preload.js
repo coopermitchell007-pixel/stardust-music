@@ -1332,36 +1332,37 @@ const Lyrics = (() => {
     if (transcribing) return;
     transcribing = true; if (btn) btn.disabled = true;
     const forKey = key;
+    // Snapshot the song NOW — np gets reassigned to the next track if autoplay
+    // advances, and we must save the transcript under THIS song.
+    const trackTitle = np && np.title, trackArtist = np && np.artist, trackDur = np && np.duration;
     const setStatus = (s) => { const el = body && body.querySelector('.stardust-lyric-status'); if (el) el.textContent = s; };
     const v = q('video');
     if (!Visualizer.captureStart()) { setStatus('Audio capture unavailable'); transcribing = false; if (btn) btn.disabled = false; return; }
     try { if (v) { v.currentTime = 0; if (v.paused) doCommand('playpause'); } } catch {}
     const fmtT = (s) => { s = Math.max(0, s | 0); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
-    const total = (v && isFinite(v.duration) && v.duration > 0) ? Math.min(v.duration + 1, 360) : 240;
+    // Stop ~1.2s before the end and PAUSE, so autoplay never advances to the next
+    // song (which would contaminate the recording and switch the view away).
+    const endAt = (v && isFinite(v.duration) && v.duration > 2) ? v.duration - 1.2 : 240;
     await new Promise((res) => {
       const iv = setInterval(() => {
-        if (!active || key !== forKey) { clearInterval(iv); return res(); }
+        if (!active || key !== forKey || (v && v.ended)) { clearInterval(iv); return res(); }
         const cur = v ? v.currentTime : 0;
-        setStatus('🎙 Listening… ' + fmtT(cur) + ' / ' + fmtT(total));
-        if (cur >= total - 0.5 || (v && v.ended)) { clearInterval(iv); res(); }
-      }, 500);
+        setStatus('🎙 Listening… ' + fmtT(cur) + ' / ' + fmtT(endAt + 1.2));
+        if (cur >= endAt) { clearInterval(iv); res(); }
+      }, 400);
     });
+    try { if (v && !v.paused) doCommand('playpause'); } catch {} // pause → block autoplay
     setStatus('Transcribing… (about 10–30s)');
     const blob = await Visualizer.captureStop();
     transcribing = false;
-    // NOTE: don't bail on track change here — the recording runs the length of
-    // the song, so it usually finishes AFTER the song ended & auto-advanced. We
-    // still want to save/apply the result for the song we transcribed.
-    const trackTitle = np && np.title, trackArtist = np && np.artist;
     if (!blob || blob.size < 12000) { setStatus('Not enough audio captured — replay from the start and try again'); reEnableBtn(); return; }
     let res = null;
     try {
       const buf = new Uint8Array(await blob.arrayBuffer());
-      res = await ipcRenderer.invoke('stardust:transcribe', { title: trackTitle, artist: trackArtist, duration: np.duration, audio: buf });
+      res = await ipcRenderer.invoke('stardust:transcribe', { title: trackTitle, artist: trackArtist, duration: trackDur, audio: buf });
     } catch {}
     if (res && (res.syncedLyrics || res.plainLyrics)) {
-      // Cached in main. If we're STILL on that song, show it now; otherwise it
-      // will load from cache the next time the song plays.
+      // Show now if we're still on that song (we paused, so usually yes).
       const nowSame = active && key === forKey;
       if (nowSame) {
         if (res.syncedLyrics) applySynced(res.syncedLyrics);
