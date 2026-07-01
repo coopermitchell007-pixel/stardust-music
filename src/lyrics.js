@@ -11,8 +11,8 @@ function getJson(url, extraHeaders) {
     let req;
     try {
       req = https.get(url, {
-        headers: Object.assign({ 'User-Agent': 'Stardust v0.8 (https://github.com/coopermitchell007-pixel/stardust-music)' }, extraHeaders || {}),
-        timeout: 3500
+        headers: Object.assign({ 'User-Agent': 'Stardust v0.9 (https://github.com/coopermitchell007-pixel/stardust-music)' }, extraHeaders || {}),
+        timeout: 8000
       }, (res) => {
         if (res.statusCode !== 200) { res.resume(); return finish(null); }
         let d = '';
@@ -23,7 +23,7 @@ function getJson(url, extraHeaders) {
       req.on('timeout', () => { try { req.destroy(); } catch {} finish(null); });
     } catch { finish(null); }
     // Hard cap — guards against a connect/DNS hang that never fires 'timeout'.
-    setTimeout(() => { try { req && req.destroy(); } catch {} finish(null); }, 4500);
+    setTimeout(() => { try { req && req.destroy(); } catch {} finish(null); }, 9000);
   });
 }
 
@@ -117,29 +117,22 @@ async function fetchLyrics({ artist, title, album, duration } = {}) {
     }
   };
 
-  // Fire the exact lookup AND the search TOGETHER (parallel) so a slow/unreachable
-  // endpoint can't make us "stuck searching" — total latency ~one round-trip.
-  const [getRes, searchArr] = await Promise.all([
+  // Fire EVERYTHING in one parallel batch: lrclib exact-get, lrclib search
+  // (with artist and title-only), and NetEase. Parallel means total latency is
+  // ~one slow request, not the sum — so a slow lrclib can't stall us, and if
+  // lrclib is unreachable, NetEase (fired at the same time) still answers.
+  const [getRes, sArtist, sTitle, ne] = await Promise.all([
     getJson('https://lrclib.net/api/get?' + qs({ artist_name: artist, track_name: ct, duration })),
-    getJson('https://lrclib.net/api/search?' + qs({ track_name: bare, artist_name: artist1 }))
-  ]);
-  if (getRes && (getRes.syncedLyrics || getRes.plainLyrics)) {
-    return { syncedLyrics: getRes.syncedLyrics || '', plainLyrics: getRes.plainLyrics || '' };
-  }
-  rank(searchArr);
-
-  let hit = best && best.score >= MIN_SCORE && best.x;
-  if (hit && (hit.syncedLyrics || hit.plainLyrics)) {
-    return { syncedLyrics: hit.syncedLyrics || '', plainLyrics: hit.plainLyrics || '' };
-  }
-
-  // Still nothing — widen (title-only lrclib search) and NetEase, in parallel.
-  const [arr2, ne] = await Promise.all([
+    getJson('https://lrclib.net/api/search?' + qs({ track_name: bare, artist_name: artist1 })),
     getJson('https://lrclib.net/api/search?' + qs({ track_name: bare })),
     fetchNetease({ title: bare, artist: artist1, want }).catch(() => null)
   ]);
-  rank(arr2);
-  hit = best && best.score >= MIN_SCORE && best.x;
+
+  if (getRes && (getRes.syncedLyrics || getRes.plainLyrics)) {
+    return { syncedLyrics: getRes.syncedLyrics || '', plainLyrics: getRes.plainLyrics || '' };
+  }
+  rank(sArtist); rank(sTitle);
+  const hit = best && best.score >= MIN_SCORE && best.x;
   if (hit && (hit.syncedLyrics || hit.plainLyrics)) {
     return { syncedLyrics: hit.syncedLyrics || '', plainLyrics: hit.plainLyrics || '' };
   }
