@@ -395,6 +395,7 @@ function buildAppMenu() {
 }
 
 app.whenReady().then(async () => {
+  try { marketplace.syncBundled(); } catch {}
   buildAppMenu();
   if (process.platform === 'darwin' && app.dock) {
     try { app.dock.setIcon(nativeImage.createFromPath(ICON_PNG)); } catch {}

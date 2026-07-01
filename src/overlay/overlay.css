@@ -729,3 +729,13 @@ input[type="color"]#stardust-accent {
 }
 #stardust-import-ta:focus { outline: none; border-color: var(--stardust-accent); }
 #stardust-import .stardust-market-btn { margin-top: 8px; }
+
+/* ---- Kill Premium / upgrade upsells ---- */
+ytmusic-mealbar-promo-renderer,
+ytmusic-statement-banner-renderer,
+ytmusic-you-there-renderer,
+ytmusic-premium-promo-renderer,
+ytmusic-popup-container:has(ytmusic-mealbar-promo-renderer),
+tp-yt-paper-dialog:has(ytmusic-mealbar-promo-renderer) {
+  display: none !important;
+}

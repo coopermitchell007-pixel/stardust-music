@@ -129,4 +129,20 @@ function remove(type, id) {
   }
 }
 
-module.exports = { catalog, install, remove, installedIds, installedExtras, ROOT };
+// Refresh installed BUNDLED items (author "Stardust") from the current bundled
+// catalog on launch, so shipped bug-fixes to a theme/animation/feature reach
+// users who already installed it — without touching their imported creations.
+function syncBundled() {
+  let bundled = [];
+  try { bundled = readBundled(); } catch { return; }
+  const byId = new Map(bundled.map((i) => [i.id, i]));
+  const inst = installedIds();
+  for (const type of Object.keys(inst)) {
+    for (const id of inst[type]) {
+      const b = byId.get(id);
+      if (b && b.author === 'Stardust') { try { install(b); } catch {} }
+    }
+  }
+}
+
+module.exports = { catalog, install, remove, installedIds, installedExtras, syncBundled, ROOT };

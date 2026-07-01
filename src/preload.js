@@ -585,14 +585,29 @@ const Visualizer = (() => {
     }
   };
 
-  // Downsampled bar levels (0..1) for the mini-player visualizer.
+  // Downsampled bar levels (0..1) for the mini-player visualizer. Sample the
+  // analyser LIVE here (not the smoothed `levels`) so the mini keeps animating
+  // even when the main window's rAF is throttled because it's in the background.
   function getBars(n) {
     const out = new Array(n).fill(0);
-    const step = BARS / n;
+    ensureAudio();
+    if (analyser && freq && useReal) {
+      analyser.getByteFrequencyData(freq);
+      const bins = analyser.frequencyBinCount;
+      let sum = 0;
+      for (let i = 0; i < n; i++) {
+        const f0 = Math.pow(i / n, 2.0), f1 = Math.pow((i + 1) / n, 2.0);
+        let lo = Math.floor(f0 * bins), hi = Math.max(lo + 1, Math.floor(f1 * bins)), max = 0;
+        for (let j = lo; j < hi && j < bins; j++) if (freq[j] > max) max = freq[j];
+        out[i] = Math.min(1, Math.pow(max / 255, 1.4) * 1.25);
+        sum += out[i];
+      }
+      if (sum > 0.02) return out;
+    }
+    // Fallback: a simple simulation keyed to play state (tainted/silent audio).
     for (let i = 0; i < n; i++) {
-      let m = 0; const lo = Math.floor(i * step), hi = Math.floor((i + 1) * step);
-      for (let j = lo; j < hi && j < BARS; j++) if (levels[j] > m) m = levels[j];
-      out[i] = m;
+      const center = 1 - Math.abs(i - n / 2) / (n / 2);
+      out[i] = playing ? Math.max(0.05, Math.min(1, (0.3 + 0.7 * center) * (0.6 + Math.random() * 0.5))) : 0;
     }
     return out;
   }
@@ -882,8 +897,11 @@ const Crossfade = (() => {
   function tick() {
     const v = q('video'); if (!v) return;
     const np = readNowPlaying();
-    const k = np ? np.title + '|' + np.artist : '';
-    if (k && k !== key) {              // new track → fade in from silence
+    // Ignore ads/interstitials entirely — an ad blip must NOT read as a track
+    // change (that's what made crossfade misfire). Keep the audible level as-is.
+    if (!np || np.isAd || !np.isTrack) return;
+    const k = np.title + '|' + np.artist;
+    if (k !== key) {                   // genuine new track → fade in from silence
       key = k; faded = false;
       Visualizer.fx.fade(0.0001, 0.01); Visualizer.fx.fade(1, IN);
       return;
@@ -1327,28 +1345,64 @@ ipcRenderer.on('stardust:mini-spectrum', (_e, on) => {
 // In-page ad skipper — complements the network-level blocker. Clicks skip
 // buttons, fast-forwards any ad that still plays, and dismisses upsell popups.
 // ---------------------------------------------------------------------------
+const AD_SELECTOR = '.ad-showing, .ytp-ad-player-overlay, .ytp-ad-module :not(:empty), ytmusic-player[player-ui-state_="AD"], .ytp-ad-text, .ytp-ad-preview-container';
+let weMutedForAd = false;
+
+// Called both on a fast poll and instantly by a MutationObserver, so an ad is
+// fast-forwarded within a frame instead of playing an audible blip.
 function skipAds() {
   if (settings && settings.adBlock === false) return;
+  const v = document.querySelector('video');
+
   // Click any visible "Skip ad" button.
   const skip = document.querySelector(
     '.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button, tp-yt-paper-button.skip'
   );
   if (skip) { try { skip.click(); } catch {} }
 
-  // If an ad is actually playing, jump to the end and mute it.
-  const adShowing = document.querySelector(
-    '.ad-showing, .ytp-ad-player-overlay, .ytp-ad-module :not(:empty), ytmusic-player[player-ui-state_="AD"]'
-  );
-  const v = document.querySelector('video');
+  const adShowing = document.querySelector(AD_SELECTOR);
   if (v && adShowing) {
-    try { if (isFinite(v.duration) && v.duration > 0) v.currentTime = v.duration; v.muted = true; } catch {}
+    // Mute instantly, then blast to the end so nothing is heard.
+    try {
+      v.muted = true; weMutedForAd = true;
+      if (isFinite(v.duration) && v.duration > 0) v.currentTime = v.duration;
+    } catch {}
+  } else if (v && weMutedForAd && !adShowing) {
+    // Ad's gone — restore audio we muted (never leave the music silenced).
+    try { v.muted = false; } catch {}
+    weMutedForAd = false;
   }
 
-  // Dismiss Premium / "get YouTube Music Premium" upsell dialogs.
-  const dismiss = document.querySelector(
-    'ytmusic-mealbar-promo-renderer #dismiss-button button, tp-yt-paper-dialog #dismiss-button, .ytmusic-popup-container #dismiss-button button'
+  dismissUpsells();
+}
+
+// Dismiss + hide every Premium / upgrade upsell we can find.
+function dismissUpsells() {
+  const dismisses = document.querySelectorAll(
+    'ytmusic-mealbar-promo-renderer #dismiss-button button, ' +
+    'ytmusic-mealbar-promo-renderer tp-yt-paper-button#dismiss-button, ' +
+    'tp-yt-paper-dialog #dismiss-button, tp-yt-paper-dialog #cancel-button, ' +
+    '.ytmusic-popup-container #dismiss-button button, ' +
+    'ytmusic-you-there-renderer #dismiss-button button, ' +
+    'ytmusic-popup-container yt-button-renderer[dialog-dismiss] button'
   );
-  if (dismiss) { try { dismiss.click(); } catch {} }
+  dismisses.forEach((d) => { try { d.click(); } catch {} });
+  // Remove the persistent promo banners/mealbars outright.
+  document.querySelectorAll(
+    'ytmusic-mealbar-promo-renderer, ytmusic-statement-banner-renderer, ' +
+    'ytmusic-you-there-renderer, ytmusic-premium-promo-renderer'
+  ).forEach((el) => { try { el.remove(); } catch {} });
+}
+
+// Watch the player for the AD state flipping on, so we react immediately.
+function watchAds() {
+  try {
+    const obs = new MutationObserver(() => skipAds());
+    obs.observe(document.documentElement, {
+      subtree: true, attributes: true,
+      attributeFilter: ['player-ui-state_', 'class']
+    });
+  } catch {}
 }
 
 // ---------------------------------------------------------------------------
@@ -1869,7 +1923,9 @@ async function boot() {
   buildUI();
 
   setInterval(pollNowPlaying, 1000);
-  setInterval(skipAds, 600);
+  setInterval(skipAds, 200);
+  watchAds();
+  skipAds();
 }
 
 function safeBoot() {
