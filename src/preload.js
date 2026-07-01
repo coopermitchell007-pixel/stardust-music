@@ -283,6 +283,35 @@ const BlackHole = (() => {
 // image composites as a single layer (no tile seams), and we bake in ±1 dither
 // to kill 8-bit banding without any visible grain.
 // ---------------------------------------------------------------------------
+// Derive a canvas bg config ({base, blooms}) from a CSS `background` string so
+// that themes which only ship a CSS gradient (old marketplace installs, future
+// community themes) still render on the seam-free canvas instead of falling
+// back to a tile-rasterized CSS gradient.
+function cssToBg(background) {
+  if (!background || typeof background !== 'string') return null;
+  const blooms = [];
+  // Each radial-gradient(...): capture "at X% Y%" and the first color hex.
+  const rg = /radial-gradient\(([^)]*(?:\([^)]*\)[^)]*)*)\)/gi;
+  let m;
+  while ((m = rg.exec(background))) {
+    const body = m[1];
+    const pos = /at\s+(-?\d+(?:\.\d+)?)%\s+(-?\d+(?:\.\d+)?)%/i.exec(body);
+    const size = /(-?\d+(?:\.\d+)?)px/.exec(body);
+    const color = /#([0-9a-f]{3,8})\b/i.exec(body);
+    if (!color) continue;
+    const x = pos ? parseFloat(pos[1]) / 100 : 0.5;
+    const y = pos ? parseFloat(pos[2]) / 100 : 0.1;
+    // Map the gradient's px radius onto a fraction of the larger viewport edge
+    // (~1440px reference); clamp so it always covers a meaningful area.
+    const r = size ? Math.min(1.1, Math.max(0.5, parseFloat(size[1]) / 1440)) : 0.85;
+    blooms.push({ x, y, r, color: '#' + color[1], alpha: 0.55 });
+  }
+  // Base = the trailing solid color after the last gradient (", #rrggbb").
+  const solids = background.match(/#([0-9a-f]{6})\b(?![^(]*\))/gi) || [];
+  const base = solids.length ? solids[solids.length - 1] : '#05060f';
+  return { base, blooms };
+}
+
 const BackgroundFX = (() => {
   let canvas, ctx, cfg = null;
   function ensure() {
@@ -554,7 +583,7 @@ async function applyTheme(id) {
   activeTheme = theme;
   applyVars();
   sheet('stardust-theme').textContent = theme.css || '';
-  BackgroundFX.configure(theme.bg);
+  BackgroundFX.configure(theme.bg || cssToBg(theme.background));
   Starfield.configure(theme.starfield);
   Visualizer.configure(theme.visualizer);
   BlackHole.configure(theme.blackhole);
