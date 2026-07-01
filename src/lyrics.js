@@ -49,6 +49,7 @@ const isCJK = (s) => {
 };
 
 function scoreCandidate(x, want) {
+  if (!x || (!x.syncedLyrics && !x.plainLyrics)) return null; // no usable content
   const nt = norm(x.trackName), na = norm(x.artistName);
   if (!nt) return null; // can't verify an empty/unknown title
   const titleExact = nt === want.title;
@@ -57,9 +58,12 @@ function scoreCandidate(x, want) {
   if (!titleExact && !titleOverlap) return null;
 
   // Artist must actually correspond when we know it (empty candidate = reject).
+  const artistExact = !!want.artist && na === want.artist;
+  const artistOverlap = !!want.artist && !!na &&
+    (na.includes(want.artist) || want.artist.includes(na));
   if (want.artist) {
     if (!na) return null;
-    if (na !== want.artist && !na.includes(want.artist) && !want.artist.includes(na)) return null;
+    if (!artistExact && !artistOverlap) return null;
   }
 
   // Script guard: reject a CJK cover for a non-CJK track (and vice-versa) —
@@ -71,11 +75,15 @@ function scoreCandidate(x, want) {
 
   let s = 0;
   if (titleExact) s += 4;
-  if (na && (na === want.artist)) s += 3;
-  if (x.syncedLyrics) s += 5;
+  if (artistExact) s += 4; else if (artistOverlap) s += 1;
+  if (x.syncedLyrics) s += 4;
   if (ddiff <= 2) s += 3; else if (ddiff <= 8) s += 1;
   return { x, score: s, synced: !!x.syncedLyrics, ddiff };
 }
+
+// A match is only trustworthy if the artist genuinely lines up AND the timing
+// is close — enough to keep same-title / different-language covers out.
+const MIN_SCORE = 8;
 
 async function fetchLyrics({ artist, title, album, duration } = {}) {
   if (!title) return null;
@@ -103,8 +111,7 @@ async function fetchLyrics({ artist, title, album, duration } = {}) {
   };
   const queries = [
     { track_name: ct, artist_name: artist },
-    { track_name: ct },                       // last resort: title only
-    { q: `${ct} ${artist || ''}`.trim() }
+    { track_name: ct }   // title only, but candidates still gated by artist+score
   ];
   const seen = new Set();
   let best = null;
@@ -118,10 +125,10 @@ async function fetchLyrics({ artist, title, album, duration } = {}) {
       if (scored && (!best || scored.score > best.score ||
         (scored.score === best.score && scored.ddiff < best.ddiff))) best = scored;
     }
-    if (best && best.synced && best.score >= 9) break; // strong synced hit, stop early
+    if (best && best.synced && best.score >= 11) break; // strong synced hit, stop early
   }
 
-  const hit = best && best.x;
+  const hit = best && best.score >= MIN_SCORE && best.x;
   if (hit && (hit.syncedLyrics || hit.plainLyrics)) {
     return { syncedLyrics: hit.syncedLyrics || '', plainLyrics: hit.plainLyrics || '' };
   }

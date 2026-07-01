@@ -749,7 +749,8 @@ const AmbientGlow = (() => {
 const Lyrics = (() => {
   let active = false, synced = [], plain = null, key = '', poll = null, raf = null;
   let box = null, body = null, lastIdx = -1, attempts = 0, np = null;
-  let searching = false, host = null;
+  let mode = 'off', host = null;                     // 'searching' | 'ours' | 'off'
+  let curEl = null, curSpans = null, curEnhanced = false;
 
   function enable() {
     active = true;
@@ -764,7 +765,7 @@ const Lyrics = (() => {
     active = false;
     if (poll) { clearInterval(poll); poll = null; }
     stopRAF();
-    clearHost(); synced = []; plain = null; key = ''; searching = false;
+    clearHost(); synced = []; plain = null; key = ''; mode = 'off';
   }
   function startRAF() {
     if (raf) return;
@@ -804,14 +805,17 @@ const Lyrics = (() => {
     if (!active) return;
     ungray();
     const h0 = tabHost();
-    const want = h0 && tabSelected() && (synced.length || plain || searching);
+    // Take over ONLY when we have a confident match for this track. While
+    // searching or when nothing was found, we stay out and leave YTM's own
+    // lyrics tab untouched — so the view never flickers between the two.
+    const want = h0 && tabSelected() && mode === 'ours' && (synced.length || plain);
     if (want) {
       if (host && host !== h0) host.classList.remove('stardust-lyrics-on');
       host = h0;
       host.classList.add('stardust-lyrics-on');
       ensureBox();
       if (box.parentElement !== host) host.appendChild(box);
-      if (!body.firstChild) render(searching ? 'Searching lyrics…' : undefined);
+      if (!body.firstChild) render();
     } else {
       clearHost();
     }
@@ -849,7 +853,12 @@ const Lyrics = (() => {
     if (synced.length) {
       for (const l of synced) {
         const line = h('div', { class: 'stardust-lyric-line' });
-        if (l.words && l.words.length) {
+        // Only split into per-word spans when we have REAL word timing
+        // (enhanced LRC). Otherwise keep it as one line and sweep it smoothly —
+        // faking per-word timing from line timing looks stuttery.
+        const enhanced = l.words && l.words.length && l.words[0].time != null;
+        if (enhanced) {
+          line.classList.add('words');
           l.words.forEach((w, i) => {
             line.appendChild(h('span', { class: 'w', text: w.text }));
             if (i < l.words.length - 1) line.appendChild(document.createTextNode(' '));
@@ -864,9 +873,11 @@ const Lyrics = (() => {
     }
     lastIdx = -1;
   }
-  // Reset any word highlighting on a line (when it stops being active).
+  // Reset any highlighting on a line (when it stops being active).
   function clearWords(lineEl) {
     if (!lineEl) return;
+    lineEl.classList.remove('sweep');
+    lineEl.style.removeProperty('--wp');
     for (const s of lineEl.querySelectorAll('.w')) {
       if (s.className !== 'w') s.className = 'w';
       if (s.style.getPropertyValue('--wp')) s.style.removeProperty('--wp');
@@ -876,19 +887,22 @@ const Lyrics = (() => {
   function fetchFor(track) {
     if (!track || !track.title) return;
     const k = track.title + '|' + track.artist; if (k === key) return;
-    key = k; np = track; synced = []; plain = null; attempts = 0; lastIdx = -1; searching = true;
-    render('Searching lyrics…'); sync(); doFetch();
+    key = k; np = track; synced = []; plain = null; attempts = 0; lastIdx = -1;
+    mode = 'searching'; curEl = null; curSpans = null;
+    clearHost();          // stay out until we have a confident match
+    doFetch();
   }
   async function doFetch() {
     attempts++;
+    const forKey = key;
     let res = null;
     try { res = await ipcRenderer.invoke('stardust:lyrics', { artist: np.artist, title: np.title, album: np.album, duration: np.duration }); } catch {}
-    if (!active) return;
-    if (res && res.syncedLyrics) { synced = parseLRC(res.syncedLyrics); plain = null; }
-    else if (res && res.plainLyrics) { synced = []; plain = res.plainLyrics; }
-    else if (attempts < 3) { setTimeout(() => { if (active) doFetch(); }, 1800); return; } // still searching; duration may not be ready
-    else { synced = []; plain = null; }
-    searching = false;
+    if (!active || key !== forKey) return;   // track changed while awaiting
+    if (res && res.syncedLyrics) { synced = parseLRC(res.syncedLyrics); plain = null; mode = 'ours'; }
+    else if (res && res.plainLyrics) { synced = []; plain = res.plainLyrics; mode = 'ours'; }
+    else if (attempts < 3) { setTimeout(() => { if (active && key === forKey) doFetch(); }, 1800); return; } // duration may not be ready yet
+    else { synced = []; plain = null; mode = 'off'; }
+    lastIdx = -1; curEl = null; curSpans = null;
     render(); sync();
   }
 
@@ -902,44 +916,41 @@ const Lyrics = (() => {
     let idx = -1;
     for (let i = 0; i < synced.length; i++) { if (synced[i].t <= t + 0.15) idx = i; else break; }
 
-    // Line changed: move the .active class, reset the old line's words, scroll.
+    // Line changed: move .active, reset the old line, scroll, and cache the new
+    // one so per-frame work stays cheap.
     if (idx !== lastIdx) {
-      if (lastIdx >= 0 && kids[lastIdx]) { kids[lastIdx].classList.remove('active'); clearWords(kids[lastIdx]); }
-      if (idx >= 0 && kids[idx]) { kids[idx].classList.add('active'); kids[idx].scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+      if (curEl) { curEl.classList.remove('active'); curEl.style.removeProperty('--wp'); clearWords(curEl); }
       lastIdx = idx;
+      curEl = idx >= 0 ? kids[idx] : null;
+      if (curEl) {
+        curEl.classList.add('active');
+        curEnhanced = curEl.classList.contains('words');
+        curSpans = curEnhanced ? curEl.querySelectorAll('.w') : null;
+        curEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      }
     }
-    if (idx < 0 || !kids[idx]) return;
+    if (!curEl) return;
 
-    // Sweep the active line's words.
     const line = synced[idx];
-    const spans = kids[idx].querySelectorAll('.w');
-    if (!spans.length || !line.words || !line.words.length) return;
     const lineEnd = synced[idx + 1] ? synced[idx + 1].t
-      : (isFinite(v.duration) && v.duration > line.t ? v.duration : line.t + Math.max(3, line.s.length * 0.09));
+      : (isFinite(v.duration) && v.duration > line.t ? v.duration : line.t + Math.max(3, (line.s.length || 8) * 0.09));
 
-    if (line.words[0].time != null) {
-      // Enhanced LRC: real per-word timing.
-      for (let i = 0; i < spans.length; i++) {
+    if (curEnhanced && curSpans && curSpans.length) {
+      // Enhanced LRC: real per-word timing → discrete word highlight.
+      for (let i = 0; i < curSpans.length; i++) {
         const w = line.words[i]; if (!w) continue;
         const ws = w.time, we = (line.words[i + 1] && line.words[i + 1].time != null) ? line.words[i + 1].time : lineEnd;
-        if (t >= we) setWord(spans[i], 'sung');
-        else if (t >= ws) setWord(spans[i], 'cur', we > ws ? (t - ws) / (we - ws) : 1);
-        else setWord(spans[i], '');
+        if (t >= we) setWord(curSpans[i], 'sung');
+        else if (t >= ws) setWord(curSpans[i], 'cur', we > ws ? (t - ws) / (we - ws) : 1);
+        else setWord(curSpans[i], '');
       }
     } else {
-      // Interpolate: distribute the line's elapsed fraction across words by length.
-      const span = Math.max(lineEnd - line.t, 0.001);
-      const p = Math.min(1, Math.max(0, (t - line.t) / span));
-      const total = line.words.reduce((a, w) => a + w.len, 0);
-      const target = p * total;
-      let acc = 0;
-      for (let i = 0; i < spans.length; i++) {
-        const wt = line.words[i] ? line.words[i].len : 1;
-        if (acc + wt <= target) setWord(spans[i], 'sung');
-        else if (acc < target) setWord(spans[i], 'cur', (target - acc) / wt);
-        else setWord(spans[i], '');
-        acc += wt;
-      }
+      // Line-level timing → smooth continuous fill across the whole line.
+      const dur = Math.max(lineEnd - line.t, 0.001);
+      const p = Math.min(1, Math.max(0, (t - line.t) / dur));
+      curEl.classList.add('sweep');
+      const pct = (p * 100).toFixed(1) + '%';
+      if (curEl.style.getPropertyValue('--wp') !== pct) curEl.style.setProperty('--wp', pct);
     }
   }
   // Set a word's state without redundant DOM writes.
