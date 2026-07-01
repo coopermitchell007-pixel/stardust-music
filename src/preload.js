@@ -147,6 +147,7 @@ function hexA(hex, a) {
 }
 const BlackHole = (() => {
   let canvas, ctx, raf = null, cfg = {}, enabled = false, w = 0, h = 0, t = 0, parts = [];
+  let ovColor = null; // reactive-theming colour override
   const SHAPES = ['planet', 'spark', 'shard', 'ring'];
 
   function ensureCanvas() {
@@ -219,7 +220,7 @@ const BlackHole = (() => {
   function frame() {
     if (!enabled) return;
     t += 0.01;
-    const cx = CX(), cy = CY(), r = R(), color = cfg.color || '#ff8c42';
+    const cx = CX(), cy = CY(), r = R(), color = ovColor || cfg.color || '#ff8c42';
     ctx.clearRect(0, 0, w, h);
 
     // accretion halo
@@ -249,7 +250,7 @@ const BlackHole = (() => {
       const x = cx + Math.cos(p.ang) * p.rad, y = cy + Math.sin(p.ang) * p.rad;
       const fade = Math.min(1, (p.rad - r) / (r * 2.5));
       if (p.shape) {
-        drawShape(p, x, y, cfg.color || '#ff8c42', fade);
+        drawShape(p, x, y, color, fade);
       } else {
         // streak toward the hole for a "being pulled in" feel
         const tx = cx + Math.cos(p.ang - p.spin * 0.06) * (p.rad + p.vin * 6);
@@ -272,8 +273,9 @@ const BlackHole = (() => {
   }
   function start() { if (enabled && !raf) raf = requestAnimationFrame(frame); }
   function stop() { if (raf) { cancelAnimationFrame(raf); raf = null; } if (ctx) ctx.clearRect(0, 0, w, h); }
+  function setColor(c) { ovColor = c || null; }
 
-  return { configure };
+  return { configure, setColor };
 })();
 
 // ---------------------------------------------------------------------------
@@ -380,9 +382,10 @@ const Visualizer = (() => {
   //   source -> bass -> treble -> volume -> panner -> analyser -> destination
   //                                          panner -> reverb -> wet -> analyser
   let audioCtx = null, analyser = null, freq = null, attachedEl = null;
-  let bass = null, treble = null, volume = null, panner = null, reverb = null, wet = null, lfo = null;
+  let bass = null, treble = null, volume = null, panner = null, reverb = null, wet = null, lfo = null, fade = null;
   let useReal = false;       // true once we get non-zero spectrum data
   let zeroFrames = 0;        // consecutive silent frames while playing -> tainted
+  let reactiveColor = null;  // per-track reactive theming override
 
   function makeImpulse(seconds, decay) {
     const rate = audioCtx.sampleRate, len = rate * seconds;
@@ -439,6 +442,7 @@ const Visualizer = (() => {
         panner = audioCtx.createStereoPanner ? audioCtx.createStereoPanner() : null;
         reverb = audioCtx.createConvolver(); reverb.buffer = makeImpulse(2.4, 3.0);
         wet = audioCtx.createGain(); wet.gain.value = 0;
+        fade = audioCtx.createGain(); fade.gain.value = 1; // crossfade/transition
       }
       const src = audioCtx.createMediaElementSource(el);
       // dry chain
@@ -448,7 +452,9 @@ const Visualizer = (() => {
       tail.connect(analyser);
       // wet (reverb) send in parallel
       tail.connect(reverb); reverb.connect(wet); wet.connect(analyser);
-      analyser.connect(audioCtx.destination); // keep audio audible
+      // fade node sits only on the audible path, so transitions don't dip the
+      // visualizer (which reads the analyser upstream of the fade).
+      analyser.connect(fade); fade.connect(audioCtx.destination);
       attachedEl = el;
       zeroFrames = 0;
     } catch (e) {
@@ -524,7 +530,7 @@ const Visualizer = (() => {
     }
 
     ctx.clearRect(0, 0, w, h);
-    const accent = settings.accentOverride || cfg.color || '#8b5cff';
+    const accent = reactiveColor || settings.accentOverride || cfg.color || '#8b5cff';
     const gap = 2;
     const bw = (w / BARS) - gap;
     for (let i = 0; i < BARS; i++) {
@@ -565,10 +571,34 @@ const Visualizer = (() => {
         lfo = null; panner.pan.value = 0;
       }
     },
-    reverb: (on) => { ensureAudio(); if (wet) wet.gain.value = on ? 0.32 : 0; }
+    reverb: (on) => { ensureAudio(); if (wet) wet.gain.value = on ? 0.32 : 0; },
+    // Smoothly ramp the audible level (for crossfade/fade transitions).
+    fade: (target, seconds) => {
+      ensureAudio();
+      if (!fade || !audioCtx) return;
+      const now = audioCtx.currentTime;
+      try {
+        fade.gain.cancelScheduledValues(now);
+        fade.gain.setValueAtTime(Math.max(0.0001, fade.gain.value), now);
+        fade.gain.linearRampToValueAtTime(Math.max(0.0001, target), now + Math.max(0.05, seconds));
+      } catch {}
+    }
   };
 
-  return { configure, setPlaying, resumeAudio, fx };
+  // Downsampled bar levels (0..1) for the mini-player visualizer.
+  function getBars(n) {
+    const out = new Array(n).fill(0);
+    const step = BARS / n;
+    for (let i = 0; i < n; i++) {
+      let m = 0; const lo = Math.floor(i * step), hi = Math.floor((i + 1) * step);
+      for (let j = lo; j < hi && j < BARS; j++) if (levels[j] > m) m = levels[j];
+      out[i] = m;
+    }
+    return out;
+  }
+  function setReactiveColor(c) { reactiveColor = c || null; }
+
+  return { configure, setPlaying, resumeAudio, fx, getBars, setReactiveColor };
 })();
 
 // A user gesture is required before an AudioContext can produce sound/data.
@@ -664,7 +694,10 @@ const BEHAVIORS = {
   'feat-ambient-glow':  { on: () => AmbientGlow.enable(), off: () => AmbientGlow.disable() },
   'feat-lyrics':        { on: () => Lyrics.enable(),    off: () => Lyrics.disable() },
   'feat-quick-actions': { on: () => QuickActions.show(), off: () => QuickActions.hide() },
-  'feat-auto-dj':       { on: () => AutoDJ.enable(),    off: () => AutoDJ.disable() }
+  'feat-auto-dj':       { on: () => AutoDJ.enable(),    off: () => AutoDJ.disable() },
+  'feat-reactive-theme':{ on: () => ReactiveTheme.enable(), off: () => ReactiveTheme.disable() },
+  'feat-crossfade':     { on: () => Crossfade.enable(), off: () => Crossfade.disable() },
+  'feat-playlist-tools':{ on: () => PlaylistTools.show(), off: () => PlaylistTools.hide() }
 };
 
 // --- Sleep timer: floating pill with 15/30/60-min presets ------------------
@@ -790,6 +823,100 @@ const AutoDJ = (() => {
     }
   }
   return { enable, disable };
+})();
+
+// Pull a vibrant colour out of album art (bright + saturated pixel, else avg).
+function extractColor(artUrl, cb) {
+  const img = new Image(); img.crossOrigin = 'anonymous';
+  img.onload = () => {
+    try {
+      const c = document.createElement('canvas'); c.width = c.height = 24;
+      const cx = c.getContext('2d'); cx.drawImage(img, 0, 0, 24, 24);
+      const d = cx.getImageData(0, 0, 24, 24).data;
+      let best = null, bestScore = -1, ar = 0, ag = 0, ab = 0, n = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        const r = d[i], g = d[i + 1], b = d[i + 2];
+        ar += r; ag += g; ab += b; n++;
+        const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+        const sat = mx === 0 ? 0 : (mx - mn) / mx;
+        const val = mx / 255;
+        const score = sat * 1.4 + val * 0.6; // favour colourful but not too dark
+        if (val > 0.25 && score > bestScore) { bestScore = score; best = [r, g, b]; }
+      }
+      if (!best) best = [Math.round(ar / n), Math.round(ag / n), Math.round(ab / n)];
+      const hex = '#' + best.map((x) => Math.min(255, Math.max(0, x)).toString(16).padStart(2, '0')).join('');
+      cb(hex);
+    } catch { cb(null); }
+  };
+  img.onerror = () => cb(null);
+  img.src = artUrl;
+}
+
+// --- Reactive theming: tint accent/visualizer/black-hole from album art ----
+const ReactiveTheme = (() => {
+  let active = false, last = '';
+  function enable() { active = true; last = ''; onTrack(readNowPlaying()); }
+  function disable() {
+    active = false; last = '';
+    document.documentElement.style.removeProperty('--stardust-accent');
+    Visualizer.setReactiveColor(null); BlackHole.setColor(null);
+  }
+  function onTrack(np) {
+    if (!active || !np || !np.art || np.art === last) return;
+    last = np.art;
+    extractColor(np.art, (hex) => {
+      if (!active || !hex) return;
+      document.documentElement.style.setProperty('--stardust-accent', hex);
+      Visualizer.setReactiveColor(hex); BlackHole.setColor(hex);
+    });
+  }
+  return { enable, disable, onTrack };
+})();
+
+// --- Crossfade: fade transitions between tracks (single-element approximation)
+const Crossfade = (() => {
+  let timer = null, key = '', faded = false;
+  const OUT = 4, IN = 2;
+  function enable() { if (timer) return; key = ''; faded = false; timer = setInterval(tick, 400); }
+  function disable() { if (timer) { clearInterval(timer); timer = null; } Visualizer.fx.fade(1, 0.3); }
+  function tick() {
+    const v = q('video'); if (!v) return;
+    const np = readNowPlaying();
+    const k = np ? np.title + '|' + np.artist : '';
+    if (k && k !== key) {              // new track → fade in from silence
+      key = k; faded = false;
+      Visualizer.fx.fade(0.0001, 0.01); Visualizer.fx.fade(1, IN);
+      return;
+    }
+    if (isFinite(v.duration) && v.duration > 0) {
+      const left = v.duration - v.currentTime;
+      if (!faded && left > 0 && left <= OUT) { faded = true; Visualizer.fx.fade(0.0001, left); }
+    }
+  }
+  return { enable, disable };
+})();
+
+// --- Smart playlist tools: a floating bar of queue/playlist shortcuts -------
+const PlaylistTools = (() => {
+  let el = null;
+  const BTNS = [
+    ['📻', 'radio', 'Start radio from this song'],
+    ['👤', 'goto-artist', 'Go to artist'],
+    ['💿', 'goto-album', 'Go to album'],
+    ['🎲', 'random-library', 'Play something random'],
+    ['💾', 'save-queue', 'Save queue to a playlist']
+  ];
+  function show() {
+    if (el) return;
+    el = h('div', { id: 'stardust-plbar' }, BTNS.map(([icon, act, title]) => {
+      const b = h('button', { class: 'stardust-qa', title, text: icon });
+      b.addEventListener('click', () => doCommand(act));
+      return b;
+    }));
+    document.body.appendChild(el);
+  }
+  function hide() { if (el) { el.remove(); el = null; } }
+  return { show, hide };
 })();
 
 // --- Synced lyrics — integrated into YTM's own Lyrics tab ------------------
@@ -1065,6 +1192,7 @@ function pollNowPlaying() {
   if (track !== lastTrack && np.isTrack) {
     lastTrack = track;
     AmbientGlow.onTrack(np);
+    ReactiveTheme.onTrack(np);
     Lyrics.onTrack(np);
   }
 
@@ -1134,11 +1262,66 @@ function doCommand(action) {
       // Surface YTM's own menu so the user can pick a playlist (reliable path).
       toast(clickByLabel(/more actions|menu/i) ? 'Choose a playlist ↑' : 'Menu unavailable');
       break;
+    case 'radio':
+      toast(clickByLabel(/radio/i) ? '📻 Radio started' : 'Radio unavailable');
+      break;
+    case 'goto-artist': {
+      const a = q('ytmusic-player-bar .byline a');
+      if (a) { a.click(); toast('👤 Artist'); } else toast('Artist link unavailable');
+      break;
+    }
+    case 'goto-album': {
+      const links = document.querySelectorAll('ytmusic-player-bar .byline a');
+      const a = links[links.length - 1];
+      if (a && links.length > 1) { a.click(); toast('💿 Album'); } else toast('Album link unavailable');
+      break;
+    }
+    case 'random-library':
+      randomLibrary();
+      break;
+    case 'save-queue':
+      // Best-effort: open the queue overflow menu so "Save"/"Add to playlist" is reachable.
+      toast(clickByLabel(/save|more actions|menu/i) ? 'Pick a playlist to save into ↑' : 'Not available here');
+      break;
   }
   setTimeout(pollNowPlaying, 250);
 }
 
+// Navigate to the library and start something at random. Best-effort against
+// YTM's DOM; degrades to a toast if nothing playable is found.
+let randomTries = 0;
+function randomLibrary() {
+  if (!/\/library/.test(location.href)) {
+    toast('🎲 Opening library…');
+    location.href = 'https://music.youtube.com/library/playlists';
+    randomTries = 0;
+    setTimeout(randomLibrary, 1600);
+    return;
+  }
+  const items = [...document.querySelectorAll('ytmusic-two-row-item-renderer, ytmusic-responsive-list-item-renderer')];
+  if (!items.length) {
+    if (++randomTries < 4) { setTimeout(randomLibrary, 1200); return; }
+    toast('Nothing to shuffle in library'); return;
+  }
+  const pick = items[Math.floor(Math.random() * items.length)];
+  const play = pick.querySelector('#play-button, ytmusic-play-button-renderer, a');
+  if (play) { play.click(); toast('🎲 Playing something random'); }
+  else toast('Could not start a random item');
+}
+
 ipcRenderer.on('stardust:command', (_e, { action }) => doCommand(action));
+
+// Stream a small spectrum to the mini player only while it's open.
+let miniSpectrumTimer = null;
+ipcRenderer.on('stardust:mini-spectrum', (_e, on) => {
+  if (on && !miniSpectrumTimer) {
+    miniSpectrumTimer = setInterval(() => {
+      try { ipcRenderer.send('stardust:spectrum', Visualizer.getBars(24)); } catch {}
+    }, 66); // ~15fps
+  } else if (!on && miniSpectrumTimer) {
+    clearInterval(miniSpectrumTimer); miniSpectrumTimer = null;
+  }
+});
 
 // ---------------------------------------------------------------------------
 // In-page ad skipper — complements the network-level blocker. Clicks skip
@@ -1464,7 +1647,11 @@ function buildMarketShell() {
       ]),
       h('div', { class: 'stardust-market-toolbar' }, [
         h('div', { class: 'stardust-market-tabs' }, tabs),
-        search
+        search,
+        h('div', { class: 'stardust-row' }, [
+          h('button', { class: 'stardust-mini-btn', dataset: { mact: 'import' }, text: '＋ Import' }),
+          h('button', { class: 'stardust-mini-btn', dataset: { mact: 'publish' }, text: 'Publish yours ↗' })
+        ])
       ]),
       h('div', { id: 'stardust-market-grid', class: 'stardust-market-grid' })
     ])
@@ -1473,6 +1660,15 @@ function buildMarketShell() {
 
   modal.addEventListener('click', (e) => { if (e.target === modal) modal.classList.remove('open'); });
   modal.querySelector('[data-mact="close"]').addEventListener('click', () => modal.classList.remove('open'));
+  modal.querySelector('[data-mact="import"]').addEventListener('click', openImport);
+  modal.querySelector('[data-mact="publish"]').addEventListener('click', () => {
+    const body = encodeURIComponent(
+      'Paste your item JSON below (a single object or an array). See an existing entry in src/marketplace/catalog.json for the format.\n\n```json\n\n```\n'
+    );
+    ipcRenderer.invoke('stardust:open-external',
+      'https://github.com/coopermitchell007-pixel/stardust-music/issues/new?title=' +
+      encodeURIComponent('[Marketplace] New submission') + '&body=' + body);
+  });
   tabs.forEach((tb) => tb.addEventListener('click', () => {
     marketState.filter = tb.dataset.tab;
     modal.querySelectorAll('.stardust-market-tab').forEach((x) => x.classList.toggle('active', x === tb));
@@ -1480,6 +1676,46 @@ function buildMarketShell() {
   }));
   search.addEventListener('input', () => { marketState.search = search.value.toLowerCase(); renderMarketGrid(); });
   return modal;
+}
+
+// Import creations shared by others: paste one item JSON (or an array).
+let importModal = null;
+function openImport() {
+  if (!importModal) {
+    const ta = h('textarea', { id: 'stardust-import-ta', placeholder: 'Paste item JSON here — a single {…} or an array [ … ]' });
+    const msg = h('div', { class: 'stardust-hint', id: 'stardust-import-msg' });
+    const go = h('button', { class: 'stardust-market-btn primary', text: 'Import' });
+    importModal = h('div', { class: 'stardust-modal', id: 'stardust-import' }, [
+      h('div', { class: 'stardust-modal-card' }, [
+        h('div', { class: 'stardust-head' }, [
+          h('span', { class: 'stardust-logo', text: '✦ Import' }),
+          h('button', { class: 'stardust-x', dataset: { iact: 'close' }, text: '✕' })
+        ]),
+        h('div', { class: 'stardust-hint', text: 'Add a theme / font / animation / feature / audio effect someone shared with you.' }),
+        ta, msg, go
+      ])
+    ]);
+    document.body.appendChild(importModal);
+    importModal.addEventListener('click', (e) => { if (e.target === importModal || e.target.closest('[data-iact="close"]')) importModal.classList.remove('open'); });
+    go.addEventListener('click', async () => {
+      let items;
+      try { items = JSON.parse(ta.value.trim()); } catch { msg.textContent = '⚠ That is not valid JSON.'; return; }
+      if (!Array.isArray(items)) items = [items];
+      const ok = items.filter((it) => it && it.id && it.type);
+      if (!ok.length) { msg.textContent = '⚠ No valid items (each needs an id and type).'; return; }
+      let n = 0;
+      for (const it of ok) { const r = await ipcRenderer.invoke('stardust:marketplace-install', it); if (r) { installed = r.installed || installed; extras = r.extras || extras; themeList = r.themes || themeList; n++; } }
+      // Merge into the visible catalog so they show up immediately.
+      const byId = new Map(marketState.items.map((x) => [x.id, x]));
+      for (const it of ok) byId.set(it.id, it);
+      marketState.items = [...byId.values()];
+      applyExtras(); if (panelEl) renderThemes(panelEl); renderMarketGrid();
+      msg.textContent = `✓ Imported ${n} item${n === 1 ? '' : 's'}.`;
+      toast(`✓ Imported ${n} item${n === 1 ? '' : 's'}`);
+    });
+  }
+  importModal.querySelector('#stardust-import-msg').textContent = '';
+  importModal.classList.add('open');
 }
 
 function renderMarketGrid() {
@@ -1538,6 +1774,12 @@ function marketCard(item) {
     rm.addEventListener('click', () => doRemove(item));
     actions.appendChild(rm);
   }
+  const share = h('button', { class: 'stardust-market-btn ghost', title: 'Copy this item as JSON to share', text: 'Share' });
+  share.addEventListener('click', () => {
+    navigator.clipboard.writeText(JSON.stringify(item, null, 2))
+      .then(() => toast('📋 Copied — paste via Import to share'), () => toast('Copy failed'));
+  });
+  actions.appendChild(share);
   card.appendChild(actions);
   return card;
 }

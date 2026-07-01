@@ -62,6 +62,11 @@ function createMainWindow() {
   mainWindow.webContents.on('preload-error', (_e, preloadPath, error) => {
     console.error('[Stardust] preload-error:', preloadPath, error);
   });
+  // If the mini player is already open, (re)start its spectrum feed once the
+  // YTM page + preload are ready to receive the message.
+  mainWindow.webContents.on('did-finish-load', () => {
+    if (miniWindow && !miniWindow.isDestroyed()) setMiniSpectrum(true);
+  });
 
   // Debug-only: capture a screenshot of the rendered page (STARDUST_CAPTURE=path).
   if (process.env.STARDUST_CAPTURE) {
@@ -165,15 +170,25 @@ function openMiniPlayer() {
   miniWindow.on('closed', () => {
     miniWindow = null;
     config.save({ miniPlayer: false });
+    setMiniSpectrum(false);
   });
   miniWindow.webContents.on('did-finish-load', () => {
     if (lastNowPlaying) miniWindow.webContents.send('stardust:nowplaying', lastNowPlaying);
   });
+  setMiniSpectrum(true);
 }
 
 function closeMiniPlayer() {
   if (miniWindow && !miniWindow.isDestroyed()) miniWindow.close();
   miniWindow = null;
+  setMiniSpectrum(false);
+}
+
+// Ask the YTM page to start/stop streaming its spectrum to the mini player.
+function setMiniSpectrum(on) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('stardust:mini-spectrum', on);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -296,6 +311,11 @@ function registerIpc() {
     if (miniWindow && !miniWindow.isDestroyed()) {
       miniWindow.webContents.send('stardust:nowplaying', np);
     }
+  });
+
+  // Spectrum frames from the YTM page → forward to the mini player.
+  ipcMain.on('stardust:spectrum', (_e, bars) => {
+    if (miniWindow && !miniWindow.isDestroyed()) miniWindow.webContents.send('stardust:spectrum', bars);
   });
 
   // From the mini player: a control button was pressed.

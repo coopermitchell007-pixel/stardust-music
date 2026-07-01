@@ -7,7 +7,12 @@ body {
 .drag { -webkit-app-region: drag; }
 button { -webkit-app-region: no-drag; }
 
+#viz {
+  position: fixed; inset: 0; width: 100%; height: 100%;
+  z-index: 0; pointer-events: none;
+}
 #mini {
+  position: relative; z-index: 1;
   height: 100%;
   display: grid;
   grid-template-columns: 84px 1fr;

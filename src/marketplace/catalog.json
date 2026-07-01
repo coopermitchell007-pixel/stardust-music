@@ -325,5 +325,32 @@
     "description": "Keeps the music going — enables autoplay/radio as the queue runs out.",
     "tags": ["smart", "playlist", "queue"],
     "preview": "linear-gradient(135deg, #1f2f4a, #0a0e1a)"
+  },
+  {
+    "id": "feat-reactive-theme",
+    "type": "feature",
+    "name": "Reactive Theming",
+    "author": "Stardust",
+    "description": "Tints the accent, visualizer and black hole to match each song's album art.",
+    "tags": ["smart", "color", "reactive"],
+    "preview": "radial-gradient(circle at 30% 20%, #ff2bd6, transparent 55%), radial-gradient(circle at 80% 80%, #2be0ff, transparent 55%), #0a0a18"
+  },
+  {
+    "id": "feat-crossfade",
+    "type": "feature",
+    "name": "Crossfade",
+    "author": "Stardust",
+    "description": "Smoothly fades tracks out and in as they change, instead of hard cuts.",
+    "tags": ["smart", "audio"],
+    "preview": "linear-gradient(90deg, #1a1030, #3a1f7a, #1a1030)"
+  },
+  {
+    "id": "feat-playlist-tools",
+    "type": "feature",
+    "name": "Smart Playlist Tools",
+    "author": "Stardust",
+    "description": "Floating shortcuts: start radio, go to artist/album, play random, save queue.",
+    "tags": ["smart", "playlist", "queue"],
+    "preview": "linear-gradient(135deg, #2a1f4a, #0c0a1a)"
   }
 ]
