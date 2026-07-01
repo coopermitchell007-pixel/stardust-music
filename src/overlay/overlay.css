@@ -772,12 +772,16 @@ tp-yt-paper-dialog:has(ytmusic-mealbar-promo-renderer) {
 img.stardust-vinyl.sd-mini {
   width: var(--stardust-vinyl, 52px) !important; height: var(--stardust-vinyl, 52px) !important;
   border-radius: 50% !important; object-fit: cover !important; background: transparent !important;
-  position: relative !important; bottom: 11px !important;
+  position: relative !important; bottom: 8px !important;
   box-shadow: 0 0 0 3px rgba(0,0,0,.55), 0 0 0 6px color-mix(in srgb, var(--stardust-accent) 75%, transparent) !important;
   animation: stardustVinyl 4s linear infinite; animation-play-state: paused;
 }
 img.stardust-vinyl.sd-big {
   border-radius: 50% !important; object-fit: cover !important; aspect-ratio: 1 / 1 !important; height: auto !important;
+  /* Cap the size + leave a margin so the big record never reaches down to the
+     player bar (and its mini vinyl). */
+  max-width: min(52vh, 460px) !important; max-height: min(52vh, 460px) !important;
+  margin: 0 auto 24px !important; display: block !important;
   background: transparent !important;
   box-shadow: 0 0 0 6px rgba(0,0,0,.5), 0 0 0 12px color-mix(in srgb, var(--stardust-accent) 60%, transparent) !important;
   animation: stardustVinyl 8s linear infinite; animation-play-state: paused;
