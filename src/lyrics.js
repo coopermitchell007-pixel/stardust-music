@@ -50,9 +50,14 @@ const norm = (s) => (s || '')
   .trim();
 
 // Strip the junk YTM often appends to titles before querying lrclib.
+// Strip the junk YTM/YouTube appends to titles. Matches the keyword ANYWHERE
+// inside the brackets (so "(Official Music Video)", "(HD Remaster)", etc. go),
+// not only when it's the first word.
+const CLEAN_KW = 'official|lyrics?|audio|video|music\\s*video|visuali[sz]er|hd|hq|4k|8k|mv|m/v|explicit|clean|remaster(?:ed)?|extended|full|prod\\.?|sped\\s*up|slowed|reverb|live|performance|color(?:ou)?r?\\s*coded';
 const cleanTitle = (s) => (s || '')
-  .replace(/\((?:official|lyric|audio|video|visualizer|hd|4k|mv|m\/v).*?\)/gi, '')
-  .replace(/\[(?:official|lyric|audio|video|visualizer|hd|4k|mv|m\/v).*?\]/gi, '')
+  .replace(new RegExp('\\((?=[^)]*(?:' + CLEAN_KW + '))[^)]*\\)', 'gi'), '')
+  .replace(new RegExp('\\[(?=[^\\]]*(?:' + CLEAN_KW + '))[^\\]]*\\]', 'gi'), '')
+  .replace(/\s*-\s*topic$/i, '')
   .replace(/\s+/g, ' ')
   .trim();
 

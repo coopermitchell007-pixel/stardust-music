@@ -1082,6 +1082,7 @@ const Lyrics = (() => {
   let mode = 'off', host = null;                     // 'searching' | 'ours' | 'off'
   let curEl = null, curSpans = null, curTiming = null;
   let curMode = 'est', curWeights = null, curTotalW = 1, curSungDur = 1, prog = 0, lastCT = 0;
+  let synthMode = false, lineSyl = null, cumSyl = null, totalSyl = 1, progAll = 0, lastCTs = 0;
 
   function enable() {
     active = true;
@@ -1232,8 +1233,19 @@ const Lyrics = (() => {
     // otherwise a genuine miss shouldn't loop for 20s+. One quick retry max.
     else if (!hadDuration && attempts < 2) { setTimeout(() => { if (active && key === forKey) doFetch(); }, 1200); return; }
     else { synced = []; plain = null; mode = 'off'; }
-    lastIdx = -1; curEl = null; curSpans = null;
+    // Synthesized (Genius) timing has no real timestamps, so we DRIVE its
+    // progression by the actual vocal energy instead of the even-spread guess.
+    synthMode = !!(res && res.kind === 'synth') && synced.length > 0;
+    if (synthMode) buildSynthModel();
+    lastIdx = -1; curEl = null; curSpans = null; progAll = 0; lastCTs = 0;
     render(statusText()); sync();
+  }
+  // Per-line syllable weights for energy-driven progression of synth lyrics.
+  function buildSynthModel() {
+    lineSyl = synced.map((l) => Math.max(0.6, (l.s || '').toLowerCase().replace(/\[[^\]]*\]/g, '').match(/[aeiouy]+/g)?.length || 0.6));
+    totalSyl = 0; cumSyl = [];
+    for (const s of lineSyl) { cumSyl.push(totalSyl); totalSyl += s; }
+    totalSyl = totalSyl || 1;
   }
 
   function paint() {
@@ -1241,6 +1253,46 @@ const Lyrics = (() => {
     const v = q('video'); if (!v) return;
     const t = v.currentTime || 0;
     const kids = body.children;
+
+    // Synthesized (Genius) timing: DRIVE the whole progression by the song's
+    // actual vocal energy — advance through lines/words while someone is singing,
+    // and stall during instrumental intros/breaks (which is what makes fixed
+    // even-spread timing drift). Anchored loosely to song position so it can't
+    // run away, and it "hears the song" via the analyser.
+    if (synthMode && lineSyl && cumSyl) {
+      let dt = t - lastCTs; lastCTs = t;
+      if (dt < 0 || dt > 1) dt = 0;
+      const dur = (isFinite(v.duration) && v.duration > 0) ? v.duration : 210;
+      const timeProg = Math.min(1, Math.max(0, t / dur));
+      const e = Visualizer.vocalEnergy();
+      if (e >= 0) {
+        progAll += (e * e) * dt / (dur * 0.5);          // loud vocals → advance; quiet → stall
+        progAll = Math.max(progAll, timeProg * 0.35);    // loose anchor to avoid drift
+        progAll = Math.min(progAll, timeProg * 1.5 + 0.08);
+      } else {
+        progAll = timeProg;
+      }
+      progAll = Math.min(1, Math.max(0, progAll));
+      const target = progAll * totalSyl;
+      let sidx = 0;
+      for (let i = 0; i < cumSyl.length; i++) { if (cumSyl[i] <= target) sidx = i; else break; }
+      if (sidx !== lastIdx) {
+        if (curEl) { curEl.classList.remove('active'); clearWords(curEl); }
+        lastIdx = sidx; curEl = kids[sidx] || null;
+        if (curEl) { curEl.classList.add('active'); curSpans = curEl.querySelectorAll('.w'); curEl.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+      }
+      if (!curEl || !curSpans || !curSpans.length) return;
+      const words = synced[sidx].words || [];
+      const lineTot = words.reduce((a, w) => a + (((w.text || '').toLowerCase().match(/[aeiouy]+/g) || []).length || 1), 0) || 1;
+      const wt = ((target - cumSyl[sidx]) / lineSyl[sidx]) * lineTot; // syllables into this line → word space
+      let acc = 0;
+      for (let i = 0; i < curSpans.length; i++) {
+        const ws = ((words[i] && words[i].text || '').toLowerCase().match(/[aeiouy]+/g) || []).length || 1;
+        setWordFill(curSpans[i], Math.min(1, Math.max(0, (wt - acc) / ws)));
+        acc += ws;
+      }
+      return;
+    }
 
     // Which line is current?
     let idx = -1;
