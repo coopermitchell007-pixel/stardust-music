@@ -279,6 +279,22 @@ function extractGeniusLyrics(html) {
   if (!parts.length) return '';
   let t = parts.join('\n').replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '');
   t = decodeEntities(t);
+
+  // Strip Genius page junk that leaks into the container:
+  //  - header preamble: "247 Contributors", "Translations", the language list,
+  //    and a trailing "<Title> Lyrics" — everything before the real lyrics;
+  //  - "You might also like" injected between sections;
+  //  - trailing "…Embed" / "NEmbed".
+  // The real lyrics begin at the first [Section] tag, or after "… Lyrics".
+  const secIdx = t.search(/\[[^\]\n]{1,60}\]/);
+  if (secIdx > 0 && /contributor|translation/i.test(t.slice(0, secIdx))) {
+    t = t.slice(secIdx);
+  } else {
+    t = t.replace(/^[\s\S]*?\bLyrics\b[ \t]*\n?/i, (m) => /contributor|translation/i.test(m) ? '' : m);
+    t = t.replace(/^\s*\d+\s*Contributors?[\s\S]*?(?=\n)/i, '');
+  }
+  t = t.replace(/You might also like/gi, '\n');
+  t = t.replace(/\d*\s*Embed\s*$/i, '');
   return t.split('\n').map((x) => x.trim()).filter(Boolean).join('\n');
 }
 async function fetchGenius({ title, artist, want }) {
