@@ -6,17 +6,24 @@ const https = require('https');
 
 function getJson(url, extraHeaders) {
   return new Promise((resolve) => {
-    const req = https.get(url, {
-      headers: Object.assign({ 'User-Agent': 'Stardust v0.8 (https://github.com/coopermitchell007-pixel/stardust-music)' }, extraHeaders || {}),
-      timeout: 4000
-    }, (res) => {
-      if (res.statusCode !== 200) { res.resume(); return resolve(null); }
-      let d = '';
-      res.on('data', (c) => (d += c));
-      res.on('end', () => { try { resolve(JSON.parse(d)); } catch { resolve(null); } });
-    });
-    req.on('error', () => resolve(null));
-    req.on('timeout', () => { req.destroy(); resolve(null); });
+    let done = false;
+    const finish = (v) => { if (!done) { done = true; resolve(v); } };
+    let req;
+    try {
+      req = https.get(url, {
+        headers: Object.assign({ 'User-Agent': 'Stardust v0.8 (https://github.com/coopermitchell007-pixel/stardust-music)' }, extraHeaders || {}),
+        timeout: 3500
+      }, (res) => {
+        if (res.statusCode !== 200) { res.resume(); return finish(null); }
+        let d = '';
+        res.on('data', (c) => (d += c));
+        res.on('end', () => { try { finish(JSON.parse(d)); } catch { finish(null); } });
+      });
+      req.on('error', () => finish(null));
+      req.on('timeout', () => { try { req.destroy(); } catch {} finish(null); });
+    } catch { finish(null); }
+    // Hard cap — guards against a connect/DNS hang that never fires 'timeout'.
+    setTimeout(() => { try { req && req.destroy(); } catch {} finish(null); }, 4500);
   });
 }
 
@@ -64,21 +71,21 @@ function scoreCandidate(x, want) {
   const ddiff = (x.duration && want.duration) ? Math.abs(x.duration - want.duration) : 999;
   if (want.duration && x.duration && ddiff > 12) return null;
 
-  // Artist matching is fuzzy on lrclib (feat., multiple artists, romanization),
-  // so DON'T hard-require it. Instead: trust a candidate when the artist lines
-  // up, OR when the title is exact and the duration is close (very likely the
-  // same recording). The CJK guard already blocks wrong-language covers.
   const artistExact = !!want.artist && na === want.artist;
   const artistOverlap = !!want.artist && !!na && (na.includes(want.artist) || want.artist.includes(na));
   const durClose = ddiff <= 4;
-  if (want.artist) {
-    if (!artistExact && !artistOverlap && !(titleExact && durClose)) return null;
-  } else if (!titleExact) {
-    return null; // no artist known → require an exact title
+
+  // Trust rules (the CJK guard above already blocks wrong-language covers):
+  //  - EXACT title  → accept (this is the common case lrclib formats the artist
+  //    differently, which was making us miss basically everything);
+  //  - partial title → require artist correspondence or a close duration.
+  if (!titleExact) {
+    if (want.artist) { if (!artistExact && !artistOverlap && !durClose) return null; }
+    else if (!durClose) return null;
   }
 
   let s = 0;
-  if (titleExact) s += 4;
+  if (titleExact) s += 5;
   if (artistExact) s += 4; else if (artistOverlap) s += 2;
   if (x.syncedLyrics) s += 4;
   if (durClose) s += 3; else if (ddiff <= 8) s += 1;
@@ -96,22 +103,6 @@ async function fetchLyrics({ artist, title, album, duration } = {}) {
   const bare = title.replace(/\(.*?\)|\[.*?\]/g, '').replace(/\s+/g, ' ').trim() || ct;
   const artist1 = (artist || '').split(/[,&]| feat| ft| x /i)[0].trim(); // primary artist only
 
-  // 1) Two fast exact lookups (lrclib verifies title+artist+duration). Keep it
-  //    to two so this stays quick — the search step below is the real net.
-  const getVariants = [
-    { artist_name: artist, track_name: ct, duration },
-    { artist_name: artist1, track_name: bare }
-  ];
-  for (const v of getVariants) {
-    const r = await getJson('https://lrclib.net/api/get?' + qs(v));
-    if (r && (r.syncedLyrics || r.plainLyrics)) {
-      return { syncedLyrics: r.syncedLyrics || '', plainLyrics: r.plainLyrics || '' };
-    }
-  }
-
-  // 2) Search fallback — one broad query, then score every candidate and accept
-  //    the best confident one. A single search returns plenty to rank, so we
-  //    don't need multiple round-trips (that's what made it slow).
   const want = {
     title: norm(title), artist: norm(artist),
     duration, cjkTitle: isCJK(title)
@@ -125,23 +116,34 @@ async function fetchLyrics({ artist, title, album, duration } = {}) {
         (scored.score === best.score && scored.ddiff < best.ddiff))) best = scored;
     }
   };
-  rank(await getJson('https://lrclib.net/api/search?' + qs({ track_name: bare, artist_name: artist1 })));
-  // Only widen to a title-only search if we didn't already find something good.
-  if (!best || best.score < MIN_SCORE) {
-    rank(await getJson('https://lrclib.net/api/search?' + qs({ track_name: bare })));
-  }
 
-  const hit = best && best.score >= MIN_SCORE && best.x;
+  // Fire the exact lookup AND the search TOGETHER (parallel) so a slow/unreachable
+  // endpoint can't make us "stuck searching" — total latency ~one round-trip.
+  const [getRes, searchArr] = await Promise.all([
+    getJson('https://lrclib.net/api/get?' + qs({ artist_name: artist, track_name: ct, duration })),
+    getJson('https://lrclib.net/api/search?' + qs({ track_name: bare, artist_name: artist1 }))
+  ]);
+  if (getRes && (getRes.syncedLyrics || getRes.plainLyrics)) {
+    return { syncedLyrics: getRes.syncedLyrics || '', plainLyrics: getRes.plainLyrics || '' };
+  }
+  rank(searchArr);
+
+  let hit = best && best.score >= MIN_SCORE && best.x;
   if (hit && (hit.syncedLyrics || hit.plainLyrics)) {
     return { syncedLyrics: hit.syncedLyrics || '', plainLyrics: hit.plainLyrics || '' };
   }
 
-  // 3) NetEase fallback — bigger catalog + word-level (yrc) timing. Only reached
-  //    when lrclib had nothing, so the common case stays fast.
-  try {
-    const ne = await fetchNetease({ title: bare, artist: artist1, want });
-    if (ne) return ne;
-  } catch {}
+  // Still nothing — widen (title-only lrclib search) and NetEase, in parallel.
+  const [arr2, ne] = await Promise.all([
+    getJson('https://lrclib.net/api/search?' + qs({ track_name: bare })),
+    fetchNetease({ title: bare, artist: artist1, want }).catch(() => null)
+  ]);
+  rank(arr2);
+  hit = best && best.score >= MIN_SCORE && best.x;
+  if (hit && (hit.syncedLyrics || hit.plainLyrics)) {
+    return { syncedLyrics: hit.syncedLyrics || '', plainLyrics: hit.plainLyrics || '' };
+  }
+  if (ne) return ne;
 
   return null; // no confident match — show nothing rather than the wrong song
 }

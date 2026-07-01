@@ -1,0 +1,12 @@
+[
+  { "trigger": { "url-filter": "doubleclick\\.net" }, "action": { "type": "block" } },
+  { "trigger": { "url-filter": "googlesyndication\\.com" }, "action": { "type": "block" } },
+  { "trigger": { "url-filter": "googleadservices\\.com" }, "action": { "type": "block" } },
+  { "trigger": { "url-filter": "google-analytics\\.com" }, "action": { "type": "block" } },
+  { "trigger": { "url-filter": "/pagead/" }, "action": { "type": "block" } },
+  { "trigger": { "url-filter": "/ptracking" }, "action": { "type": "block" } },
+  { "trigger": { "url-filter": "/api/stats/ads" }, "action": { "type": "block" } },
+  { "trigger": { "url-filter": "/youtubei/v1/player/ad_break" }, "action": { "type": "block" } },
+  { "trigger": { "url-filter": "imasdk\\.googleapis\\.com" }, "action": { "type": "block" } },
+  { "trigger": { "url-filter": "securepubads\\.g\\.doubleclick" }, "action": { "type": "block" } }
+]

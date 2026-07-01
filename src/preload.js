@@ -723,7 +723,13 @@ const VinylSpin = (() => {
   let timer = null;
   function markWrap(img) {
     let p = img.parentElement;
-    for (let i = 0; i < 2 && p; i++) { p.classList.add('stardust-vinyl-wrap'); p = p.parentElement; }
+    for (let i = 0; i < 3 && p; i++) {
+      p.classList.add('stardust-vinyl-wrap');
+      // Inline styles beat YTM's stylesheet — guarantees no gray box behind it.
+      try { p.style.background = 'transparent'; p.style.backgroundColor = 'transparent'; p.style.overflow = 'visible'; } catch {}
+      p = p.parentElement;
+    }
+    try { img.style.background = 'transparent'; } catch {}
   }
   function tagBar() {
     const bar = document.querySelector('ytmusic-player-bar');
@@ -744,8 +750,11 @@ const VinylSpin = (() => {
   function on() { if (timer) return; scan(); timer = setInterval(scan, 1500); }
   function off() {
     if (timer) { clearInterval(timer); timer = null; }
-    document.querySelectorAll('.stardust-vinyl').forEach((e) => e.classList.remove('stardust-vinyl', 'sd-mini', 'sd-big'));
-    document.querySelectorAll('.stardust-vinyl-wrap').forEach((e) => e.classList.remove('stardust-vinyl-wrap'));
+    document.querySelectorAll('.stardust-vinyl').forEach((e) => { e.classList.remove('stardust-vinyl', 'sd-mini', 'sd-big'); e.style.background = ''; });
+    document.querySelectorAll('.stardust-vinyl-wrap').forEach((e) => {
+      e.classList.remove('stardust-vinyl-wrap');
+      e.style.background = ''; e.style.backgroundColor = ''; e.style.overflow = '';
+    });
   }
   return { on, off };
 })();
@@ -1023,33 +1032,33 @@ const Lyrics = (() => {
   }
 
   function ensureBox() {
-    if (box) return box;
-    body = h('div', { class: 'stardust-lyric-lines' });
-    const close = h('button', { class: 'stardust-lyr-x', title: 'Hide lyrics', text: '✕' });
-    close.addEventListener('click', () => {
-      onSetting('enabledFeatures', (settings.enabledFeatures || []).filter((x) => x !== 'feat-lyrics'));
-    });
-    const head = h('div', { class: 'stardust-lyr-head' }, [h('span', { class: 'stardust-lyr-title', text: '✦ Lyrics' }), close]);
-    box = h('div', { id: 'stardust-lyrics', class: 'stardust-lyrics-panel' }, [head, body]);
+    if (!box) { body = h('div', { class: 'stardust-lyric-lines' }); box = h('div', { id: 'stardust-lyrics' }, [body]); }
     return box;
   }
-  function clearHost() { if (box && box.parentElement) box.remove(); host = null; }
+  function clearHost() { if (host) { host.classList.remove('stardust-lyrics-on'); host = null; } if (box && box.parentElement) box.remove(); }
 
   function statusText() {
     if (mode === 'searching') return 'Searching lyrics…';
     if (mode === 'off') return 'Lyrics not available for this track';
     return undefined; // 'ours' → render the lyrics
   }
-  // Self-contained floating panel — always shown while the feature is on, so it
-  // does NOT depend on detecting/injecting into YouTube's own lyrics tab (that
-  // detection was fragile and silently showed nothing).
+  // Render INTO YouTube's own Lyrics tab whenever it's open (Stardust owns it,
+  // never flickers to YTM's). Falls out of the way when the tab isn't selected.
   function sync() {
     if (!active) return;
-    ungray(); // still un-grey YTM's own tab button, harmless if absent
-    ensureBox();
-    if (box.parentElement !== document.body) document.body.appendChild(box);
-    box.style.display = 'flex';
-    if (!body.firstChild) render(statusText());
+    ungray();
+    const h0 = tabHost();
+    const want = h0 && tabSelected();
+    if (want) {
+      if (host && host !== h0) host.classList.remove('stardust-lyrics-on');
+      host = h0;
+      host.classList.add('stardust-lyrics-on');
+      ensureBox();
+      if (box.parentElement !== host) host.appendChild(box);
+      if (!body.firstChild) render(statusText());
+    } else {
+      clearHost();
+    }
   }
 
   const toSec = (mm, ss) => parseInt(mm, 10) * 60 + parseFloat(ss);

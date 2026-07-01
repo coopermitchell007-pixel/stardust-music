@@ -1,0 +1,25 @@
+/* Slim Stardust theme for the iOS WKWebView wrapper. Deep-space dark look,
+   hides Premium upsells. (The desktop app's starfield/visualizer/marketplace
+   are not ported here.) */
+:root { --stardust-accent: #8b5cff; }
+
+html, body, ytmusic-app, ytmusic-app-layout {
+  background: radial-gradient(1200px 900px at 50% -10%, #1a1140 0%, rgba(26,17,64,0) 60%), #05060f !important;
+}
+
+/* Make YTM's own surfaces see-through so the gradient shows. */
+ytmusic-app, ytmusic-app-layout, #layout, #content, #background, #nav-bar-background,
+ytmusic-section-list-renderer, ytmusic-shelf-renderer, ytmusic-carousel-shelf-renderer,
+ytmusic-item-section-renderer, ytmusic-carousel, ytmusic-grid-renderer, ytmusic-tab-renderer {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+/* Accent recolor for the play/nav highlights. */
+.ytmusic-player-bar[slot="player-bar"], tp-yt-paper-icon-button[aria-label*="Play" i] {
+  color: var(--stardust-accent) !important;
+}
+
+/* Kill Premium / upgrade upsells. */
+ytmusic-mealbar-promo-renderer, ytmusic-statement-banner-renderer,
+ytmusic-you-there-renderer, ytmusic-premium-promo-renderer { display: none !important; }
