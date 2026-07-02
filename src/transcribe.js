@@ -74,14 +74,14 @@ function buildLRC(json) {
   return '';
 }
 
-function postMultipart(url, fieldPairs, fileBuf, apiKey) {
+function postMultipart(url, fieldPairs, fileBuf, apiKey, filename = 'audio.webm') {
   return new Promise((resolve) => {
     const boundary = '----stardust' + Date.now();
     const chunks = [];
     for (const [k, v] of fieldPairs) {
       chunks.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${k}"\r\n\r\n${v}\r\n`));
     }
-    chunks.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="audio.webm"\r\nContent-Type: application/octet-stream\r\n\r\n`));
+    chunks.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: application/octet-stream\r\n\r\n`));
     chunks.push(Buffer.from(fileBuf));
     chunks.push(Buffer.from(`\r\n--${boundary}--\r\n`));
     const body = Buffer.concat(chunks);
@@ -106,7 +106,7 @@ function postMultipart(url, fieldPairs, fileBuf, apiKey) {
 }
 
 // Run Whisper on captured audio; returns { json } or { error }.
-async function whisperVerbose(audio, apiKey) {
+async function whisperVerbose(audio, apiKey, audioName) {
   if (!apiKey) return { error: 'no-key' };
   if (!audio || !audio.length) return { error: 'no-audio' };
   const buf = Buffer.isBuffer(audio) ? audio : Buffer.from(audio);
@@ -117,7 +117,7 @@ async function whisperVerbose(audio, apiKey) {
     ['timestamp_granularities[]', 'word'],
     ['temperature', '0']
   ];
-  const res = await postMultipart(ENDPOINT, fields, buf, apiKey);
+  const res = await postMultipart(ENDPOINT, fields, buf, apiKey, audioName || 'audio.webm');
   if (!res) return { error: 'network' };
   console.log('[Stardust] whisper status', res.status, res.json && (res.json.error ? JSON.stringify(res.json.error).slice(0, 200) : ('segments=' + ((res.json.segments || []).length) + ' words=' + ((res.json.words || []).length))));
   if (res.status === 401 || res.status === 403) return { error: 'bad-key' };
@@ -127,8 +127,8 @@ async function whisperVerbose(audio, apiKey) {
 
 // audio: Uint8Array/Buffer of the recorded song (webm/opus). Returns
 // { syncedLyrics } on success, or { error } describing what to fix.
-async function transcribe({ title, artist, album, duration, audio } = {}, apiKey, share) {
-  const w = await whisperVerbose(audio, apiKey);
+async function transcribe({ title, artist, album, duration, audio, audioName } = {}, apiKey, share) {
+  const w = await whisperVerbose(audio, apiKey, audioName);
   if (w.error) return { error: w.error };
   const lrc = buildLRC(w.json);
   if (lrc) {
@@ -146,9 +146,9 @@ async function transcribe({ title, artist, album, duration, audio } = {}, apiKey
 
 // Forced alignment: keep the KNOWN lyrics text, take the audio's word clock.
 // Near-perfect word timing without trusting Whisper's (mishearable) words.
-async function alignToLyrics({ title, artist, album, duration, audio, lyrics } = {}, apiKey, share) {
+async function alignToLyrics({ title, artist, album, duration, audio, audioName, lyrics } = {}, apiKey, share) {
   if (!lyrics) return { error: 'no-lyrics' };
-  const w = await whisperVerbose(audio, apiKey);
+  const w = await whisperVerbose(audio, apiKey, audioName);
   if (w.error) return { error: w.error };
   const words = w.json.words || (w.json.segments || []).flatMap((sg) => sg.words || []);
   if (!words || words.length < 10) return { error: 'empty' };

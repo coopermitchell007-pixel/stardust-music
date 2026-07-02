@@ -1205,6 +1205,7 @@ const Lyrics = (() => {
   let transcribing = false;
   let offset = 0, barEl = null, offEl = null, srcEl = null, alignBtn = null; // sync-offset (s) + toolbar els
   let lastLrcText = '';                      // raw LRC of the current lyrics (for ⚡ alignment)
+  let syncing = false;                       // a background word-sync is in flight
   let userScrollUntil = 0;                   // pause auto-scroll while the user scrolls
   const SYL_RATE = 3.6;                      // starting syllables/sec — refined per song
   const LOOKAHEAD = 0.12;                    // s — highlight leads the audio slightly (a
@@ -1602,10 +1603,64 @@ const Lyrics = (() => {
     return new Uint8Array(await blob.arrayBuffer());
   }
 
-  // ⚡ Word-sync: force-align the KNOWN lyrics to this exact audio. The words
-  // stay the database's; only their timing comes from the song — near-perfect
-  // word-by-word without trusting Whisper's (mishearable) transcription.
+  const videoIdOf = () => {
+    const u = currentTrackUrl();
+    const m = u && u.match(/[?&]v=([\w-]+)/);
+    return m ? m[1] : null;
+  };
+
+  // Background word-sync: the main process fetches the song's audio DIRECTLY
+  // (no playback, takes ~1s), Whisper stamps it, and the known lyrics are
+  // force-aligned — the music never stops, the timing hot-swaps in when ready.
+  // Returns 'ok' | 'download' (fallback to listening) | 'fatal' (told the user).
+  async function remoteWordSync(silent) {
+    if (syncing || transcribing || !synced.length || !lastLrcText || hasWordTiming()) return 'fatal';
+    const vid = videoIdOf();
+    if (!vid) return 'download';
+    syncing = true;
+    const forKey = key;
+    const savedSrc = srcEl ? srcEl.textContent : '';
+    if (srcEl) srcEl.textContent = '⚡ word-syncing…';
+    let res = null;
+    try {
+      res = await ipcRenderer.invoke('stardust:wordsync', {
+        videoId: vid, title: np.title, artist: np.artist, album: np.album,
+        duration: np.duration, lyrics: lastLrcText
+      });
+    } catch {}
+    syncing = false;
+    if (!active || key !== forKey) return 'ok'; // track changed — result is cached for replay
+    if (res && res.syncedLyrics) {
+      applySynced(res.syncedLyrics);
+      setSourceLabel('aligned');
+      render(); sync();
+      toast('⚡ Word-synced — ' + Math.round((res.coverage || 0) * 100) + '% of words matched');
+      return 'ok';
+    }
+    if (srcEl) srcEl.textContent = savedSrc;
+    const e2 = res && res.error;
+    if (e2 === 'download') return 'download';
+    if (!silent) {
+      toast(e2 === 'no-key' ? 'Add a free Groq API key in the Stardust panel first'
+        : e2 === 'bad-key' ? 'That Groq API key was rejected — check Settings'
+          : e2 === 'align-failed' ? 'Could not match these lyrics to this audio (different version?)'
+            : e2 === 'network' ? 'Network error reaching the transcription service'
+              : 'Word-sync failed — try again');
+    }
+    return e2 === 'align-failed' || e2 === 'no-key' || e2 === 'bad-key' ? 'fatal' : 'download';
+  }
+
+  // ⚡ Word-sync button: instant background sync first; only if the direct
+  // audio fetch is unavailable does it fall back to listening once.
   async function startAlign() {
+    const r = await remoteWordSync(false);
+    if (r !== 'download') return;
+    toast('Direct audio fetch unavailable — listening once instead');
+    alignByListening();
+  }
+
+  // Fallback: force-align by playing the song through once (original flow).
+  async function alignByListening() {
     if (transcribing || !synced.length || !lastLrcText) return;
     transcribing = true;
     const forKey = key;
@@ -1642,33 +1697,44 @@ const Lyrics = (() => {
     }
   }
 
-  // Record the song once and transcribe it into word-timed lyrics.
+  // Record the song once and transcribe it into word-timed lyrics — but try
+  // the DIRECT audio fetch first, so there's usually nothing to sit through.
   async function startTranscribe(btn) {
-    if (transcribing) return;
+    if (transcribing || syncing) return;
     transcribing = true; if (btn) btn.disabled = true;
     const forKey = key;
     // Snapshot the song NOW — np gets reassigned to the next track if autoplay
     // advances, and we must save the transcript under THIS song.
     const trackTitle = np && np.title, trackArtist = np && np.artist, trackAlbum = np && np.album, trackDur = np && np.duration;
     const setStatus = (s2) => { const el = body && body.querySelector('.stardust-lyric-status'); if (el) el.textContent = s2; };
-    const audio = await captureSong(setStatus, forKey, '🎙');
+    let res = null, captured = false;
+    const vid = videoIdOf();
+    if (vid) {
+      setStatus('🎙 Fetching the song audio…');
+      try { res = await ipcRenderer.invoke('stardust:wordsync', { videoId: vid, title: trackTitle, artist: trackArtist, album: trackAlbum, duration: trackDur }); } catch {}
+      if (res && res.error === 'download') res = null; // direct fetch failed → listen
+    }
+    if (!res) {
+      captured = true;
+      const audio = await captureSong(setStatus, forKey, '🎙');
+      if (!audio) { transcribing = false; reEnableBtn(); return; }
+      setStatus('Transcribing… (about 10–30s)');
+      try {
+        res = await ipcRenderer.invoke('stardust:transcribe', { title: trackTitle, artist: trackArtist, album: trackAlbum, duration: trackDur, audio });
+      } catch {}
+    }
     transcribing = false;
-    if (!audio) { reEnableBtn(); return; }
-    setStatus('Transcribing… (about 10–30s)');
-    let res = null;
-    try {
-      res = await ipcRenderer.invoke('stardust:transcribe', { title: trackTitle, artist: trackArtist, album: trackAlbum, duration: trackDur, audio });
-    } catch {}
     if (res && (res.syncedLyrics || res.plainLyrics)) {
-      // Show now if we're still on that song (we paused, so usually yes).
+      // Show now if we're still on that song.
       const nowSame = active && key === forKey;
       if (nowSame) {
         if (res.syncedLyrics) applySynced(res.syncedLyrics);
         else { synced = []; plain = res.plainLyrics; mode = 'ours'; }
         setSourceLabel('transcript');
-        // We paused near the end to stop autoplay — restart from 0 and PLAY so
-        // the karaoke actually runs (otherwise the words just sit there).
-        try { const vv = playingVideo(); if (vv) { vv.currentTime = 0; if (vv.paused) doCommand('playpause'); } } catch {}
+        // Only the LISTEN path pauses near the end (to stop autoplay) — after
+        // it, restart from 0 and play so the karaoke actually runs. The direct
+        // path never touched playback.
+        if (captured) { try { const vv = playingVideo(); if (vv) { vv.currentTime = 0; if (vv.paused) doCommand('playpause'); } } catch {} }
         render(); sync();
       }
       const shared = res.shared ? ' · shared with the community' : '';
@@ -1738,6 +1804,12 @@ const Lyrics = (() => {
     lastIdx = -1; curEl = null; curSpans = null; sylAcc = 0;
     setSourceLabel(res && res.source, synthMode || (res && res.kind === 'synth'));
     render(statusText()); sync();
+    // Auto word-sync: when the lyrics lack real word timing and a Groq key is
+    // set, fetch + align in the background — no interaction, music keeps
+    // playing, the timing upgrades itself mid-song.
+    if (synced.length && !hasWordTiming() && settings && settings.transcribeKey && settings.autoWordSync !== false) {
+      setTimeout(() => { if (active && key === forKey && !hasWordTiming()) remoteWordSync(true); }, 2500);
+    }
   }
   // Turn plain (untimed) lyrics into an LRC by spreading lines across the track
   // (weighted by syllables) so they can be highlighted line + word by listening.
@@ -2380,6 +2452,8 @@ function buildUI() {
       ]),
       h('input', { type: 'password', id: 'stardust-transcribe-key', class: 'stardust-text-input', placeholder: 'Groq API key — for song transcription' }),
       h('div', { class: 'stardust-hint', text: 'Free key at console.groq.com → enables "🎙 Transcribe from the song" when no lyrics are found (word-timed).' }),
+      toggleRow('Auto word-sync', 'autoWordSync'),
+      h('div', { class: 'stardust-hint', text: 'With a Groq key set, songs without word timing are word-synced automatically in the background — nothing to sit through.' }),
       toggleRow('Share transcriptions', 'shareTranscripts'),
       h('div', { class: 'stardust-hint', text: 'Uploads finished transcriptions to the shared Stardust library so nobody transcribes the same song twice. Transcripts never enter public lyric databases, and real synced lyrics always take priority over them.' }),
       h('div', { class: 'stardust-hint', text: 'Hotkeys: ⌘/Ctrl+Shift+↑ like · ↓ dislike · S shuffle · C copy link' })

@@ -12,6 +12,7 @@ const lyrics = require('./lyrics');
 const updater = require('./updater');
 const stats = require('./stats');
 const transcribe = require('./transcribe');
+const songAudio = require('./audio');
 
 const YTM_URL = 'https://music.youtube.com/';
 const ICON_PNG = path.join(__dirname, '..', 'assets', 'icon.png');
@@ -311,6 +312,20 @@ function registerIpc() {
   ipcMain.handle('stardust:align', async (_e, payload) => {
     try { return await transcribe.alignToLyrics(payload, config.get('transcribeKey'), config.get('shareTranscripts') !== false); }
     catch (err) { return { error: err.message || 'failed' }; }
+  });
+  // Background word-sync: fetch the song's audio directly (no playback), then
+  // align to the given lyrics — or plain-transcribe when there are none.
+  ipcMain.handle('stardust:wordsync', async (_e, p = {}) => {
+    try {
+      const got = await songAudio.fetchSongAudio(p.videoId);
+      if (!got) return { error: 'download' };
+      const key = config.get('transcribeKey');
+      const share = config.get('shareTranscripts') !== false;
+      const payload = { title: p.title, artist: p.artist, album: p.album, duration: p.duration, audio: got.buf, audioName: got.name, lyrics: p.lyrics };
+      return p.lyrics
+        ? await transcribe.alignToLyrics(payload, key, share)
+        : await transcribe.transcribe(payload, key, share);
+    } catch (err) { return { error: 'download' }; }
   });
   ipcMain.handle('stardust:stats', () => stats.get());
   ipcMain.handle('stardust:stats-reset', () => { stats.reset(); return true; });
