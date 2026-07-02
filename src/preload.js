@@ -1844,8 +1844,7 @@ const Lyrics = (() => {
     if (settings && settings.transcribeKey && settings.autoWordSync !== false) {
       if (synced.length && !hasWordTiming()) {
         setTimeout(() => { if (active && key === forKey && !hasWordTiming()) remoteWordSync(true); }, 2500);
-      } else if (res && res.source === 'transcript' && !res.pinned && synced.length
-        && !(res.syncedLyrics && res.syncedLyrics.includes('stardust-aligned-v2'))) {
+      } else if (res && res.source === 'transcript' && !res.pinned && synced.length) {
         // Raw transcripts carry Whisper's misheard TEXT. If the databases have
         // the real words, swap to them and align — but the transcription file
         // is KEPT (🎙★ switches back), and a user-pinned transcript is never
@@ -1855,6 +1854,10 @@ const Lyrics = (() => {
           let db = null;
           try { db = await ipcRenderer.invoke('stardust:lyrics', { artist: np.artist, title: np.title, album: np.album, duration: np.duration, skipTranscript: true }); } catch {}
           if (!(active && key === forKey) || !db || !db.syncedLyrics || db.kind === 'synth') return;
+          // Only swap an ALIGNED cache for a strictly better (word-timed) DB
+          // source; raw transcripts upgrade to any real DB lyrics.
+          const aligned = res.syncedLyrics && res.syncedLyrics.includes('stardust-aligned-v2');
+          if (aligned && db.kind !== 'word') return;
           try { ipcRenderer.invoke('stardust:transcript-pref', { title: np.title, artist: np.artist, pref: 'db' }); } catch {}
           applySynced(db.syncedLyrics);
           stampsReal = db.kind === 'line';

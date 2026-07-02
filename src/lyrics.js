@@ -184,16 +184,23 @@ async function fetchLyrics({ artist, title, album, duration, skipTranscript } = 
   const fArtist = altPairs[0] ? altPairs[0].artist : artist1;
   const fWant = altPairs[0] ? wants[1] : want;
 
-  // Stage 1: the REAL synced sources race in parallel (first word-timed wins).
-  // Musixmatch leads: the best catalog, and its richsync is human-quality
-  // word-level timing.
-  const primary = await raceLyrics([
-    fetchMusixmatch({ title: fTitle, artist: fArtist, duration, want: fWant }).catch(() => null),
+  // Stage 1: Musixmatch gets a RESERVED window — it needs 2-3 round trips,
+  // and the fast line-level sources must not beat its human word-level
+  // richsync to the finish line. The rest race as before.
+  const mxmP = fetchMusixmatch({ title: fTitle, artist: fArtist, duration, want: fWant }).catch(() => null);
+  const othersP = raceLyrics([
     fetchLrclib({ artist, ct, bare, artist1, duration, wants, altPairs }).catch(() => null),
     fetchNetease({ title: fTitle, artist: fArtist, want: fWant }).catch(() => null),
     fetchKugou({ title: fTitle, artist: fArtist, want: fWant }).catch(() => null)
   ]);
-  if (primary) return primary;
+  const mxm = await Promise.race([mxmP, new Promise((r) => setTimeout(() => r(undefined), 4000))]);
+  if (mxm && mxm.kind === 'word') return mxm;   // richsync — nothing beats it
+  const rest = await othersP;
+  if (mxm && (!rest || KIND_RANK[mxm.kind] >= KIND_RANK[rest.kind])) return mxm;
+  if (rest) return rest;
+  // MXM may still finish after its window if everything else came up empty.
+  const late = await Promise.race([mxmP, new Promise((r) => setTimeout(() => r(undefined), 1500))]);
+  if (late) return late;
 
   // Stage 1.5: the community transcript store — someone else already listened
   // to this exact song (word-timed). Whisper can mishear, so it must never
@@ -268,20 +275,38 @@ function richsyncToLRC(arr) {
 async function fetchMusixmatch({ title, artist, duration, want }) {
   const token = await mxmToken();
   if (!token) return null;
-  const macro = await getJson(MXM_ROOT + 'macro.subtitles.get?' + qs({
+  let macro = await getJson(MXM_ROOT + 'macro.subtitles.get?' + qs({
     format: 'json', namespace: 'lyrics_richsynched', subtitle_format: 'lrc',
     app_id: 'web-desktop-app-v1.0', usertoken: token,
     q_artist: artist || '', q_track: title || '', q_duration: duration || ''
   }), MXM_HEADERS);
-  const head = macro && macro.message && macro.message.header;
-  if (head && (head.status_code === 401 || head.hint === 'captcha')) { mxmTok = null; mxmToken(true).catch(() => {}); return null; }
+  let head = macro && macro.message && macro.message.header;
+  if (head && (head.status_code === 401 || head.hint === 'captcha')) {
+    // Token expired/captcha'd — refresh once and retry immediately, so a
+    // stale token costs one extra round trip instead of losing the song.
+    mxmTok = null;
+    const fresh = await mxmToken(true);
+    if (!fresh) return null;
+    macro = await getJson(MXM_ROOT + 'macro.subtitles.get?' + qs({
+      format: 'json', namespace: 'lyrics_richsynched', subtitle_format: 'lrc',
+      app_id: 'web-desktop-app-v1.0', usertoken: fresh,
+      q_artist: artist || '', q_track: title || '', q_duration: duration || ''
+    }), MXM_HEADERS);
+  }
   const mc = macro && macro.message && macro.message.body && macro.message.body.macro_calls;
   if (!mc) return null;
   const trk = mc['matcher.track.get'] && mc['matcher.track.get'].message && mc['matcher.track.get'].message.body && mc['matcher.track.get'].message.body.track;
   if (!trk) return null;
-  // Verify the match like every other provider (script + title/duration).
-  const cand = { trackName: trk.track_name, artistName: trk.artist_name, duration: trk.track_length || 0, syncedLyrics: 'x' };
-  if (!scoreCandidate(cand, want)) return null;
+  // Verify the match — but LENIENTLY: Musixmatch's matcher already matched
+  // with q_duration, and a YouTube edition often runs several seconds longer
+  // than the album cut. Require a title match + (artist overlap OR duration
+  // within 12s); the strict ±7s gate was rejecting correct hits.
+  const nt = norm(trk.track_name), na = norm(trk.artist_name);
+  const titleOk = nt && (nt === want.title || (nt.length >= 3 && want.title.length >= 3 && (nt.includes(want.title) || want.title.includes(nt))));
+  const artistOk = !!want.artist && !!na && (na.includes(want.artist) || want.artist.includes(na));
+  const durOk = !(trk.track_length && want.duration) || Math.abs(trk.track_length - want.duration) <= 12;
+  if (!titleOk || (!artistOk && !durOk)) return null;
+  if (isCJK(trk.track_name) !== want.cjkTitle) return null;
 
   if (trk.has_richsync) {
     const rs = await getJson(MXM_ROOT + 'track.richsync.get?' + qs({
