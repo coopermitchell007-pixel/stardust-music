@@ -848,3 +848,24 @@ body.stardust-playing img.stardust-vinyl { animation-play-state: running !import
 /* Synced lines seek on click */
 .stardust-lyric-line.words { cursor: pointer; }
 .stardust-lyric-line.words:not(.active):hover { color: rgba(255,255,255,0.68); }
+
+/* Adlibs — "(background vocals)" split onto their own smaller sub-line */
+.stardust-lyric-adlib {
+  font-size: 1.1rem; font-weight: 500; font-style: italic;
+  color: rgba(255,255,255,0.30); line-height: 1.3; margin-top: 2px;
+  transition: color 0.25s ease;
+}
+.stardust-lyric-line.active .stardust-lyric-adlib {
+  color: color-mix(in srgb, var(--stardust-accent) 45%, rgba(255,255,255,0.75));
+  text-shadow: 0 0 12px color-mix(in srgb, var(--stardust-accent) 35%, transparent);
+}
+/* A line that is ENTIRELY an adlib renders small */
+.stardust-lyric-line.adlib-line { font-size: 1.25rem; font-weight: 600; opacity: 0.85; }
+
+/* Instrumental-gap pulse on a finished line waiting for the next one */
+.stardust-lyric-line.active.gap::after {
+  content: ' ♪'; font-weight: 400;
+  color: color-mix(in srgb, var(--stardust-accent) 80%, #fff);
+  animation: stardustGapPulse 1.6s ease-in-out infinite;
+}
+@keyframes stardustGapPulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 0.9; } }

@@ -303,6 +303,7 @@ function registerIpc() {
   ipcMain.handle('stardust:get-nowplaying', () => lastNowPlaying);
 
   ipcMain.handle('stardust:lyrics', (_e, meta) => lyrics.fetchLyrics(meta));
+  ipcMain.handle('stardust:transcript-remove', (_e, { title, artist } = {}) => { transcribe.removeCached(title, artist); return true; });
   ipcMain.handle('stardust:transcribe', async (_e, payload) => {
     try { return await transcribe.transcribe(payload, config.get('transcribeKey'), config.get('shareTranscripts') !== false); }
     catch (err) { return { error: err.message || 'failed' }; }

@@ -555,5 +555,86 @@
       "queue"
     ],
     "preview": "linear-gradient(135deg, #2a1f4a, #0c0a1a)"
+  },
+  {
+    "id": "audio-karaoke",
+    "type": "audio",
+    "name": "Karaoke Mode",
+    "author": "Stardust",
+    "description": "Cancels the center-channel vocals so you can sing them yourself — pairs perfectly with Synced Lyrics. Works best on stereo mixes.",
+    "tags": [
+      "karaoke",
+      "vocals",
+      "sing"
+    ],
+    "preview": "radial-gradient(circle at 50% 30%, #ffd23f, transparent 55%), radial-gradient(circle at 50% 90%, #8b5cff, transparent 60%), #120a1a"
+  },
+  {
+    "id": "anim-prism-accent",
+    "type": "animation",
+    "name": "Prism Accent",
+    "author": "Stardust",
+    "description": "Your accent colour slowly drifts through the whole spectrum — every glow, button and slider cycles with it.",
+    "tags": [
+      "color",
+      "rainbow",
+      "accent"
+    ],
+    "preview": "linear-gradient(90deg, #ff5c7a, #ffd23f, #2be6a0, #2be0ff, #8b5cff, #ff2bd6)"
+  },
+  {
+    "id": "solar-flare",
+    "type": "theme",
+    "name": "Solar Flare",
+    "author": "Stardust",
+    "description": "Molten gold and ember orange erupting over a charred sky.",
+    "tags": [
+      "warm",
+      "gold",
+      "fire"
+    ],
+    "preview": "radial-gradient(120% 100% at 50% 110%, #ff8c1a, transparent 62%), radial-gradient(90% 70% at 20% 0%, #5c1a02, transparent 60%), #0a0402",
+    "theme": {
+      "accent": "#ffa22b",
+      "background": "radial-gradient(1200px 780px at 50% 115%, #4a1c02 0%, rgba(74,28,2,0) 62%), radial-gradient(900px 640px at 18% -8%, #38130a 0%, rgba(56,19,10,0) 58%), #0a0402",
+      "glass": {
+        "blur": 20,
+        "opacity": 0.52
+      },
+      "starfield": {
+        "enabled": true,
+        "count": 260,
+        "color": "#ffd9a0",
+        "speed": 0.22,
+        "size": 1.7,
+        "twinkle": true,
+        "shootingStars": true
+      },
+      "visualizer": {
+        "enabled": true,
+        "color": "#ffa22b",
+        "style": "bars"
+      },
+      "bg": {
+        "base": "#0a0402",
+        "blooms": [
+          {
+            "x": 0.5,
+            "y": 1.1,
+            "r": 0.95,
+            "color": "#4a1c02",
+            "alpha": 0.65
+          },
+          {
+            "x": 0.18,
+            "y": 0,
+            "r": 0.7,
+            "color": "#38130a",
+            "alpha": 0.45
+          }
+        ]
+      },
+      "css": ""
+    }
   }
 ]

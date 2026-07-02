@@ -32,8 +32,9 @@ const DEFAULTS = {
   // Optional: a Groq API key (free tier) enables "Transcribe this song" — it
   // listens to the audio once and generates word-timed lyrics via Whisper.
   transcribeKey: '',
-  // Share successful transcriptions with the community lyrics database
-  // (lrclib.net) so nobody has to transcribe the same song twice.
+  // Share successful transcriptions with the Stardust community store
+  // (Supabase) so nobody has to transcribe the same song twice. Transcripts
+  // stay out of public lyric databases — they can mishear words.
   shareTranscripts: true
 };
 

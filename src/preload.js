@@ -384,6 +384,7 @@ const Visualizer = (() => {
   //                                          panner -> reverb -> wet -> analyser
   let audioCtx = null, analyser = null, freq = null, attachedEl = null;
   let bass = null, treble = null, volume = null, panner = null, reverb = null, wet = null, lfo = null, fade = null;
+  let karOn = false, karNodes = null; // karaoke (center-vocal cancel) rewiring
   let useReal = false;       // true once we get non-zero spectrum data
   let zeroFrames = 0;        // consecutive silent frames while playing -> tainted
   let reactiveColor = null;  // per-track reactive theming override
@@ -405,6 +406,7 @@ const Visualizer = (() => {
     document.body.appendChild(canvas);
     ctx = canvas.getContext('2d');
     window.addEventListener('resize', resize);
+    document.addEventListener('visibilitychange', () => (document.hidden ? stop() : (enabled && start())));
   }
 
   function resize() {
@@ -514,6 +516,7 @@ const Visualizer = (() => {
   }
 
   let lastSimAt = 0;
+  const gradCache = []; let gradKey = '';
   function frame(ts) {
     if (!enabled) return;
 
@@ -532,6 +535,7 @@ const Visualizer = (() => {
 
     ctx.clearRect(0, 0, w, h);
     const accent = reactiveColor || settings.accentOverride || cfg.color || '#8b5cff';
+    if (gradKey !== accent + '|' + h) { gradCache.length = 0; gradKey = accent + '|' + h; }
     const gap = 2;
     const bw = (w / BARS) - gap;
     for (let i = 0; i < BARS; i++) {
@@ -539,14 +543,19 @@ const Visualizer = (() => {
       const bh = levels[i] * (h - 20);
       if (bh < 2) continue;
       const x = i * (bw + gap);
-      const y = h - bh;
-      const grad = ctx.createLinearGradient(0, y, 0, h);
-      grad.addColorStop(0, accent);
-      grad.addColorStop(0.6, accent);
-      grad.addColorStop(1, 'transparent');
+      // Gradients bucketed by height (8px) and cached — building 72 fresh
+      // gradients every frame was measurable main-thread work.
+      const bucket = bh >> 3;
+      let grad = gradCache[bucket];
+      if (!grad) {
+        grad = ctx.createLinearGradient(0, h - ((bucket + 1) << 3), 0, h);
+        grad.addColorStop(0, accent);
+        grad.addColorStop(0.6, accent);
+        grad.addColorStop(1, 'transparent');
+        gradCache[bucket] = grad;
+      }
       ctx.fillStyle = grad;
-      // rounded-ish caps for a softer look
-      ctx.fillRect(x, y, bw, bh);
+      ctx.fillRect(x, h - bh, bw, bh);
     }
     raf = requestAnimationFrame(frame);
   }
@@ -573,6 +582,32 @@ const Visualizer = (() => {
       }
     },
     reverb: (on) => { ensureAudio(); if (wet) wet.gain.value = on ? 0.32 : 0; },
+    // Center-channel cancel (L−R): vocals sit dead-center in most stereo
+    // mixes, so subtracting the channels removes them and leaves the band.
+    karaoke: (on) => {
+      ensureAudio();
+      if (!audioCtx || !treble || !volume) return;
+      if (on && !karOn) {
+        if (!karNodes) {
+          const split = audioCtx.createChannelSplitter(2);
+          const l = audioCtx.createGain(); l.gain.value = 0.7;
+          const r = audioCtx.createGain(); r.gain.value = -0.7;
+          const sum = audioCtx.createGain(); sum.gain.value = 1;
+          split.connect(l, 0); split.connect(r, 1);
+          l.connect(sum); r.connect(sum);
+          karNodes = { split, sum };
+        }
+        try { treble.disconnect(); } catch {}
+        treble.connect(karNodes.split);
+        karNodes.sum.connect(volume);
+        karOn = true;
+      } else if (!on && karOn) {
+        try { treble.disconnect(); } catch {}
+        try { karNodes.sum.disconnect(); } catch {}
+        treble.connect(volume);
+        karOn = false;
+      }
+    },
     // Smoothly ramp the audible level (for crossfade/fade transitions).
     fade: (target, seconds) => {
       ensureAudio();
@@ -793,7 +828,9 @@ const BEHAVIORS = {
   'feat-reactive-theme':{ on: () => ReactiveTheme.enable(), off: () => ReactiveTheme.disable() },
   'feat-crossfade':     { on: () => Crossfade.enable(), off: () => Crossfade.disable() },
   'feat-playlist-tools':{ on: () => PlaylistTools.show(), off: () => PlaylistTools.hide() },
-  'anim-vinyl-spin':    { on: () => VinylSpin.on(), off: () => VinylSpin.off() }
+  'anim-vinyl-spin':    { on: () => VinylSpin.on(), off: () => VinylSpin.off() },
+  'anim-prism-accent':  { on: () => PrismAccent.on(), off: () => PrismAccent.off() },
+  'audio-karaoke':      { on: () => Visualizer.fx.karaoke(true), off: () => Visualizer.fx.karaoke(false) }
 };
 
 // --- Vinyl Spin: find the actual artwork <img> at runtime (YTM class names are
@@ -1033,6 +1070,25 @@ const AutoDJ = (() => {
   return { enable, disable };
 })();
 
+// --- Prism Accent: the accent colour slowly cycles hue (CSS relative color) --
+const PrismAccent = (() => {
+  let timer = null, deg = 0;
+  const base = () => reactiveAccent || (settings && settings.accentOverride) || (activeTheme && activeTheme.accent) || '#8b5cff';
+  function on() {
+    if (timer) return;
+    timer = setInterval(() => {
+      deg = (deg + 1.4) % 360;
+      document.documentElement.style.setProperty('--stardust-accent', `hsl(from ${base()} calc(h + ${deg.toFixed(0)}) s l)`);
+    }, 120);
+  }
+  function off() {
+    if (timer) { clearInterval(timer); timer = null; }
+    if (reactiveAccent) document.documentElement.style.setProperty('--stardust-accent', reactiveAccent);
+    else document.documentElement.style.removeProperty('--stardust-accent');
+  }
+  return { on, off };
+})();
+
 // Pull a vibrant colour out of album art (bright + saturated pixel, else avg).
 function extractColor(artUrl, cb) {
   const img = new Image(); img.crossOrigin = 'anonymous';
@@ -1143,7 +1199,7 @@ const Lyrics = (() => {
   let mode = 'off', host = null;                     // 'searching' | 'ours' | 'off'
   let curEl = null, curSpans = null, curTiming = null;
   let curMode = 'est', curSungDur = 1, lastCT = 0;
-  let synthMode = false, lineSyl = null, cumSyl = null, totalSyl = 1;
+  let synthMode = false, lineSyl = null, cumSyl = null, totalSyl = 1, secSyl = null;
   let curSyl = null, curSylTotal = 1, sylPtr = 0;
   let floor = 0, sylAcc = 0;                 // adaptive vocal noise-floor + syllables-sung accumulator
   let transcribing = false;
@@ -1209,15 +1265,19 @@ const Lyrics = (() => {
   }
   // The <video> element YTM is actually playing (prefer a playing one; some
   // pages have a stale/hidden extra video whose time never moves).
+  let pvEl = null, pvAt = 0;
   function playingVideo() {
+    const now = Date.now();
+    if (pvEl && now - pvAt < 1000 && pvEl.isConnected) return pvEl;
     const vids = document.querySelectorAll('video');
-    if (!vids.length) return null;
+    if (!vids.length) { pvEl = null; return null; }
     let best = null;
     for (const vd of vids) {
-      if (!vd.paused && vd.currentTime > 0) return vd;
+      if (!vd.paused && vd.currentTime > 0) { best = vd; break; }
       if (!best || (vd.currentTime || 0) > (best.currentTime || 0)) best = vd;
     }
-    return best || vids[0];
+    pvEl = best || vids[0]; pvAt = now;
+    return pvEl;
   }
   function stopRAF() { if (raf) { clearInterval(raf); raf = null; } }
 
@@ -1255,20 +1315,32 @@ const Lyrics = (() => {
     offEl = h('button', { class: 'stardust-lyr-tool sd-off', title: 'Sync offset — click to reset', text: '0.0s' });
     const copy = h('button', { class: 'stardust-lyr-tool', title: 'Copy the lyrics to the clipboard', text: '⧉ Copy' });
     const re = h('button', { class: 'stardust-lyr-tool', title: 'Transcribe this song yourself — listens once and replaces these lyrics with word-timed ones (needs a Groq key)', text: '🎙' });
+    const again = h('button', { class: 'stardust-lyr-tool', title: 'Search the lyric databases again — skips transcriptions, and replaces yours if something is found', text: '🔎' });
     srcEl = h('span', { class: 'stardust-lyr-src', text: '' });
     minus.addEventListener('click', () => nudge(-0.5));
     plus.addEventListener('click', () => nudge(0.5));
     offEl.addEventListener('click', () => nudge(0));
     copy.addEventListener('click', copyLyrics);
     re.addEventListener('click', reTranscribe);
-    barEl = h('div', { class: 'stardust-lyr-tools' }, [minus, offEl, plus, copy, re, srcEl]);
+    again.addEventListener('click', searchAgain);
+    barEl = h('div', { class: 'stardust-lyr-tools' }, [minus, offEl, plus, copy, re, again, srcEl]);
     return barEl;
   }
-  const SRC_LABEL = { lrclib: 'LRCLIB', netease: 'NetEase', kugou: 'KuGou', genius: 'Genius', transcript: 'transcribed' };
+  const SRC_LABEL = { lrclib: 'LRCLIB', netease: 'NetEase', kugou: 'KuGou', genius: 'Genius', transcript: 'transcribed', community: 'community transcript' };
   function setSourceLabel(source, estimated) {
     if (!srcEl) return;
     const name = SRC_LABEL[source];
     srcEl.textContent = name ? ('via ' + name + (estimated ? ' · estimated timing' : '')) : '';
+  }
+  // "Search again": re-run the provider search SKIPPING transcription sources.
+  // If the databases have something, it replaces the transcription (and the
+  // local transcript cache is forgotten so the choice sticks on replay).
+  function searchAgain() {
+    if (transcribing || mode === 'searching' || !np) return;
+    synced = []; plain = null; synthMode = false; mode = 'searching';
+    setSourceLabel(null);
+    render('Searching lyrics…'); sync();
+    doFetch(true);
   }
   // Even when lyrics were found, the user can choose to transcribe the actual
   // audio instead (their words may be a cover/remix the databases don't have).
@@ -1378,7 +1450,7 @@ const Lyrics = (() => {
     }
     if (synced.length) {
       for (const l of synced) {
-        const line = h('div', { class: 'stardust-lyric-line words', title: 'Play from here' });
+        const line = h('div', { class: 'stardust-lyric-line words' + (l.adOnly ? ' adlib-line' : ''), title: 'Play from here' });
         // Always split into per-word spans so we can highlight word-by-word.
         // Real timing when the line has it (enhanced LRC / NetEase yrc),
         // estimated (by word length across the line) otherwise.
@@ -1388,6 +1460,8 @@ const Lyrics = (() => {
             if (i < l.words.length - 1) line.appendChild(document.createTextNode(' '));
           });
         } else { line.textContent = l.s || '♪'; }
+        // Adlibs split out of the line render as their own smaller sub-line.
+        if (l.ad) line.appendChild(h('div', { class: 'stardust-lyric-adlib', text: '(' + l.ad + ')' }));
         line.addEventListener('click', () => seekTo(l.t));
         body.appendChild(line);
       }
@@ -1401,7 +1475,7 @@ const Lyrics = (() => {
   // Reset any highlighting on a line (when it stops being active).
   function clearWords(lineEl) {
     if (!lineEl) return;
-    lineEl.classList.remove('sweep');
+    lineEl.classList.remove('sweep', 'gap');
     lineEl.style.removeProperty('--wp');
     for (const s of lineEl.querySelectorAll('.w')) {
       if (s.className !== 'w') s.className = 'w';
@@ -1438,15 +1512,43 @@ const Lyrics = (() => {
   }
   const stripTag = (s) => (s || '').replace(/\s*[([][^)\]]*(?:official|music\s*video|lyric|audio|visuali[sz]er|remaster|sped\s*up|slowed|reverb|extended|\bhd\b|\b4k\b|\blive\b)[^)\]]*[)\]]/gi, '').trim();
 
+  // Split "(...)" adlibs out of a line: the main words carry the timing, the
+  // adlib renders as its own smaller sub-line. Only for lines WITHOUT real
+  // per-word timestamps (adlibs live in Genius/plain text; yrc timing is exact
+  // and must not be re-segmented).
+  function splitAdlib(l) {
+    if (l.words && l.words.length && l.words[0].time != null) return;
+    const s = l.s || '';
+    if (!/[()（）]/.test(s)) return;
+    const ads = [];
+    const main = s.replace(/[（(]([^)）]{1,60})[)）]/g, (_, inner) => { ads.push(inner.trim()); return ' '; })
+      .replace(/\s+/g, ' ').trim();
+    if (!ads.filter(Boolean).length) return;
+    if (!main) { l.adOnly = true; return; }  // the whole line IS an adlib
+    l.s = main; l.words = estWords(main); l.ad = ads.filter(Boolean).join(' · ');
+  }
+
   // Turn an LRC string into de-bloated synced lines and switch to 'ours'.
   function applySynced(text) {
     const titleN = alnum(stripTag(np && np.title));
-    synced = parseLRC(text).filter((l, i) => !isBloatLine(l.s, i, titleN));
+    // Section headers ("[Chorus]", "[Verse 2]") aren't sung — drop them from
+    // the lines but keep them as STRUCTURE: the line after a header starts a
+    // section, the strongest snap target when singing re-enters after a break.
+    const parsed = parseLRC(text);
+    const kept = [];
+    let secNext = true; // the first line always starts a section
+    for (const l of parsed) {
+      if (/^\[[^\][]{1,40}\]$/.test((l.s || '').trim())) { secNext = true; continue; }
+      if (secNext) { l.sec = true; secNext = false; }
+      kept.push(l);
+    }
+    synced = kept.filter((l, i) => !isBloatLine(l.s, i, titleN));
     for (const l of synced) {
       const s2 = stripTag(l.s);
       // The words spans are what actually render — rebuild them if a tag came
       // off, or the stripped text would still show word by word.
       if (s2 !== l.s) { l.s = s2; l.words = estWords(s2); }
+      splitAdlib(l);
     }
     plain = null; mode = 'ours'; synthMode = false;
     lastIdx = -1; curEl = null; curSpans = null;
@@ -1523,13 +1625,25 @@ const Lyrics = (() => {
     setSourceLabel(null);
     render('Searching lyrics…'); sync(); doFetch();
   }
-  async function doFetch() {
+  async function doFetch(skipTranscript) {
     attempts++;
     const forKey = key;
     const hadDuration = np.duration > 0;
     let res = null;
-    try { res = await ipcRenderer.invoke('stardust:lyrics', { artist: np.artist, title: np.title, album: np.album, duration: np.duration }); } catch {}
+    try { res = await ipcRenderer.invoke('stardust:lyrics', { artist: np.artist, title: np.title, album: np.album, duration: np.duration, skipTranscript: !!skipTranscript }); } catch {}
     if (!active || key !== forKey) return;   // track changed while awaiting
+    if (skipTranscript) {
+      if (res && (res.syncedLyrics || res.plainLyrics)) {
+        // The user prefers these database lyrics — forget the transcription.
+        try { ipcRenderer.invoke('stardust:transcript-remove', { title: np.title, artist: np.artist }); } catch {}
+        toast('✓ Found database lyrics');
+      } else {
+        // Nothing better out there — put the transcription back.
+        toast('No database lyrics found — keeping the transcription');
+        doFetch(false);
+        return;
+      }
+    }
     const titleN = alnum(stripTag(np.title));
     let synthed = false;
     if (res && res.syncedLyrics) {
@@ -1576,8 +1690,12 @@ const Lyrics = (() => {
   // Per-line syllable weights for energy-driven progression of synth lyrics.
   function buildSynthModel() {
     lineSyl = synced.map((l) => Math.max(0.6, (l.s || '').toLowerCase().replace(/\[[^\]]*\]/g, '').match(/[aeiouy]+/g)?.length || 0.6));
-    totalSyl = 0; cumSyl = [];
-    for (const s of lineSyl) { cumSyl.push(totalSyl); totalSyl += s; }
+    totalSyl = 0; cumSyl = []; secSyl = [];
+    for (let i = 0; i < lineSyl.length; i++) {
+      cumSyl.push(totalSyl);
+      if (synced[i].sec) secSyl.push(totalSyl); // section starts = snap anchors
+      totalSyl += lineSyl[i];
+    }
     totalSyl = totalSyl || 1;
   }
 
@@ -1623,14 +1741,20 @@ const Lyrics = (() => {
     const rate = totalSyl / predVoiced;      // syllables per VOICED second
     if (dt > 0 && L.voice) {
       sylAcc += dt * rate * (0.75 + 0.5 * L.e);
-      if (L.onset > 0) sylAcc += 0.35 * L.onset;
+      if (L.onset > 0) sylAcc += 0.45 * L.onset; // syllable attacks carry more weight
     }
-    // Singing resumed after a real instrumental break -> a section boundary;
-    // snap to the nearest line start so the verse/chorus enters crisp.
+    // Singing resumed after a real instrumental break -> a structural boundary.
+    // Prefer snapping to a SECTION start ([Verse]/[Chorus] positions survive as
+    // l.sec) with a generous tolerance; fall back to the nearest line start.
     if (hear.resumed && cumSyl.length > 2) {
-      let best = sylAcc, bd = Infinity;
-      for (const c of cumSyl) { const d = Math.abs(c - sylAcc); if (d < bd) { bd = d; best = c; } }
-      if (bd < totalSyl * 0.06 + 4) sylAcc = best;
+      const nearest = (arr, tol) => {
+        let best = null, bd = Infinity;
+        for (const c of arr) { const d = Math.abs(c - sylAcc); if (d < bd) { bd = d; best = c; } }
+        return bd <= tol ? best : null;
+      };
+      const snap = (secSyl && secSyl.length > 1 ? nearest(secSyl, totalSyl * 0.12 + 6) : null)
+        ?? nearest(cumSyl, totalSyl * 0.06 + 4);
+      if (snap != null) sylAcc = snap;
     }
     // Anchor to voiced-time-heard (NOT wall time). Asymmetric band: lagging a
     // little reads fine, running ahead of the singer reads terribly.
@@ -1696,7 +1820,15 @@ const Lyrics = (() => {
         if (real) {
           curTiming = computeWordTiming(line, lineEnd);
         } else {
-          curSyl = (line.words || []).map((w) => ((w.text || '').toLowerCase().match(/[aeiouy]+/g) || []).length || 1);
+          // Weight words by syllables, plus how singers actually phrase:
+          // a breath after punctuation, and the final word of a line held long.
+          const ws2 = line.words || [];
+          curSyl = ws2.map((w, i2) => {
+            let syl = ((w.text || '').toLowerCase().match(/[aeiouy]+/g) || []).length || 1;
+            if (/[,;:.!?…—–-]$/.test(w.text || '')) syl += 0.6;
+            if (i2 === ws2.length - 1) syl *= 1.35;
+            return syl;
+          });
           curSylTotal = curSyl.reduce((a, b) => a + b, 0) || 1;
           const win = Math.max(0.5, lineEnd - line.t);
           // LEARN the song's sung pace from the line's REAL timestamps: a short
@@ -1722,6 +1854,7 @@ const Lyrics = (() => {
         const f = tm.end > tm.start ? (t - tm.start) / (tm.end - tm.start) : (t >= tm.start ? 1 : 0);
         setWordFill(curSpans[i], Math.min(1, Math.max(0, f)));
       }
+      markGap(t, curTiming.length ? curTiming[curTiming.length - 1].end : line.t, idx, v);
       return;
     }
     if (!curSyl) return;
@@ -1752,6 +1885,16 @@ const Lyrics = (() => {
       setWordFill(curSpans[i], Math.min(1, Math.max(0, (sylPtr - acc) / s)));
       acc += s;
     }
+    markGap(t, line.t + curSungDur, idx, v);
+  }
+
+  // A "♪" pulse on the active line during a long instrumental wait before the
+  // next line, so a finished line doesn't read as frozen.
+  function markGap(t, sungEnd, idx, v) {
+    if (!curEl) return;
+    const nextT = synced[idx + 1] ? synced[idx + 1].t : (isFinite(v.duration) ? v.duration : sungEnd);
+    const gap = nextT - sungEnd > 4 && t > sungEnd + 0.8 && t < nextT - 0.5;
+    if (curEl.classList.contains('gap') !== gap) curEl.classList.toggle('gap', gap);
   }
 
   // Auto-scroll the active line to center — unless the user is scrolling the
@@ -1796,6 +1939,7 @@ const Lyrics = (() => {
   // Every active word uses the same continuous-fill style; only --wp changes.
   function setWordFill(el, f) {
     if (el.className !== 'w cur') el.className = 'w cur';
+    if (f > 0 && f < 1) f = Math.pow(f, 0.8); // fast attack, easing hold — matches sung articulation
     const pct = (f * 100).toFixed(1) + '%';
     if (el._wp !== pct) { el.style.setProperty('--wp', pct); el._wp = pct; }
   }
@@ -2015,8 +2159,11 @@ function skipAds() {
     weMutedForAd = false;
   }
 
-  dismissUpsells();
+  // The upsell sweep is 6 selector groups over the whole document — its own
+  // slower beat keeps the hot ad path cheap.
+  if (Date.now() - lastUpsellSweep > 1500) { lastUpsellSweep = Date.now(); dismissUpsells(); }
 }
+let lastUpsellSweep = 0;
 
 // Dismiss + hide every Premium / upgrade upsell we can find.
 function dismissUpsells() {
@@ -2152,7 +2299,7 @@ function buildUI() {
       h('input', { type: 'password', id: 'stardust-transcribe-key', class: 'stardust-text-input', placeholder: 'Groq API key — for song transcription' }),
       h('div', { class: 'stardust-hint', text: 'Free key at console.groq.com → enables "🎙 Transcribe from the song" when no lyrics are found (word-timed).' }),
       toggleRow('Share transcriptions', 'shareTranscripts'),
-      h('div', { class: 'stardust-hint', text: 'Publishes your finished transcriptions to the open lrclib.net lyrics database, so nobody has to transcribe the same song twice.' }),
+      h('div', { class: 'stardust-hint', text: 'Uploads finished transcriptions to the shared Stardust library so nobody transcribes the same song twice. Transcripts never enter public lyric databases, and real synced lyrics always take priority over them.' }),
       h('div', { class: 'stardust-hint', text: 'Hotkeys: ⌘/Ctrl+Shift+↑ like · ↓ dislike · S shuffle · C copy link' })
     ]),
     section([
@@ -2620,7 +2767,7 @@ async function boot() {
   buildUI();
 
   setInterval(pollNowPlaying, 1000);
-  setInterval(skipAds, 200);
+  setInterval(skipAds, 500);
   watchAds();
   skipAds();
 }

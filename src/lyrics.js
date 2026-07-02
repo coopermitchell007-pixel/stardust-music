@@ -6,6 +6,7 @@
 const https = require('https');
 const http = require('http');
 const transcribe = require('./transcribe');
+const community = require('./community');
 
 // Core HTTP(S) GET with redirect-following, a hard timeout, and optional raw
 // (non-JSON) body — used for Genius's HTML lyrics pages.
@@ -143,11 +144,14 @@ function raceLyrics(promises) {
   });
 }
 
-async function fetchLyrics({ artist, title, album, duration } = {}) {
+async function fetchLyrics({ artist, title, album, duration, skipTranscript } = {}) {
   if (!title) return null;
   // A previously transcribed version of THIS song is the truest match (it's the
-  // actual audio's words, word-timed) — use it instantly.
-  try { const c = transcribe.getCached(title, artist); if (c) return { syncedLyrics: c, plainLyrics: '', kind: 'word', source: 'transcript' }; } catch {}
+  // actual audio's words, word-timed) — use it instantly. skipTranscript is the
+  // "search the databases again" path: ignore transcription sources entirely.
+  if (!skipTranscript) {
+    try { const c = transcribe.getCached(title, artist); if (c) return { syncedLyrics: c, plainLyrics: '', kind: 'word', source: 'transcript' }; } catch {}
+  }
   if (!(duration > 0)) duration = undefined; // 0/NaN at track start → don't over-constrain
   const ct = cleanTitle(title);
   const bare = title.replace(/\(.*?\)|\[.*?\]/g, '').replace(/\s+/g, ' ').trim() || ct;
@@ -179,6 +183,16 @@ async function fetchLyrics({ artist, title, album, duration } = {}) {
     fetchKugou({ title: fTitle, artist: fArtist, want: fWant }).catch(() => null)
   ]);
   if (primary) return primary;
+
+  // Stage 1.5: the community transcript store — someone else already listened
+  // to this exact song (word-timed). Whisper can mishear, so it must never
+  // pre-empt a real synced source; it only beats Genius guessing.
+  if (!skipTranscript) {
+    try {
+      const clrc = await community.getTranscript(title, artist, duration);
+      if (clrc) return { syncedLyrics: clrc, plainLyrics: '', kind: 'word', source: 'community' };
+    } catch {}
+  }
 
   // Stage 2 (WORST CASE ONLY): Genius, and only because everything else came up
   // empty — its timing is synthesized/approximate, so it must never pre-empt a
