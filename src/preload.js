@@ -1268,7 +1268,7 @@ const Lyrics = (() => {
       try { tick(); } catch (e) {
         if (!startRAF._err) { startRAF._err = true; console.error('[Stardust] lyrics tick failed:', e); }
       }
-    }, 40);
+    }, 32);
   }
   // The <video> element YTM is actually playing (prefer a playing one; some
   // pages have a stale/hidden extra video whose time never moves).
@@ -1533,11 +1533,23 @@ const Lyrics = (() => {
   // headers, "<Title> Lyrics", "You might also like", trailing "Embed", and any
   // "(Official Music Video)"-style tag that leaked into a line.
   const alnum = (s) => (s || '').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
-  function isBloatLine(text, idx, titleN) {
+  // `scraped` = the text came from a scraped lyrics PAGE (Genius), which leaks
+  // headers ("Title Lyrics", "247 Contributors") into the words. Synced
+  // sources carry no headers — and a line equal to the title there IS the
+  // song's hook ("Everybody needs a best friend"), never bloat.
+  function isBloatLine(text, idx, titleN, scraped) {
     const s = (text || '').trim();
     if (!s) return true;
+    // Credit lines (support both ':' and full-width '：', and CJK credit words).
+    if (/^(lyric|lyrics|music|composed|composer|compose|arrang|produc|written|writer|words|作词|作曲|编曲|制作|词|曲|演唱|歌手|翻译|出品)\w*\s*(by)?\s*[:：]/i.test(s)) return true;
+    // CJK source/credit notes, incl. parenthesized ones with no colon
+    // (e.g. "（歌词来源网络）" = "lyrics source: internet").
+    if (/歌词来源|歌詞來源|字幕来源|来源网络|來源網絡|上传者|后期制作|後期製作|由.{0,10}整理|翻譯|监制/.test(s)) return true;
+    if (/^[（(][\s\S]{0,40}[)）]$/.test(s) && /[㐀-鿿]/.test(s)) return true; // short parenthesized CJK note
+    if (!scraped) return false;
+    // --- scraped-page junk only below this line ---
     const n = alnum(s);
-    if (titleN && (n === titleN || n === titleN + 'lyrics')) return true;
+    if (titleN && idx < 3 && (n === titleN || n === titleN + 'lyrics')) return true;
     if (/^\d+\s*contributors?\b/i.test(s)) return true;
     if (/^translations?\b/i.test(s)) return true;
     if (/you might also like/i.test(s)) return true;
@@ -1545,14 +1557,8 @@ const Lyrics = (() => {
     if (/\bget tickets\b/i.test(s)) return true;       // concert promo
     if (/^see .+ live/i.test(s)) return true;
     if (idx < 3 && /\blyrics$/i.test(s)) return true; // "Song Lyrics" header near top
-    // Credit lines (support both ':' and full-width '：', and CJK credit words).
-    if (/^(lyric|lyrics|music|composed|composer|compose|arrang|produc|written|writer|words|作词|作曲|编曲|制作|词|曲|演唱|歌手|翻译|出品)\w*\s*(by)?\s*[:：]/i.test(s)) return true;
-    // CJK source/credit notes, incl. parenthesized ones with no colon
-    // (e.g. "（歌词来源网络）" = "lyrics source: internet").
-    if (/歌词来源|歌詞來源|字幕来源|来源网络|來源網絡|上传者|后期制作|後期製作|由.{0,10}整理|翻譯|监制/.test(s)) return true;
-    if (/^[（(][\s\S]{0,40}[)）]$/.test(s) && /[㐀-鿿]/.test(s)) return true; // short parenthesized CJK note
     // "Title - Artist" header near the top (any dash/en-dash/full-width dash).
-    if (titleN && idx < 4 && n.startsWith(titleN) && n.length <= titleN.length + 30) return true;
+    if (titleN && idx < 3 && n.startsWith(titleN) && n !== titleN && n.length <= titleN.length + 30) return true;
     return false;
   }
   const stripTag = (s) => (s || '').replace(/\s*[([][^)\]]*(?:official|music\s*video|lyric|audio|visuali[sz]er|remaster|sped\s*up|slowed|reverb|extended|\bhd\b|\b4k\b|\blive\b)[^)\]]*[)\]]/gi, '').trim();
@@ -1576,7 +1582,7 @@ const Lyrics = (() => {
   }
 
   // Turn an LRC string into de-bloated synced lines and switch to 'ours'.
-  function applySynced(text) {
+  function applySynced(text, scraped) {
     lastLrcText = text || '';
     const titleN = alnum(stripTag(np && np.title));
     // Section headers ("[Chorus]", "[Verse 2]") aren't sung — drop them from
@@ -1590,7 +1596,7 @@ const Lyrics = (() => {
       if (secNext) { l.sec = true; secNext = false; }
       kept.push(l);
     }
-    synced = kept.filter((l, i) => !isBloatLine(l.s, i, titleN));
+    synced = kept.filter((l, i) => !isBloatLine(l.s, i, titleN, scraped));
     for (const l of synced) {
       const s2 = stripTag(l.s);
       // The words spans are what actually render — rebuild them if a tag came
@@ -1816,15 +1822,16 @@ const Lyrics = (() => {
     ipcRenderer.invoke('stardust:transcript-get', { title: np.title, artist: np.artist })
       .then((lrc) => { if (key === forKey) { localTranscript = lrc || null; refreshMineBtn(); } })
       .catch(() => {});
+    const scraped = !!(res && res.source === 'genius');
     if (res && res.syncedLyrics) {
-      applySynced(res.syncedLyrics);
+      applySynced(res.syncedLyrics, scraped);
       stampsReal = res.kind === 'line'; // human line timing → alignment may trust it
     } else if (res && res.plainLyrics) {
-      const clean = res.plainLyrics.split('\n').filter((l, i) => !isBloatLine(l, i, titleN)).map(stripTag).join('\n');
+      const clean = res.plainLyrics.split('\n').filter((l, i) => !isBloatLine(l, i, titleN, scraped)).map(stripTag).join('\n');
       // Give plain lyrics timing too: synthesize line timestamps so they get
       // line + word highlighting (energy-driven), instead of sitting still.
       const lrc = synthFromPlain(clean);
-      if (lrc) { applySynced(lrc); synthed = true; }
+      if (lrc) { applySynced(lrc, scraped); synthed = true; }
       else { synced = []; plain = clean; mode = 'ours'; }
     }
     // Only retry if the duration wasn't ready yet (metadata still loading) —
@@ -2008,7 +2015,7 @@ const Lyrics = (() => {
 
     // Which line is current?
     let idx = -1;
-    for (let i = 0; i < synced.length; i++) { if (synced[i].t <= t + 0.15) idx = i; else break; }
+    for (let i = 0; i < synced.length; i++) { if (synced[i].t <= t + 0.05) idx = i; else break; }
 
     // Line changed: move .active, reset the old line, scroll, and precompute
     // the new line's per-word timing once (cheap per-frame after).
@@ -2140,10 +2147,12 @@ const Lyrics = (() => {
     const words = line.words || [];
     if (!words.length) return [];
     if (words[0].time != null) {
-      return words.map((w, i) => ({
-        start: w.time,
-        end: (words[i + 1] && words[i + 1].time != null) ? words[i + 1].time : Math.min(lineEnd, w.time + 1.2)
-      }));
+      return words.map((w, i) => {
+        const next = (words[i + 1] && words[i + 1].time != null) ? words[i + 1].time : Math.min(lineEnd, w.time + 1.2);
+        // A long gap to the next word is a pause AFTER this word, not a
+        // 2s-long word — cap the sweep so the word completes at singing pace.
+        return { start: w.time, end: Math.min(next, w.time + Math.max(0.35, 0.12 + 0.07 * (w.text || '').length)) };
+      });
     }
     // Weight each word by SYLLABLES (vowel groups) — closer to how long a word
     // is actually sung than raw character count — plus a small per-word floor.
