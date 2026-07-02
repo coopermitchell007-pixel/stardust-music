@@ -57,13 +57,32 @@ const stamp = (sec) => {
   return String(mm).padStart(2, '0') + ':' + ss.padStart(5, '0');
 };
 
+// Whisper HALLUCINATES on instrumental/quiet stretches — recipes, 'thanks
+// for watching', subtitle credits. Its own confidence stats flag those
+// segments; drop them rather than show a soy-sauce ingredient list mid-song.
+const HALLU_TEXT = /thank you for watching|thanks for watching|don't forget to subscribe|please subscribe|字幕|amara\.org|www\.|http|copyright|all rights reserved/i;
+function goodSegment(sg) {
+  if (!sg) return false;
+  if (HALLU_TEXT.test(String(sg.text || ''))) return false;
+  if (sg.no_speech_prob != null && sg.avg_logprob != null && sg.no_speech_prob > 0.6 && sg.avg_logprob < -0.7) return false;
+  if (sg.avg_logprob != null && sg.avg_logprob < -1.2) return false;   // model was guessing
+  if (sg.compression_ratio != null && sg.compression_ratio > 2.4) return false; // looping/repetition
+  return true;
+}
+
 // Build an enhanced-LRC string (with <mm:ss.xx> word tags) from Whisper's
-// verbose_json. Groups words into lines using segment boundaries when present.
+// verbose_json. Groups words into lines using segment boundaries when present;
+// only confident (non-hallucinated) segments contribute.
 function buildLRC(json) {
   if (!json) return '';
-  const words = json.words || (json.segments || []).flatMap((s) => s.words || []);
+  const allSegs = (json.segments && json.segments.length) ? json.segments : null;
+  const segs = allSegs ? allSegs.filter(goodSegment) : null;
+  let words = json.words || (allSegs || []).flatMap((s) => s.words || []);
+  if (segs && words && words.length) {
+    // Keep only words inside confident segments.
+    words = words.filter((w) => segs.some((sg) => w.start >= sg.start - 0.05 && w.start <= sg.end + 0.05));
+  }
   if (words && words.length) {
-    const segs = (json.segments && json.segments.length) ? json.segments : null;
     const lines = [];
     if (segs) {
       for (const seg of segs) {
@@ -85,8 +104,8 @@ function buildLRC(json) {
     }
     return lines.join('\n');
   }
-  if (json.segments && json.segments.length) {
-    return json.segments.map((s) => '[' + stamp(s.start) + ']' + String(s.text || '').trim()).join('\n');
+  if (segs && segs.length) {
+    return segs.map((sg) => '[' + stamp(sg.start) + ']' + String(sg.text || '').trim()).join('\n');
   }
   return '';
 }
@@ -160,8 +179,11 @@ async function transcribe({ title, artist, album, duration, audio, audioName } =
     if (share && community.enabled()) community.putTranscript({ title, artist, album, duration, lrc }).catch(() => {});
     return { syncedLyrics: lrc, shared: !!(share && community.enabled()) };
   }
-  // No usable timing but we got text → show it as plain (not cached).
-  if (w.json.text && w.json.text.trim()) return { syncedLyrics: '', plainLyrics: w.json.text.trim() };
+  // No usable timing but we got text → show it as plain (not cached), built
+  // from confident segments only (json.text includes hallucinations).
+  const plainSegs = (w.json.segments || []).filter(goodSegment).map((sg) => String(sg.text || '').trim()).filter(Boolean);
+  const plainText = plainSegs.length ? plainSegs.join('\n') : (w.json.text || '').trim();
+  if (plainText) return { syncedLyrics: '', plainLyrics: plainText };
   return { error: 'empty' };
 }
 
