@@ -308,6 +308,10 @@ function registerIpc() {
     try { return await transcribe.transcribe(payload, config.get('transcribeKey'), config.get('shareTranscripts') !== false); }
     catch (err) { return { error: err.message || 'failed' }; }
   });
+  ipcMain.handle('stardust:align', async (_e, payload) => {
+    try { return await transcribe.alignToLyrics(payload, config.get('transcribeKey'), config.get('shareTranscripts') !== false); }
+    catch (err) { return { error: err.message || 'failed' }; }
+  });
   ipcMain.handle('stardust:stats', () => stats.get());
   ipcMain.handle('stardust:stats-reset', () => { stats.reset(); return true; });
 

@@ -1203,7 +1203,8 @@ const Lyrics = (() => {
   let curSyl = null, curSylTotal = 1, sylPtr = 0;
   let floor = 0, sylAcc = 0;                 // adaptive vocal noise-floor + syllables-sung accumulator
   let transcribing = false;
-  let offset = 0, barEl = null, offEl = null, srcEl = null; // sync-offset (s) + toolbar els
+  let offset = 0, barEl = null, offEl = null, srcEl = null, alignBtn = null; // sync-offset (s) + toolbar els
+  let lastLrcText = '';                      // raw LRC of the current lyrics (for ⚡ alignment)
   let userScrollUntil = 0;                   // pause auto-scroll while the user scrolls
   const SYL_RATE = 3.6;                      // starting syllables/sec — refined per song
   const LOOKAHEAD = 0.12;                    // s — highlight leads the audio slightly (a
@@ -1318,6 +1319,7 @@ const Lyrics = (() => {
     const copy = h('button', { class: 'stardust-lyr-tool', title: 'Copy the lyrics to the clipboard', text: '⧉ Copy' });
     const re = h('button', { class: 'stardust-lyr-tool', title: 'Transcribe this song yourself — listens once and replaces these lyrics with word-timed ones (needs a Groq key)', text: '🎙' });
     const again = h('button', { class: 'stardust-lyr-tool', title: 'Search the lyric databases again — skips transcriptions, and replaces yours if something is found', text: '🔎' });
+    alignBtn = h('button', { class: 'stardust-lyr-tool', title: 'Word-sync: listens to the song once and aligns these exact lyrics to the audio — near-perfect per-word timing (needs a Groq key)', text: '⚡' });
     srcEl = h('span', { class: 'stardust-lyr-src', text: '' });
     minus.addEventListener('click', () => nudge(-0.5));
     plus.addEventListener('click', () => nudge(0.5));
@@ -1325,10 +1327,11 @@ const Lyrics = (() => {
     copy.addEventListener('click', copyLyrics);
     re.addEventListener('click', reTranscribe);
     again.addEventListener('click', searchAgain);
-    barEl = h('div', { class: 'stardust-lyr-tools' }, [minus, offEl, plus, copy, re, again, srcEl]);
+    alignBtn.addEventListener('click', startAlign);
+    barEl = h('div', { class: 'stardust-lyr-tools' }, [minus, offEl, plus, copy, re, again, alignBtn, srcEl]);
     return barEl;
   }
-  const SRC_LABEL = { lrclib: 'LRCLIB', netease: 'NetEase', kugou: 'KuGou', genius: 'Genius', transcript: 'transcribed', community: 'community transcript' };
+  const SRC_LABEL = { lrclib: 'LRCLIB', netease: 'NetEase', kugou: 'KuGou', genius: 'Genius', transcript: 'transcribed', community: 'community transcript', aligned: 'word-synced ⚡' };
   function setSourceLabel(source, estimated) {
     if (!srcEl) return;
     const name = SRC_LABEL[source];
@@ -1437,10 +1440,12 @@ const Lyrics = (() => {
     out.sort((a, b) => a.t - b.t);
     return out;
   }
+  const hasWordTiming = () => synced.some((l) => l.words && l.words.length && l.words[0].time != null);
   function render(status) {
     if (!body) return;
     while (body.firstChild) body.removeChild(body.firstChild);
     if (barEl) barEl.style.display = status ? 'none' : 'flex';
+    if (alignBtn) alignBtn.style.display = (!status && synced.length && !hasWordTiming()) ? '' : 'none';
     if (status) {
       body.appendChild(h('div', { class: 'stardust-lyric-status', text: status }));
       // No lyrics anywhere → offer to transcribe from the audio.
@@ -1548,6 +1553,7 @@ const Lyrics = (() => {
 
   // Turn an LRC string into de-bloated synced lines and switch to 'ours'.
   function applySynced(text) {
+    lastLrcText = text || '';
     const titleN = alnum(stripTag(np && np.title));
     // Section headers ("[Chorus]", "[Verse 2]") aren't sung — drop them from
     // the lines but keep them as STRUCTURE: the line after a header starts a
@@ -1572,17 +1578,11 @@ const Lyrics = (() => {
     lastIdx = -1; curEl = null; curSpans = null;
   }
 
-  // Record the song once and transcribe it into word-timed lyrics.
-  async function startTranscribe(btn) {
-    if (transcribing) return;
-    transcribing = true; if (btn) btn.disabled = true;
-    const forKey = key;
-    // Snapshot the song NOW — np gets reassigned to the next track if autoplay
-    // advances, and we must save the transcript under THIS song.
-    const trackTitle = np && np.title, trackArtist = np && np.artist, trackAlbum = np && np.album, trackDur = np && np.duration;
-    const setStatus = (s) => { const el = body && body.querySelector('.stardust-lyric-status'); if (el) el.textContent = s; };
+  // Record the song once (restart → listen to the end → pause), shared by
+  // transcription and ⚡ word-sync. Resolves to a Uint8Array, or null.
+  async function captureSong(setStatus, forKey, icon) {
     const v = playingVideo();
-    if (!Visualizer.captureStart()) { setStatus('Audio capture unavailable'); transcribing = false; if (btn) btn.disabled = false; return; }
+    if (!Visualizer.captureStart()) { setStatus('Audio capture unavailable'); return null; }
     try { if (v) { v.currentTime = 0; if (v.paused) doCommand('playpause'); } } catch {}
     const fmtT = (s) => { s = Math.max(0, s | 0); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
     // Stop ~1.2s before the end and PAUSE, so autoplay never advances to the next
@@ -1592,19 +1592,72 @@ const Lyrics = (() => {
       const iv = setInterval(() => {
         if (!active || key !== forKey || (v && v.ended)) { clearInterval(iv); return res(); }
         const cur = v ? v.currentTime : 0;
-        setStatus('🎙 Listening… ' + fmtT(cur) + ' / ' + fmtT(endAt + 1.2));
+        setStatus(icon + ' Listening… ' + fmtT(cur) + ' / ' + fmtT(endAt + 1.2));
         if (cur >= endAt) { clearInterval(iv); res(); }
       }, 400);
     });
     try { if (v && !v.paused) doCommand('playpause'); } catch {} // pause → block autoplay
-    setStatus('Transcribing… (about 10–30s)');
     const blob = await Visualizer.captureStop();
+    if (!blob || blob.size < 12000) { setStatus('Not enough audio captured — replay from the start and try again'); return null; }
+    return new Uint8Array(await blob.arrayBuffer());
+  }
+
+  // ⚡ Word-sync: force-align the KNOWN lyrics to this exact audio. The words
+  // stay the database's; only their timing comes from the song — near-perfect
+  // word-by-word without trusting Whisper's (mishearable) transcription.
+  async function startAlign() {
+    if (transcribing || !synced.length || !lastLrcText) return;
+    transcribing = true;
+    const forKey = key;
+    const trackTitle = np && np.title, trackArtist = np && np.artist, trackAlbum = np && np.album, trackDur = np && np.duration;
+    const savedLrc = lastLrcText;
+    synced = []; plain = null; synthMode = false; mode = 'searching';
+    render('⚡ Preparing to listen…'); sync();
+    const setStatus = (s2) => { const el = body && body.querySelector('.stardust-lyric-status'); if (el) el.textContent = s2; };
+    const audio = await captureSong(setStatus, forKey, '⚡');
     transcribing = false;
-    if (!blob || blob.size < 12000) { setStatus('Not enough audio captured — replay from the start and try again'); reEnableBtn(); return; }
+    const restore = () => { if (active && key === forKey) { applySynced(savedLrc); render(); sync(); } };
+    if (!audio) { restore(); return; }
+    setStatus('⚡ Aligning the words to the audio… (10–30s)');
+    let res = null;
+    try { res = await ipcRenderer.invoke('stardust:align', { title: trackTitle, artist: trackArtist, album: trackAlbum, duration: trackDur, audio, lyrics: savedLrc }); } catch {}
+    if (res && res.syncedLyrics) {
+      const nowSame = active && key === forKey;
+      if (nowSame) {
+        applySynced(res.syncedLyrics);
+        setSourceLabel('aligned');
+        // Restart from 0 and play so the word-synced karaoke actually runs.
+        try { const vv = playingVideo(); if (vv) { vv.currentTime = 0; if (vv.paused) doCommand('playpause'); } } catch {}
+        render(); sync();
+      }
+      toast('⚡ Word-synced — ' + Math.round((res.coverage || 0) * 100) + '% of words matched' + (res.shared ? ' · shared with the community' : ''));
+    } else {
+      const e2 = res && res.error;
+      toast(e2 === 'no-key' ? 'Add a free Groq API key in the Stardust panel first'
+        : e2 === 'bad-key' ? 'That Groq API key was rejected — check Settings'
+          : e2 === 'align-failed' ? 'Could not match these lyrics to this audio (different version?)'
+            : e2 === 'network' ? 'Network error reaching the transcription service'
+              : 'Word-sync failed — try again');
+      restore();
+    }
+  }
+
+  // Record the song once and transcribe it into word-timed lyrics.
+  async function startTranscribe(btn) {
+    if (transcribing) return;
+    transcribing = true; if (btn) btn.disabled = true;
+    const forKey = key;
+    // Snapshot the song NOW — np gets reassigned to the next track if autoplay
+    // advances, and we must save the transcript under THIS song.
+    const trackTitle = np && np.title, trackArtist = np && np.artist, trackAlbum = np && np.album, trackDur = np && np.duration;
+    const setStatus = (s2) => { const el = body && body.querySelector('.stardust-lyric-status'); if (el) el.textContent = s2; };
+    const audio = await captureSong(setStatus, forKey, '🎙');
+    transcribing = false;
+    if (!audio) { reEnableBtn(); return; }
+    setStatus('Transcribing… (about 10–30s)');
     let res = null;
     try {
-      const buf = new Uint8Array(await blob.arrayBuffer());
-      res = await ipcRenderer.invoke('stardust:transcribe', { title: trackTitle, artist: trackArtist, album: trackAlbum, duration: trackDur, audio: buf });
+      res = await ipcRenderer.invoke('stardust:transcribe', { title: trackTitle, artist: trackArtist, album: trackAlbum, duration: trackDur, audio });
     } catch {}
     if (res && (res.syncedLyrics || res.plainLyrics)) {
       // Show now if we're still on that song (we paused, so usually yes).

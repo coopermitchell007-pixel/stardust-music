@@ -8,6 +8,7 @@ const path = require('path');
 const https = require('https');
 const { app } = require('electron');
 const community = require('./community');
+const align = require('./align');
 
 const ENDPOINT = 'https://api.groq.com/openai/v1/audio/transcriptions';
 const MODEL = 'whisper-large-v3';
@@ -104,9 +105,8 @@ function postMultipart(url, fieldPairs, fileBuf, apiKey) {
   });
 }
 
-// audio: Uint8Array/Buffer of the recorded song (webm/opus). Returns
-// { syncedLyrics } on success, or { error } describing what to fix.
-async function transcribe({ title, artist, album, duration, audio } = {}, apiKey, share) {
+// Run Whisper on captured audio; returns { json } or { error }.
+async function whisperVerbose(audio, apiKey) {
   if (!apiKey) return { error: 'no-key' };
   if (!audio || !audio.length) return { error: 'no-audio' };
   const buf = Buffer.isBuffer(audio) ? audio : Buffer.from(audio);
@@ -119,10 +119,18 @@ async function transcribe({ title, artist, album, duration, audio } = {}, apiKey
   ];
   const res = await postMultipart(ENDPOINT, fields, buf, apiKey);
   if (!res) return { error: 'network' };
-  console.log('[Stardust] transcribe status', res.status, res.json && (res.json.error ? JSON.stringify(res.json.error).slice(0, 200) : ('segments=' + ((res.json.segments || []).length) + ' words=' + ((res.json.words || []).length))));
+  console.log('[Stardust] whisper status', res.status, res.json && (res.json.error ? JSON.stringify(res.json.error).slice(0, 200) : ('segments=' + ((res.json.segments || []).length) + ' words=' + ((res.json.words || []).length))));
   if (res.status === 401 || res.status === 403) return { error: 'bad-key' };
   if (res.status !== 200 || !res.json) return { error: 'engine' };
-  const lrc = buildLRC(res.json);
+  return { json: res.json };
+}
+
+// audio: Uint8Array/Buffer of the recorded song (webm/opus). Returns
+// { syncedLyrics } on success, or { error } describing what to fix.
+async function transcribe({ title, artist, album, duration, audio } = {}, apiKey, share) {
+  const w = await whisperVerbose(audio, apiKey);
+  if (w.error) return { error: w.error };
+  const lrc = buildLRC(w.json);
   if (lrc) {
     putCached(title, artist, lrc);
     // Fire-and-forget: share with the Stardust community store (Supabase) so
@@ -132,8 +140,24 @@ async function transcribe({ title, artist, album, duration, audio } = {}, apiKey
     return { syncedLyrics: lrc, shared: !!(share && community.enabled()) };
   }
   // No usable timing but we got text → show it as plain (not cached).
-  if (res.json.text && res.json.text.trim()) return { syncedLyrics: '', plainLyrics: res.json.text.trim() };
+  if (w.json.text && w.json.text.trim()) return { syncedLyrics: '', plainLyrics: w.json.text.trim() };
   return { error: 'empty' };
 }
 
-module.exports = { transcribe, getCached, putCached, removeCached, CACHE_DIR };
+// Forced alignment: keep the KNOWN lyrics text, take the audio's word clock.
+// Near-perfect word timing without trusting Whisper's (mishearable) words.
+async function alignToLyrics({ title, artist, album, duration, audio, lyrics } = {}, apiKey, share) {
+  if (!lyrics) return { error: 'no-lyrics' };
+  const w = await whisperVerbose(audio, apiKey);
+  if (w.error) return { error: w.error };
+  const words = w.json.words || (w.json.segments || []).flatMap((sg) => sg.words || []);
+  if (!words || words.length < 10) return { error: 'empty' };
+  const res = align.alignLyrics(lyrics, words, duration);
+  if (!res) return { error: 'align-failed' };
+  console.log('[Stardust] aligned', title, '— coverage', Math.round(res.coverage * 100) + '%');
+  putCached(title, artist, res.syncedLyrics);
+  if (share && community.enabled()) community.putTranscript({ title, artist, album, duration, lrc: res.syncedLyrics }).catch(() => {});
+  return { syncedLyrics: res.syncedLyrics, coverage: res.coverage, shared: !!(share && community.enabled()) };
+}
+
+module.exports = { transcribe, alignToLyrics, getCached, putCached, removeCached, CACHE_DIR };
