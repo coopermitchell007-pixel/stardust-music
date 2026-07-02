@@ -144,6 +144,15 @@ function raceLyrics(promises) {
   });
 }
 
+const polish = (r) => {
+  if (!r) return r;
+  // Providers (KuGou/NetEase especially) leak HTML entities into lyrics —
+  // they display as "&apos;" AND break word-alignment matching.
+  if (r.syncedLyrics && r.syncedLyrics.includes('&')) r.syncedLyrics = decodeEntities(r.syncedLyrics);
+  if (r.plainLyrics && r.plainLyrics.includes('&')) r.plainLyrics = decodeEntities(r.plainLyrics);
+  return r;
+};
+
 async function fetchLyrics({ artist, title, album, duration, skipTranscript } = {}) {
   if (!title) return null;
   // A previously transcribed version of THIS song is the truest match (it's the
@@ -201,27 +210,27 @@ async function fetchLyrics({ artist, title, album, duration, skipTranscript } = 
       ? { syncedLyrics: clrc, plainLyrics: '', kind: 'word', source: 'community' } : null)
   ]);
   const mxm = await Promise.race([mxmP, new Promise((r) => setTimeout(() => r(undefined), 4000))]);
-  if (mxm && mxm.kind === 'word') return mxm;   // richsync — nothing beats it
+  if (mxm && mxm.kind === 'word') return polish(mxm);   // richsync — nothing beats it
   const rest = await othersP;
-  if (mxm && (!rest || KIND_RANK[mxm.kind] >= KIND_RANK[rest.kind])) return mxm;
-  if (rest) return rest;
+  if (mxm && (!rest || KIND_RANK[mxm.kind] >= KIND_RANK[rest.kind])) return polish(mxm);
+  if (rest) return polish(rest);
   // MXM may still finish after its window if everything else came up empty.
   const late = await Promise.race([mxmP, new Promise((r) => setTimeout(() => r(undefined), 1500))]);
-  if (late) return late;
+  if (late) return polish(late);
 
   // Stage 1.5: RAW community transcripts (whisper text — can mishear) only
   // beat Genius guessing; aligned entries already competed in stage 1.
   if (!skipTranscript) {
     try {
       const clrc = await communityP;
-      if (clrc) return { syncedLyrics: clrc, plainLyrics: '', kind: 'word', source: 'community' };
+      if (clrc) return polish({ syncedLyrics: clrc, plainLyrics: '', kind: 'word', source: 'community' });
     } catch {}
   }
 
   // Stage 2 (WORST CASE ONLY): Genius, and only because everything else came up
   // empty — its timing is synthesized/approximate, so it must never pre-empt a
   // real synced source (that's why it's not in the stage-1 race).
-  return await fetchGenius({ title: fTitle, artist: fArtist, want: fWant }).catch(() => null);
+  return polish(await fetchGenius({ title: fTitle, artist: fArtist, want: fWant }).catch(() => null));
 }
 
 // --- Musixmatch provider (desktop API, keyless token) -----------------------
@@ -440,9 +449,12 @@ async function fetchKugou({ title, artist, want }) {
 
 // --- Genius provider (plain text, scraped — last resort, no timing) --------
 function decodeEntities(s) {
-  return s.replace(/&amp;/g, '&').replace(/&#x27;/g, "'").replace(/&#39;/g, "'")
-    .replace(/&quot;/g, '"').replace(/&gt;/g, '>').replace(/&lt;/g, '<')
-    .replace(/&#x2f;/gi, '/').replace(/&nbsp;/g, ' ');
+  return s
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => { try { return String.fromCodePoint(parseInt(h, 16)); } catch { return _; } })
+    .replace(/&#(\d+);/g, (_, n) => { try { return String.fromCodePoint(+n); } catch { return _; } })
+    .replace(/&apos;/g, "'").replace(/&quot;/g, '"')
+    .replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&'); // amp last, so "&amp;apos;" can't double-decode
 }
 function extractGeniusLyrics(html) {
   const parts = [...html.matchAll(/data-lyrics-container="true"[^>]*>([\s\S]*?)<\/div>/g)].map((m) => m[1]);

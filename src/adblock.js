@@ -54,7 +54,23 @@ function shouldBlock(url) {
 // onBeforeRequest listener per session, so the sniff lives inside the
 // blocker's listener and runs even when blocking is toggled off.
 let lastVideo = { id: null, at: 0 };
+let lastAudio = { url: null, at: 0 };
 function sniffVideoId(details) {
+  // The playing track's AUDIO STREAM url — fully authorized by the page
+  // itself, so it works even for videos whose direct download YouTube
+  // refuses to every InnerTube client (most of them now). Range params are
+  // stripped so the whole file can be fetched in one request.
+  if (details.url.includes('.googlevideo.com/videoplayback') && /mime=audio/.test(details.url)) {
+    try {
+      const u = new URL(details.url);
+      // range/rn: fetch the whole file, not the player's chunk.
+      // ump/sabr/srfvp: ask for RAW media — the UMP framing the player uses
+      // isn't a valid media file for Whisper.
+      for (const k of ['range', 'rn', 'rbuf', 'ump', 'sabr', 'srfvp']) u.searchParams.delete(k);
+      lastAudio = { url: u.href, at: Date.now() };
+    } catch {}
+    return;
+  }
   if (!details.url.includes('/youtubei/v1/player') || details.url.includes('ad_break')) return;
   try {
     const b = details.uploadData && details.uploadData[0] && details.uploadData[0].bytes;
@@ -65,6 +81,9 @@ function sniffVideoId(details) {
 }
 function currentVideoId() {
   return lastVideo.id && Date.now() - lastVideo.at < 15 * 60000 ? lastVideo.id : null;
+}
+function currentAudioUrl() {
+  return lastAudio.url && Date.now() - lastAudio.at < 5 * 60000 ? lastAudio.url : null;
 }
 
 function attach(session) {
@@ -77,4 +96,4 @@ function attach(session) {
 
 function setEnabled(v) { enabled = !!v; }
 
-module.exports = { attach, setEnabled, currentVideoId };
+module.exports = { attach, setEnabled, currentVideoId, currentAudioUrl };

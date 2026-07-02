@@ -175,7 +175,11 @@ async function alignToLyrics({ title, artist, album, duration, audio, audioName,
   const words = w.json.words || (w.json.segments || []).flatMap((sg) => sg.words || []);
   if (!words || words.length < 10) return { error: 'empty' };
   const res = align.alignLyrics(lyrics, words, duration, !!realStamps);
-  if (!res) return { error: 'align-failed' };
+  if (!res || res.failed) {
+    const cov = res ? res.coverage : 0;
+    console.log('[Stardust] align failed — coverage', Math.round(cov * 100) + '%', '(words heard:', words.length + ')');
+    return { error: 'align-failed', coverage: cov };
+  }
   console.log('[Stardust] aligned', title, '— coverage', Math.round(res.coverage * 100) + '%');
   putCached(title, artist, res.syncedLyrics);
   if (share && community.enabled()) community.putTranscript({ title, artist, album, duration, lrc: res.syncedLyrics }).catch(() => {});

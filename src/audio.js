@@ -54,4 +54,38 @@ async function fetchSongAudio(videoId) {
   return null;
 }
 
-module.exports = { fetchSongAudio };
+// Fetch the exact audio the player is streaming right now (sniffed,
+// authorized URL) — works where every InnerTube client is refused.
+async function fetchStreamUrl(url) {
+  if (!url) return null;
+  try {
+    const { net } = require('electron');
+    const buf = await new Promise((resolve, reject) => {
+      const req = net.request(url);
+      const chunks = [];
+      let bytes = 0;
+      req.on('response', (res) => {
+        if (res.statusCode !== 200 && res.statusCode !== 206) return reject(new Error('status ' + res.statusCode));
+        res.on('data', (c) => {
+          bytes += c.length;
+          if (bytes > MAX_BYTES) { try { req.abort(); } catch {} return reject(new Error('too-big')); }
+          chunks.push(c);
+        });
+        res.on('end', () => resolve(Buffer.concat(chunks)));
+        res.on('error', reject);
+      });
+      req.on('error', reject);
+      req.end();
+    });
+    if (!buf || buf.length < 50000) return null;
+    const name = buf.slice(4, 8).toString() === 'ftyp' ? 'audio.m4a'
+      : (buf[0] === 0x1a && buf[1] === 0x45 ? 'audio.webm' : 'audio.mp3');
+    console.log('[Stardust] fetched audio from the player stream —', (buf.length / 1e6).toFixed(1) + 'MB', name);
+    return { buf, name };
+  } catch (e) {
+    console.log('[Stardust] stream-url fetch failed:', e && String(e.message).slice(0, 100));
+    return null;
+  }
+}
+
+module.exports = { fetchSongAudio, fetchStreamUrl };

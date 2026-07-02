@@ -322,7 +322,10 @@ function registerIpc() {
   // align to the given lyrics — or plain-transcribe when there are none.
   ipcMain.handle('stardust:wordsync', async (_e, p = {}) => {
     try {
-      const got = await songAudio.fetchSongAudio(p.videoId);
+      // The player's own (sniffed, authorized) stream first — it works even
+      // where YouTube refuses direct downloads; InnerTube is the fallback.
+      let got = await songAudio.fetchStreamUrl(adblock.currentAudioUrl());
+      if (!got) got = await songAudio.fetchSongAudio(p.videoId);
       if (!got) return { error: 'download' };
       const key = config.get('transcribeKey');
       const share = config.get('shareTranscripts') !== false;

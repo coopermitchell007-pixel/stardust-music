@@ -191,7 +191,9 @@ function alignLyrics(lrcText, whisperWords, duration, realStamps) {
   }
   const matchable = lyrNorm.filter(Boolean).length || 1;
   const coverage = matched / matchable;
-  if (coverage < 0.5) return null; // wrong audio / heavy mismatch — don't lie
+  // Wrong audio OR wrong lyrics text — don't lie; report how bad the match
+  // was so the caller can tell "slightly off" from "these aren't the words".
+  if (coverage < 0.5) return { failed: true, coverage };
 
   // Fill unanchored words. Plain linear interpolation smears words into
   // instrumental gaps (a word next to a 9s break lands seconds off), so the

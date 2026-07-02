@@ -1712,10 +1712,12 @@ const Lyrics = (() => {
     if (srcEl) srcEl.textContent = savedSrc;
     const e2 = res && res.error;
     if (e2 === 'download' && !silent) return 'download'; // manual ⚡ falls back to listening
-    // Genius text that won't align to the audio (spoken/atypical vocals, or
-    // just wrong words) → transcribe the song instead; Whisper's words become
-    // the lyrics, word-timed. Real line-stamped sources stay as they are.
-    if (e2 === 'align-failed' && !stampsReal && !autoTried.has(forKey)) {
+    // Lyrics that won't align to the audio → transcribe instead; Whisper's
+    // words become the lyrics, word-timed. For line-stamped sources this only
+    // happens when the match was DIRE (<35% — the database has the wrong
+    // words, common on KuGou English entries); Genius text falls back always.
+    const cov = (res && res.coverage) || 0;
+    if (e2 === 'align-failed' && (!stampsReal || cov < 0.35) && !autoTried.has(forKey)) {
       autoTried.add(forKey);
       setTimeout(() => autoTranscribe(forKey, false), 800);
       return 'fatal';
