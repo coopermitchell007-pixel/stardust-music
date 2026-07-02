@@ -1657,6 +1657,15 @@ const Lyrics = (() => {
   }
 
   const videoIdOf = () => {
+    // 1) The player element carries the id directly on most builds.
+    const pl = document.querySelector('ytmusic-player');
+    const attr = pl && (pl.getAttribute('video-id') || pl.getAttribute('videoid'));
+    if (attr && /^[\w-]{6,20}$/.test(attr)) return attr;
+    // 2) Video thumbnails embed it: i.ytimg.com/vi/<id>/…
+    const art = np && np.art;
+    const am = art && art.match(/\/vi\/([\w-]{6,20})\//);
+    if (am) return am[1];
+    // 3) Queue anchor / page URL (only present on some pages).
     const u = currentTrackUrl();
     const m = u && u.match(/[?&]v=([\w-]+)/);
     return m ? m[1] : null;
@@ -2010,6 +2019,20 @@ const Lyrics = (() => {
     const v = playingVideo(); if (!v) return;
     const t = (v.currentTime || 0) + offset + LOOKAHEAD; // sync-offset + perceptual lead
     let dt = t - hear.lastT; hear.lastT = t;
+    if (hear.elapsed > 0 && Math.abs(dt) > 3) {
+      // SEEK — re-anchor everything the model accumulated to the new position
+      // (it never rewound before, which froze synth-mode highlights after a
+      // line-click). Keep the observed voiced fraction, rescale to t.
+      const vf = Math.max(0.3, Math.min(0.95, (29 + hear.voiced) / (40 + hear.elapsed)));
+      hear.elapsed = Math.max(0, t);
+      hear.voiced = Math.max(0, t * vf);
+      hear.silent = 0; hear.prevVoice = false;
+      if (synthMode && totalSyl > 1) {
+        const dur = (isFinite(v.duration) && v.duration > 0) ? v.duration : 210;
+        sylAcc = Math.min(1, Math.max(0, t / dur)) * totalSyl;
+      }
+      lastIdx = -2; // force the line to re-resolve immediately
+    }
     if (!(dt > 0) || dt > 1.5) dt = 0;       // first frame / pause / seek
     const L = listen();
     hear.resumed = false;
