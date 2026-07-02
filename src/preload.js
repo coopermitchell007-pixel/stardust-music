@@ -1337,7 +1337,7 @@ const Lyrics = (() => {
     barEl = h('div', { class: 'stardust-lyr-tools' }, [minus, offEl, plus, copy, re, again, alignBtn, mineBtn, srcEl]);
     return barEl;
   }
-  const SRC_LABEL = { lrclib: 'LRCLIB', netease: 'NetEase', kugou: 'KuGou', genius: 'Genius', transcript: 'transcribed', community: 'community transcript', aligned: 'word-synced ⚡' };
+  const SRC_LABEL = { musixmatch: 'Musixmatch', lrclib: 'LRCLIB', netease: 'NetEase', kugou: 'KuGou', genius: 'Genius', transcript: 'transcribed', community: 'community transcript', aligned: 'word-synced ⚡' };
   function setSourceLabel(source, estimated) {
     if (!srcEl) return;
     const name = SRC_LABEL[source];

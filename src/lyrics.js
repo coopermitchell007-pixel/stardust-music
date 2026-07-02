@@ -185,7 +185,10 @@ async function fetchLyrics({ artist, title, album, duration, skipTranscript } = 
   const fWant = altPairs[0] ? wants[1] : want;
 
   // Stage 1: the REAL synced sources race in parallel (first word-timed wins).
+  // Musixmatch leads: the best catalog, and its richsync is human-quality
+  // word-level timing.
   const primary = await raceLyrics([
+    fetchMusixmatch({ title: fTitle, artist: fArtist, duration, want: fWant }).catch(() => null),
     fetchLrclib({ artist, ct, bare, artist1, duration, wants, altPairs }).catch(() => null),
     fetchNetease({ title: fTitle, artist: fArtist, want: fWant }).catch(() => null),
     fetchKugou({ title: fTitle, artist: fArtist, want: fWant }).catch(() => null)
@@ -206,6 +209,98 @@ async function fetchLyrics({ artist, title, album, duration, skipTranscript } = 
   // empty — its timing is synthesized/approximate, so it must never pre-empt a
   // real synced source (that's why it's not in the stage-1 race).
   return await fetchGenius({ title: fTitle, artist: fArtist, want: fWant }).catch(() => null);
+}
+
+// --- Musixmatch provider (desktop API, keyless token) -----------------------
+// The strongest catalog, and for many tracks it has RICHSYNC — human-quality
+// word-level timing — which outranks every other source. Uses the desktop
+// app's free auto-issued user token (cached; refreshed on expiry/captcha).
+const MXM_ROOT = 'https://apic-desktop.musixmatch.com/ws/1.1/';
+const MXM_HEADERS = { Cookie: 'AWSELB=0; AWSELBCORS=0' };
+let mxmTok = null; // { token, at }
+
+function mxmTokenFile() {
+  try {
+    const { app } = require('electron');
+    return require('path').join(app.getPath('userData'), 'mxm.json');
+  } catch { return null; }
+}
+async function mxmToken(force) {
+  const fs = require('fs');
+  const file = mxmTokenFile();
+  if (!mxmTok && file) { try { mxmTok = JSON.parse(fs.readFileSync(file, 'utf8')); } catch {} }
+  if (!force && mxmTok && mxmTok.token && Date.now() - mxmTok.at < 7 * 86400e3) return mxmTok.token;
+  const r = await getJson(MXM_ROOT + 'token.get?app_id=web-desktop-app-v1.0', MXM_HEADERS);
+  const tok = r && r.message && r.message.body && r.message.body.user_token;
+  if (!tok || tok.includes('Upgrade')) return null;
+  mxmTok = { token: tok, at: Date.now() };
+  if (file) { try { fs.writeFileSync(file, JSON.stringify(mxmTok)); } catch {} }
+  return tok;
+}
+
+// richsync body -> enhanced LRC. Lines are {ts,te,l:[{c,o}]}: c is a text
+// chunk (words AND spaces), o its offset from ts in seconds.
+function richsyncToLRC(arr) {
+  const stampM = (t) => {
+    const mm = Math.floor(t / 60), ss = (t - mm * 60).toFixed(2);
+    return String(mm).padStart(2, '0') + ':' + ss.padStart(5, '0');
+  };
+  const out = [];
+  for (const ln of arr) {
+    if (!ln || !Array.isArray(ln.l) || !ln.l.length) continue;
+    let body = '', word = '', wordO = null;
+    const flush = () => {
+      if (word.trim()) body += '<' + stampM(ln.ts + (wordO || 0)) + '>' + word.trim() + ' ';
+      word = ''; wordO = null;
+    };
+    for (const ch of ln.l) {
+      const c = String(ch.c != null ? ch.c : '');
+      if (/^\s*$/.test(c)) { flush(); continue; }
+      if (wordO == null) wordO = +ch.o || 0;
+      word += c;
+    }
+    flush();
+    if (body) out.push('[' + stampM(ln.ts) + ']' + body.trim());
+  }
+  return out.join('\n');
+}
+
+async function fetchMusixmatch({ title, artist, duration, want }) {
+  const token = await mxmToken();
+  if (!token) return null;
+  const macro = await getJson(MXM_ROOT + 'macro.subtitles.get?' + qs({
+    format: 'json', namespace: 'lyrics_richsynched', subtitle_format: 'lrc',
+    app_id: 'web-desktop-app-v1.0', usertoken: token,
+    q_artist: artist || '', q_track: title || '', q_duration: duration || ''
+  }), MXM_HEADERS);
+  const head = macro && macro.message && macro.message.header;
+  if (head && (head.status_code === 401 || head.hint === 'captcha')) { mxmTok = null; mxmToken(true).catch(() => {}); return null; }
+  const mc = macro && macro.message && macro.message.body && macro.message.body.macro_calls;
+  if (!mc) return null;
+  const trk = mc['matcher.track.get'] && mc['matcher.track.get'].message && mc['matcher.track.get'].message.body && mc['matcher.track.get'].message.body.track;
+  if (!trk) return null;
+  // Verify the match like every other provider (script + title/duration).
+  const cand = { trackName: trk.track_name, artistName: trk.artist_name, duration: trk.track_length || 0, syncedLyrics: 'x' };
+  if (!scoreCandidate(cand, want)) return null;
+
+  if (trk.has_richsync) {
+    const rs = await getJson(MXM_ROOT + 'track.richsync.get?' + qs({
+      format: 'json', app_id: 'web-desktop-app-v1.0', usertoken: token, track_id: trk.track_id
+    }), MXM_HEADERS);
+    const body = rs && rs.message && rs.message.body && rs.message.body.richsync;
+    if (body && body.richsync_body) {
+      try {
+        const enh = richsyncToLRC(JSON.parse(body.richsync_body));
+        if (enh) return { syncedLyrics: enh, plainLyrics: '', kind: 'word', source: 'musixmatch' };
+      } catch {}
+    }
+  }
+  const st = mc['track.subtitles.get'] && mc['track.subtitles.get'].message && mc['track.subtitles.get'].message.body;
+  const subtitle = st && st.subtitle_list && st.subtitle_list[0] && st.subtitle_list[0].subtitle;
+  if (subtitle && subtitle.subtitle_body && /\[\d+:\d+/.test(subtitle.subtitle_body)) {
+    return { syncedLyrics: subtitle.subtitle_body, plainLyrics: '', kind: 'line', source: 'musixmatch' };
+  }
+  return null;
 }
 
 // --- lrclib provider -------------------------------------------------------
