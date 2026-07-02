@@ -1484,6 +1484,17 @@ const Lyrics = (() => {
     return out;
   }
   const hasWordTiming = () => synced.some((l) => l.words && l.words.length && l.words[0].time != null);
+  // Word timing whose span doesn't fit THIS track = synced to another edition
+  // (single vs extended mix). Cheap, certain, and fixable by re-alignment.
+  function editionMismatch() {
+    if (!np || !(np.duration > 60) || !synced.length) return false;
+    let last = 0;
+    for (const l of synced) {
+      if (l.t > last) last = l.t;
+      for (const w of (l.words || []).concat(l.adWords || [])) if (w.time != null && w.time > last) last = w.time;
+    }
+    return last > 0 && (last < np.duration * 0.55 || last > np.duration + 15);
+  }
   function refreshMineBtn() {
     if (mineBtn) mineBtn.style.display = (localTranscript && !curSourceIsTranscript && mode === 'ours') ? '' : 'none';
   }
@@ -1699,9 +1710,9 @@ const Lyrics = (() => {
   // (no playback, takes ~1s), Whisper stamps it, and the known lyrics are
   // force-aligned — the music never stops, the timing hot-swaps in when ready.
   // Returns 'ok' | 'download' (fallback to listening) | 'fatal' (told the user).
-  async function remoteWordSync(silent) {
+  async function remoteWordSync(silent, evenWordTimed) {
     if (syncing || transcribing || !synced.length || !lastLrcText) return 'fatal';
-    if (silent && hasWordTiming()) return 'fatal'; // manual ⚡ may re-align word-timed songs
+    if (silent && hasWordTiming() && !evenWordTimed) return 'fatal'; // manual ⚡ / edition fix may re-time
     const vid = await resolveVideoId();
     console.log('[Stardust] word-sync start: silent=' + !!silent, 'vid=' + (vid || 'NONE'), 'realStamps=' + stampsReal);
     if (!vid && !silent) return 'download'; // silent no-id flows into the retry/badge path below
@@ -1713,6 +1724,10 @@ const Lyrics = (() => {
     try {
       // A deliberate ⚡ press force-aligns: best-effort word timing on THESE
       // lyrics no matter how few words matched (auto stays gated).
+      // Only a DELIBERATE press forces past the coverage gate. Automatic
+      // edition re-times must pass it — failing escalates to transcription
+      // via the align-failed path, which is the right fix for vocals the
+      // aligner can't hear well.
       if (vid) res = await ipcRenderer.invoke('stardust:wordsync', {
         videoId: vid, title: np.title, artist: np.artist, album: np.album,
         duration: np.duration, lyrics: lastLrcText, realStamps: stampsReal, force: !silent
@@ -1956,26 +1971,41 @@ const Lyrics = (() => {
       if (synced.length && !hasWordTiming()) {
         console.log('[Stardust] auto-sync scheduled in 2.5s');
         setTimeout(() => { if (active && key === forKey && !hasWordTiming()) remoteWordSync(true); }, 2500);
+      } else if (synced.length && hasWordTiming() && editionMismatch()) {
+        console.log('[Stardust] edition mismatch (word timing does not fit this track) — re-timing');
+        setTimeout(() => { if (active && key === forKey && editionMismatch()) remoteWordSync(true, true); }, 2500);
       } else if (res && res.source === 'transcript' && !res.pinned && synced.length) {
-        // Raw transcripts carry Whisper's misheard TEXT. If the databases have
-        // the real words, swap to them and align — but the transcription file
-        // is KEPT (🎙★ switches back), and a user-pinned transcript is never
-        // touched.
+        // Cached transcripts/alignments from OLDER pipeline versions are
+        // stale (hallucinations, false anchors, drift). Prefer real database
+        // lyrics when they exist; otherwise REMAKE a stale transcript with
+        // the current pipeline once. The file is never deleted (🎙★ works),
+        // and user-pinned transcripts are never touched.
         setTimeout(async () => {
           if (!(active && key === forKey)) return;
+          const cur = res.syncedLyrics || '';
+          const alignedV3 = cur.includes('stardust-aligned-v3');
+          const transcriptV3 = cur.includes('stardust-transcript-v3');
           let db = null;
           try { db = await ipcRenderer.invoke('stardust:lyrics', { artist: np.artist, title: np.title, album: np.album, duration: np.duration, skipTranscript: true }); } catch {}
-          if (!(active && key === forKey) || !db || !db.syncedLyrics || db.kind === 'synth') return;
-          // Only swap an ALIGNED cache for a strictly better (word-timed) DB
-          // source; raw transcripts upgrade to any real DB lyrics.
-          const aligned = res.syncedLyrics && res.syncedLyrics.includes('stardust-aligned-v2');
-          if (aligned && db.kind !== 'word') return;
-          try { ipcRenderer.invoke('stardust:transcript-pref', { title: np.title, artist: np.artist, pref: 'db' }); } catch {}
-          applySynced(db.syncedLyrics);
-          stampsReal = db.kind === 'line' || db.kind === 'word';
-          setSourceLabel(db.source, db);
-          render(); sync();
-          if (!hasWordTiming()) remoteWordSync(true);
+          if (!(active && key === forKey)) return;
+          if (db && db.syncedLyrics && db.kind !== 'synth') {
+            // Current-quality alignment already beats a line-level DB source.
+            if (alignedV3 && db.kind !== 'word') return;
+            console.log('[Stardust] upgrading cached transcript to DB lyrics (' + db.source + '/' + db.kind + ')');
+            try { ipcRenderer.invoke('stardust:transcript-pref', { title: np.title, artist: np.artist, pref: 'db' }); } catch {}
+            applySynced(db.syncedLyrics);
+            stampsReal = db.kind === 'line' || db.kind === 'word';
+            setSourceLabel(db.source, db);
+            render(); sync();
+            if (!hasWordTiming()) remoteWordSync(true);
+            else if (editionMismatch()) { console.log('[Stardust] edition mismatch after upgrade — re-timing'); remoteWordSync(true, true); }
+          } else if (!alignedV3 && !transcriptV3 && !autoTried.has(forKey)) {
+            // Stale-era output and no database alternative — remake it once
+            // with the current pipeline (priming + hallucination filters).
+            console.log('[Stardust] stale transcript, no DB alternative — re-transcribing');
+            autoTried.add(forKey);
+            autoTranscribe(forKey, false);
+          }
         }, 2500);
       } else if (mode === 'off' && np.duration > 0 && np.duration < 720 && !autoTried.has(forKey)) {
         // NOTHING found anywhere → transcribe automatically in the background

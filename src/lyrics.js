@@ -206,7 +206,7 @@ async function fetchLyrics({ artist, title, album, duration, skipTranscript } = 
     fetchLrclib({ artist, ct, bare, artist1, duration, wants, altPairs }).catch(() => null),
     fetchNetease({ title: fTitle, artist: fArtist, want: fWant }).catch(() => null),
     fetchKugou({ title: fTitle, artist: fArtist, want: fWant }).catch(() => null),
-    communityP.then((clrc) => (clrc && clrc.includes('stardust-aligned-v2'))
+    communityP.then((clrc) => (clrc && clrc.includes('stardust-aligned-v3'))
       ? { syncedLyrics: clrc, plainLyrics: '', kind: 'word', source: 'community' } : null)
   ]);
   const mxm = await Promise.race([mxmP, new Promise((r) => setTimeout(() => r(undefined), 4000))]);

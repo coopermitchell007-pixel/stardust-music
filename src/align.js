@@ -324,9 +324,13 @@ function alignLyrics(lrcText, whisperWords, duration, realStamps, force) {
     out.push('[' + stamp(ws[0].t) + ']' + body.trim());
   }
   if (out.length < 2) return null;
-  // Version marker: replays of an already-aligned cache must not re-trigger
-  // the background upgrade (it would cost one Whisper call per play).
-  return { syncedLyrics: '[re:stardust-aligned-v2]\n' + out.join('\n'), coverage };
+  // Version marker: v3 = current pipeline quality (priming, false-anchor
+  // filtering, language pinning). Older markers are treated as stale and
+  // re-made once; the marker also stops re-syncing on every play.
+  // LOW-COVERAGE (forced) results stay unmarked — usable now, but eligible
+  // for a future remake instead of sticking forever.
+  const marker = coverage >= 0.5 ? '[re:stardust-aligned-v3]\n' : '';
+  return { syncedLyrics: marker + out.join('\n'), coverage };
 }
 
 module.exports = { alignLyrics, alignSequences, norm };

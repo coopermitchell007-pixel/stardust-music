@@ -110,10 +110,10 @@ function buildLRC(json) {
         lines.push('[' + stamp(chunk[0].start) + ']' + body.trim());
       }
     }
-    return lines.join('\n');
+    return '[re:stardust-transcript-v3]\n' + lines.join('\n');
   }
   if (segs && segs.length) {
-    return segs.map((sg) => '[' + stamp(sg.start) + ']' + String(sg.text || '').trim()).join('\n');
+    return '[re:stardust-transcript-v3]\n' + segs.map((sg) => '[' + stamp(sg.start) + ']' + String(sg.text || '').trim()).join('\n');
   }
   return '';
 }
@@ -221,8 +221,11 @@ async function alignToLyrics({ title, artist, album, duration, audio, audioName,
   }
   console.log('[Stardust] aligned', title, '— coverage', Math.round(res.coverage * 100) + '%');
   putCached(title, artist, res.syncedLyrics);
-  if (share && community.enabled()) community.putTranscript({ title, artist, album, duration, lrc: res.syncedLyrics }).catch(() => {});
-  return { syncedLyrics: res.syncedLyrics, coverage: res.coverage, shared: !!(share && community.enabled()) };
+  // Only confident alignments enter the COMMUNITY store — a forced 3%-anchor
+  // guess must never become someone else's trusted word-sync.
+  const shareIt = share && community.enabled() && res.coverage >= 0.5;
+  if (shareIt) community.putTranscript({ title, artist, album, duration, lrc: res.syncedLyrics }).catch(() => {});
+  return { syncedLyrics: res.syncedLyrics, coverage: res.coverage, shared: shareIt };
 }
 
 module.exports = { transcribe, alignToLyrics, getCached, putCached, removeCached, getPref, setPref, CACHE_DIR };
