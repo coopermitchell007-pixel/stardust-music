@@ -1686,6 +1686,7 @@ const Lyrics = (() => {
     if (syncing || transcribing || !synced.length || !lastLrcText) return 'fatal';
     if (silent && hasWordTiming()) return 'fatal'; // manual ⚡ may re-align word-timed songs
     const vid = await resolveVideoId();
+    console.log('[Stardust] word-sync start: silent=' + !!silent, 'vid=' + (vid || 'NONE'), 'realStamps=' + stampsReal);
     if (!vid && !silent) return 'download'; // silent no-id flows into the retry/badge path below
     syncing = true;
     const forKey = key;
@@ -1699,6 +1700,7 @@ const Lyrics = (() => {
       });
     } catch {}
     syncing = false;
+    console.log('[Stardust] word-sync result:', res ? (res.error || ('ok coverage=' + Math.round((res.coverage || 0) * 100) + '%')) : 'no-response');
     if (!active || key !== forKey) return 'ok'; // track changed — result is cached for replay
     if (res && res.syncedLyrics) {
       applySynced(res.syncedLyrics);
@@ -1919,8 +1921,12 @@ const Lyrics = (() => {
     // Auto word-sync: when the lyrics lack real word timing and a Groq key is
     // set, fetch + align in the background — no interaction, music keeps
     // playing, the timing upgrades itself mid-song.
+    console.log('[Stardust] lyrics:', (res && res.source) || 'none', (res && res.kind) || '-',
+      'wordTimed=' + hasWordTiming(), 'keySet=' + !!(settings && settings.transcribeKey),
+      'auto=' + (settings && settings.autoWordSync !== false));
     if (settings && settings.transcribeKey && settings.autoWordSync !== false) {
       if (synced.length && !hasWordTiming()) {
+        console.log('[Stardust] auto-sync scheduled in 2.5s');
         setTimeout(() => { if (active && key === forKey && !hasWordTiming()) remoteWordSync(true); }, 2500);
       } else if (res && res.source === 'transcript' && !res.pinned && synced.length) {
         // Raw transcripts carry Whisper's misheard TEXT. If the databases have

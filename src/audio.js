@@ -3,14 +3,19 @@
 // Direct audio fetch — pulls a song's audio track from YouTube's own servers
 // (the same stream the player would use), so word-sync and transcription can
 // run in the background in seconds instead of sitting through the song once.
+// youtubei.js is ESM-only — Electron's Node cannot require() it, so it MUST
+// load via dynamic import (this failed silently in every packaged build:
+// require() worked under the newer dev-shell Node but never in the app).
+let modPromise = null;
+const ytModule = () => (modPromise || (modPromise = import('youtubei.js')));
 let ytPromise = null;
 async function client() {
   if (!ytPromise) {
     ytPromise = (async () => {
-      const { Innertube, UniversalCache } = require('youtubei.js');
+      const { Innertube, UniversalCache } = await ytModule();
       return Innertube.create({ cache: new UniversalCache(false), generate_session_locally: true });
     })();
-    ytPromise.catch(() => { ytPromise = null; }); // let a failed init retry later
+    ytPromise.catch((e) => { console.error('[Stardust] innertube init failed:', e && e.message); ytPromise = null; });
   }
   return ytPromise;
 }
@@ -22,9 +27,9 @@ const MAX_BYTES = 24 * 1024 * 1024; // Groq's upload cap is 25MB
 // without deciphering shifts as YouTube changes; IOS works today.
 async function fetchSongAudio(videoId) {
   if (!/^[\w-]{6,20}$/.test(String(videoId || ''))) return null;
-  let yt;
-  try { yt = await client(); } catch { return null; }
-  const { Utils } = require('youtubei.js');
+  let yt, Utils;
+  try { yt = await client(); Utils = (await ytModule()).Utils; }
+  catch (e) { console.error('[Stardust] audio client unavailable:', e && e.message); return null; }
   for (const c of ['IOS', 'ANDROID', 'TV', 'WEB_EMBEDDED']) {
     try {
       const stream = await yt.download(videoId, { type: 'audio', quality: 'bestefficiency', client: c });
@@ -43,6 +48,7 @@ async function fetchSongAudio(videoId) {
       return { buf, name };
     } catch (e) {
       if (e && e.message === 'too-big') return null;
+      console.log('[Stardust] audio fetch via', c, 'failed:', e && String(e.message).slice(0, 120));
     }
   }
   return null;

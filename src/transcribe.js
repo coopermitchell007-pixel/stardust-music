@@ -123,7 +123,7 @@ function postMultipart(url, fieldPairs, fileBuf, apiKey, filename = 'audio.webm'
 }
 
 // Run Whisper on captured audio; returns { json } or { error }.
-async function whisperVerbose(audio, apiKey, audioName) {
+async function whisperVerbose(audio, apiKey, audioName, prompt) {
   if (!apiKey) return { error: 'no-key' };
   if (!audio || !audio.length) return { error: 'no-audio' };
   const buf = Buffer.isBuffer(audio) ? audio : Buffer.from(audio);
@@ -134,6 +134,9 @@ async function whisperVerbose(audio, apiKey, audioName) {
     ['timestamp_granularities[]', 'word'],
     ['temperature', '0']
   ];
+  // Priming Whisper with the expected words sharply improves recognition on
+  // music (vocab, names, slang) → more matched anchors → tighter word timing.
+  if (prompt) fields.push(['prompt', String(prompt).slice(0, 890)]);
   const res = await postMultipart(ENDPOINT, fields, buf, apiKey, audioName || 'audio.webm');
   if (!res) return { error: 'network' };
   console.log('[Stardust] whisper status', res.status, res.json && (res.json.error ? JSON.stringify(res.json.error).slice(0, 200) : ('segments=' + ((res.json.segments || []).length) + ' words=' + ((res.json.words || []).length))));
@@ -166,7 +169,8 @@ async function transcribe({ title, artist, album, duration, audio, audioName } =
 // Near-perfect word timing without trusting Whisper's (mishearable) words.
 async function alignToLyrics({ title, artist, album, duration, audio, audioName, lyrics, realStamps } = {}, apiKey, share) {
   if (!lyrics) return { error: 'no-lyrics' };
-  const w = await whisperVerbose(audio, apiKey, audioName);
+  const plainPrompt = String(lyrics).replace(/\[[^\]]*\]|<\d+:\d+(?:\.\d+)?>/g, ' ').replace(/\s+/g, ' ').trim();
+  const w = await whisperVerbose(audio, apiKey, audioName, plainPrompt);
   if (w.error) return { error: w.error };
   const words = w.json.words || (w.json.segments || []).flatMap((sg) => sg.words || []);
   if (!words || words.length < 10) return { error: 'empty' };

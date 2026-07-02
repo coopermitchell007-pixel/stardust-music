@@ -20,6 +20,7 @@ const ICON_PNG = path.join(__dirname, '..', 'assets', 'icon.png');
 // Identify as Stardust rather than "Electron" everywhere we can in dev.
 app.setName('Stardust');
 app.setAppUserModelId('com.stardust.app');
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
 let mainWindow = null;
 let miniWindow = null;
@@ -54,7 +55,8 @@ function createMainWindow() {
 
   // A modern desktop UA keeps music.youtube.com from nagging about the browser.
   const ua = mainWindow.webContents.getUserAgent().replace(/Electron\/[\d.]+\s*/, '');
-  mainWindow.loadURL(YTM_URL, { userAgent: ua });
+  const startUrl = process.env.STARDUST_PLAY ? YTM_URL + 'watch?v=' + process.env.STARDUST_PLAY : YTM_URL;
+  mainWindow.loadURL(startUrl, { userAgent: ua });
 
   // Surface renderer-side console output (incl. preload errors) in the terminal.
   mainWindow.webContents.on('console-message', (_e, level, message, line, source) => {
