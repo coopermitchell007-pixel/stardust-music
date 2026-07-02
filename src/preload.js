@@ -1206,6 +1206,8 @@ const Lyrics = (() => {
   let offset = 0, barEl = null, offEl = null, srcEl = null, alignBtn = null, mineBtn = null; // sync-offset (s) + toolbar els
   let lastLrcText = '';                      // raw LRC of the current lyrics (for ⚡ alignment)
   let stampsReal = false;                    // line stamps are human-made (lrclib/KuGou/NetEase)
+  let animBase = null;                       // wall-clock base of the scheduled word animations
+  let artKey = '', artData = '';             // blurred cover-art backdrop (tiny canvas, CSS-upscaled)
   let localTranscript = null;                // this song's own transcription (never deleted)
   let microOff = 0;                          // live onset phase-lock correction (s)
   let syncing = false;                       // a background word-sync is in flight
@@ -1287,6 +1289,22 @@ const Lyrics = (() => {
     return pvEl;
   }
   function stopRAF() { if (raf) { clearInterval(raf); raf = null; } }
+
+  function refreshArtBg() {
+    const art = np && np.art;
+    if (!art || art === artKey) return;
+    artKey = art;
+    const img = new Image(); img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const c = document.createElement('canvas'); c.width = c.height = 24;
+        c.getContext('2d').drawImage(img, 0, 0, 24, 24);
+        artData = c.toDataURL('image/jpeg', 0.7);
+        if (host) host.style.setProperty('--sd-art', 'url("' + artData + '")');
+      } catch {}
+    };
+    img.src = art;
+  }
 
   const lyricsTab = () => [...document.querySelectorAll('ytmusic-player-page tp-yt-paper-tab')]
     .find((t) => /lyric/i.test(t.textContent || ''));
@@ -1417,6 +1435,8 @@ const Lyrics = (() => {
       if (host && host !== h0) host.classList.remove('stardust-lyrics-on');
       host = h0;
       host.classList.add('stardust-lyrics-on');
+      refreshArtBg();
+      if (artData) host.style.setProperty('--sd-art', 'url("' + artData + '")');
       ensureBox();
       if (box.parentElement !== host) host.appendChild(box);
       if (!body.firstChild) render(statusText());
@@ -1525,6 +1545,7 @@ const Lyrics = (() => {
     for (const s of lineEl.querySelectorAll('.w')) {
       if (s.className !== 'w') s.className = 'w';
       if (s.style.getPropertyValue('--wp')) s.style.removeProperty('--wp');
+      s.style.removeProperty('--wd'); s.style.removeProperty('--wdel');
       s._wp = null;
     }
   }
@@ -1998,7 +2019,7 @@ const Lyrics = (() => {
       if (sidx !== lastIdx) {
         if (curEl) { curEl.classList.remove('active'); clearWords(curEl); }
         lastIdx = sidx; curEl = kids[sidx] || null;
-        if (curEl) { curEl.classList.add('active'); curSpans = curEl.querySelectorAll('.w'); autoScroll(curEl); }
+        if (curEl) { curEl.classList.add('active'); curSpans = curEl.querySelectorAll('.w'); paintLineDepth(kids, sidx); autoScroll(curEl); }
       }
       if (!curEl || !curSpans || !curSpans.length) return;
       const words = (synced[sidx].words || []).concat(synced[sidx].adWords || []);
@@ -2024,9 +2045,11 @@ const Lyrics = (() => {
       lastIdx = idx;
       curEl = idx >= 0 ? kids[idx] : null;
       curSpans = curTiming = null;
+      animBase = null;
       if (curEl) {
         curEl.classList.add('active');
         curSpans = curEl.querySelectorAll('.w');
+        paintLineDepth(kids, idx);
         const line = synced[idx];
         const lineEnd = synced[idx + 1] ? synced[idx + 1].t
           : (isFinite(v.duration) && v.duration > line.t ? v.duration : line.t + 6);
@@ -2080,11 +2103,18 @@ const Lyrics = (() => {
         }
       }
       const te = t + microOff;
-      // Exact per-word timing — continuous fill per word.
-      for (let i = 0; i < curSpans.length; i++) {
-        const tm = curTiming[i]; if (!tm) continue;
-        const f = tm.end > tm.start ? (te - tm.start) / (tm.end - tm.start) : (te >= tm.start ? 1 : 0);
-        setWordFill(curSpans[i], Math.min(1, Math.max(0, f)));
+      const rate = v.playbackRate || 1;
+      const paused = !!v.paused;
+      if (box.classList.contains('sd-paused') !== paused) box.classList.toggle('sd-paused', paused);
+      if (!paused) {
+        // (Re)build the schedule on line entry, seek, tempo change, or drift
+        // (buffering / large phase-lock correction). Otherwise the GPU runs it.
+        const expected = animBase && animBase.el === curEl
+          ? animBase.te + ((performance.now() - animBase.wall) / 1000) * animBase.rate
+          : null;
+        if (expected == null || animBase.rate !== rate || Math.abs(expected - te) > 0.25) {
+          scheduleWordAnims(te, rate);
+        }
       }
       markGap(t, curTiming.length ? curTiming[curTiming.length - 1].end : line.t, idx, v);
       return;
@@ -2136,6 +2166,36 @@ const Lyrics = (() => {
   function autoScroll(el) {
     if (Date.now() < userScrollUntil) return;
     try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch {}
+  }
+
+  // Depth-of-field: lines blur/dim progressively with distance from the
+  // active line; already-sung lines dim without blur (beautiful-lyrics look).
+  function paintLineDepth(kids, idx) {
+    for (let i = 0; i < kids.length; i++) {
+      const el = kids[i];
+      const d = idx < 0 ? 2 : Math.min(4, Math.abs(i - idx));
+      if (el._d !== d) { el.setAttribute('data-d', d); el._d = d; }
+      const sung = idx >= 0 && i < idx;
+      if (el._sung !== sung) { el.classList.toggle('sung-line', sung); el._sung = sung; }
+    }
+  }
+
+  // Pre-schedule the active line's word fills as CSS ANIMATIONS: the GPU
+  // sweeps every word continuously at display refresh rate — no 32ms tick
+  // quantization — with negative delays entering mid-word after a seek.
+  function scheduleWordAnims(te, rate) {
+    if (!curSpans || !curTiming) return;
+    for (let i = 0; i < curSpans.length; i++) {
+      const el = curSpans[i], tm = curTiming[i];
+      if (!tm) continue;
+      el.className = 'w';
+      el.style.removeProperty('--wp');
+      void el.offsetWidth; // reflow so re-adding the class restarts the animation
+      el.style.setProperty('--wd', (Math.max(0.08, (tm.end - tm.start)) / rate).toFixed(3) + 's');
+      el.style.setProperty('--wdel', ((tm.start - te) / rate).toFixed(3) + 's');
+      el.className = 'w sched';
+    }
+    animBase = { el: curEl, te, wall: performance.now(), rate };
   }
 
   // Build per-word [start,end] times for a line. Uses real timestamps when the

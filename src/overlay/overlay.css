@@ -660,7 +660,9 @@ input[type="color"]#stardust-accent {
 /* Animatable fill position so Chromium interpolates between animation frames —
    removes any residual per-frame stepping for a seamless sweep. */
 @property --wp { syntax: '<percentage>'; inherits: false; initial-value: 0%; }
-.stardust-lyric-line.words.active .w.cur {
+.stardust-lyric-line.words.active .w { display: inline-block; }
+.stardust-lyric-line.words.active .w.cur,
+.stardust-lyric-line.words.active .w.sched {
   /* Soft feathered fill edge (±8%) — crisp but never a hard line. */
   --wp: 0%;
   background-image: linear-gradient(90deg,
@@ -670,8 +672,38 @@ input[type="color"]#stardust-accent {
   -webkit-background-clip: text; background-clip: text;
   -webkit-text-fill-color: transparent; color: transparent;
   text-shadow: 0 0 18px color-mix(in srgb, var(--stardust-accent) 38%, transparent);
-  transition: --wp 0.09s linear;
-  will-change: --wp;
+  will-change: --wp, transform;
+}
+.stardust-lyric-line.words.active .w.cur { transition: --wp 0.09s linear; }
+/* Scheduled fills: the GPU sweeps each word continuously (delay may be
+   negative — entering mid-word after a seek) with a gentle rise as it's sung. */
+.stardust-lyric-line.words.active .w.sched {
+  animation: stardust-wfill var(--wd, 0.4s) linear var(--wdel, 0s) 1 both;
+}
+@keyframes stardust-wfill {
+  0%   { --wp: 0%;   transform: translateY(0) scale(1); }
+  14%  { transform: translateY(-1.5px) scale(1.04); }
+  82%  { transform: translateY(-1.5px) scale(1.04); }
+  100% { --wp: 100%; transform: translateY(0) scale(1); }
+}
+#stardust-lyrics.sd-paused .w.sched { animation-play-state: paused; }
+
+/* Depth of field — lines blur/dim with distance from the active one; sung
+   lines dim without blur. Hovering the panel lifts the blur for reading. */
+.stardust-lyric-line.words { transition: color 0.25s ease, transform 0.25s ease, filter 0.4s ease, opacity 0.4s ease; }
+.stardust-lyric-line:not(.active)[data-d="1"] { opacity: 0.62; filter: blur(0.6px); }
+.stardust-lyric-line:not(.active)[data-d="2"] { opacity: 0.5;  filter: blur(1.1px); }
+.stardust-lyric-line:not(.active)[data-d="3"] { opacity: 0.42; filter: blur(1.7px); }
+.stardust-lyric-line:not(.active)[data-d="4"] { opacity: 0.36; filter: blur(2.2px); }
+.stardust-lyric-line:not(.active).sung-line   { opacity: 0.45; filter: none; }
+#stardust-lyrics:hover .stardust-lyric-line:not(.active) { filter: none; opacity: 0.66; }
+
+/* Dynamic backdrop: the cover art rendered tiny and CSS-upscaled = a free,
+   soft blur that tints the whole lyrics tab (set as --sd-art by the JS). */
+#tab-renderer.stardust-lyrics-on {
+  background:
+    linear-gradient(rgba(5, 5, 13, 0.66), rgba(5, 5, 13, 0.84)),
+    var(--sd-art, linear-gradient(#0a0a18, #0a0a18)) center / cover no-repeat !important;
 }
 
 /* ---- Quick actions floating bar ---- */
@@ -863,10 +895,15 @@ body.stardust-playing img.stardust-vinyl { animation-play-state: running !import
 /* A line that is ENTIRELY an adlib renders small */
 .stardust-lyric-line.adlib-line { font-size: 1.25rem; font-weight: 600; opacity: 0.85; }
 
-/* Instrumental-gap pulse on a finished line waiting for the next one */
+/* Instrumental interlude — three breathing dots under the finished line */
 .stardust-lyric-line.active.gap::after {
-  content: ' ♪'; font-weight: 400;
-  color: color-mix(in srgb, var(--stardust-accent) 80%, #fff);
-  animation: stardustGapPulse 1.6s ease-in-out infinite;
+  content: '● ● ●'; display: block;
+  font-size: 0.85rem; letter-spacing: 3px; margin-top: 6px; font-weight: 400;
+  color: color-mix(in srgb, var(--stardust-accent) 85%, #fff);
+  text-shadow: 0 0 12px color-mix(in srgb, var(--stardust-accent) 55%, transparent);
+  animation: stardustGapPulse 1.8s ease-in-out infinite;
 }
-@keyframes stardustGapPulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 0.9; } }
+@keyframes stardustGapPulse {
+  0%, 100% { opacity: 0.25; transform: scale(0.96); }
+  50% { opacity: 0.95; transform: scale(1.02); }
+}
