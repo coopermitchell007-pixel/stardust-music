@@ -1206,6 +1206,8 @@ const Lyrics = (() => {
   let offset = 0, barEl = null, offEl = null, srcEl = null; // sync-offset (s) + toolbar els
   let userScrollUntil = 0;                   // pause auto-scroll while the user scrolls
   const SYL_RATE = 3.6;                      // starting syllables/sec — refined per song
+  const LOOKAHEAD = 0.12;                    // s — highlight leads the audio slightly (a
+                                             // mathematically exact highlight reads as late)
 
   // Everything we've HEARD of the current track so far. Fed on every tick (even
   // with the lyrics tab closed) so the model doesn't lose time:
@@ -1215,7 +1217,7 @@ const Lyrics = (() => {
   //                    line timestamps as lines complete.
   let hear = null;
   function resetHear() {
-    hear = { lastT: 0, voiced: 0, elapsed: 0, silent: 0, prevVoice: false, resumed: false, rate: SYL_RATE };
+    hear = { lastT: 0, voiced: 0, elapsed: 0, silent: 0, prevVoice: false, resumed: false, rate: SYL_RATE, eAvg: 0.35 };
     floor = 0; sylAcc = 0;
   }
   resetHear();
@@ -1359,7 +1361,9 @@ const Lyrics = (() => {
     }
   }
   function copyLyrics() {
-    const text = synced.length ? synced.map((l) => l.s).filter(Boolean).join('\n') : (plain || '');
+    const text = synced.length
+      ? synced.map((l) => (l.s || '') + (l.ad ? ' (' + l.ad + ')' : '')).map((x) => x.trim()).filter(Boolean).join('\n')
+      : (plain || '');
     if (!text) { toast('No lyrics to copy'); return; }
     navigator.clipboard.writeText(text).then(() => toast('📋 Lyrics copied'), () => toast('Copy failed'));
   }
@@ -1460,8 +1464,20 @@ const Lyrics = (() => {
             if (i < l.words.length - 1) line.appendChild(document.createTextNode(' '));
           });
         } else { line.textContent = l.s || '♪'; }
-        // Adlibs split out of the line render as their own smaller sub-line.
-        if (l.ad) line.appendChild(h('div', { class: 'stardust-lyric-adlib', text: '(' + l.ad + ')' }));
+        // Adlibs split out of the line render as their own smaller sub-line,
+        // with their own word spans: they sit after the main words in the
+        // line's fill sequence, so they light word-by-word as they're sung
+        // (echo adlibs follow the phrase they echo).
+        if (l.ad && l.adWords && l.adWords.length) {
+          const sub = h('div', { class: 'stardust-lyric-adlib' });
+          sub.appendChild(document.createTextNode('('));
+          l.adWords.forEach((w, i) => {
+            sub.appendChild(h('span', { class: 'w', text: w.text }));
+            if (i < l.adWords.length - 1) sub.appendChild(document.createTextNode(' '));
+          });
+          sub.appendChild(document.createTextNode(')'));
+          line.appendChild(sub);
+        }
         line.addEventListener('click', () => seekTo(l.t));
         body.appendChild(line);
       }
@@ -1525,7 +1541,9 @@ const Lyrics = (() => {
       .replace(/\s+/g, ' ').trim();
     if (!ads.filter(Boolean).length) return;
     if (!main) { l.adOnly = true; return; }  // the whole line IS an adlib
-    l.s = main; l.words = estWords(main); l.ad = ads.filter(Boolean).join(' · ');
+    l.s = main; l.words = estWords(main);
+    l.ad = ads.filter(Boolean).join(' ');
+    l.adWords = estWords(l.ad);              // word-filled like the main words
   }
 
   // Turn an LRC string into de-bloated synced lines and switch to 'ours'.
@@ -1689,7 +1707,10 @@ const Lyrics = (() => {
   }
   // Per-line syllable weights for energy-driven progression of synth lyrics.
   function buildSynthModel() {
-    lineSyl = synced.map((l) => Math.max(0.6, (l.s || '').toLowerCase().replace(/\[[^\]]*\]/g, '').match(/[aeiouy]+/g)?.length || 0.6));
+    lineSyl = synced.map((l) => {
+      const text = ((l.s || '') + ' ' + (l.ad || '')).toLowerCase().replace(/\[[^\]]*\]/g, '');
+      return Math.max(0.6, text.match(/[aeiouy]+/g)?.length || 0.6);
+    });
     totalSyl = 0; cumSyl = []; secSyl = [];
     for (let i = 0; i < lineSyl.length; i++) {
       cumSyl.push(totalSyl);
@@ -1705,7 +1726,7 @@ const Lyrics = (() => {
   function tick() {
     if (!active || !synced.length) return;
     const v = playingVideo(); if (!v) return;
-    const t = (v.currentTime || 0) + offset; // user sync-offset shifts the clock
+    const t = (v.currentTime || 0) + offset + LOOKAHEAD; // sync-offset + perceptual lead
     let dt = t - hear.lastT; hear.lastT = t;
     if (!(dt > 0) || dt > 1.5) dt = 0;       // first frame / pause / seek
     const L = listen();
@@ -1715,6 +1736,7 @@ const Lyrics = (() => {
       if (L.voice) {
         hear.resumed = !hear.prevVoice && hear.silent > 2.5;
         hear.voiced += dt; hear.silent = 0;
+        hear.eAvg += (L.e - hear.eAvg) * Math.min(1, dt * 0.35); // this song's typical voiced energy
       } else {
         hear.silent += dt;
       }
@@ -1740,7 +1762,11 @@ const Lyrics = (() => {
     const predVoiced = Math.max(20, hear.voiced + remaining * vfEst);
     const rate = totalSyl / predVoiced;      // syllables per VOICED second
     if (dt > 0 && L.voice) {
-      sylAcc += dt * rate * (0.75 + 0.5 * L.e);
+      // Modulate around THIS song's average voiced energy so the mean pace is
+      // exactly the learned rate — a fixed (a + b*e) form ran ~15% slow and
+      // made the highlight trail the singer.
+      const mod = Math.max(0.6, Math.min(1.5, 1 + 0.6 * (L.e - hear.eAvg)));
+      sylAcc += dt * rate * mod;
       if (L.onset > 0) sylAcc += 0.45 * L.onset; // syllable attacks carry more weight
     }
     // Singing resumed after a real instrumental break -> a structural boundary.
@@ -1759,8 +1785,8 @@ const Lyrics = (() => {
     // Anchor to voiced-time-heard (NOT wall time). Asymmetric band: lagging a
     // little reads fine, running ahead of the singer reads terribly.
     const anchor = Math.min(totalSyl, hear.voiced * rate);
-    sylAcc = Math.max(sylAcc, anchor - totalSyl * 0.10);
-    sylAcc = Math.min(sylAcc, anchor + totalSyl * 0.06);
+    sylAcc = Math.max(sylAcc, anchor - totalSyl * 0.08);
+    sylAcc = Math.min(sylAcc, anchor + totalSyl * 0.08);
     sylAcc = Math.min(totalSyl, Math.max(0, sylAcc));
   }
 
@@ -1786,7 +1812,7 @@ const Lyrics = (() => {
         if (curEl) { curEl.classList.add('active'); curSpans = curEl.querySelectorAll('.w'); autoScroll(curEl); }
       }
       if (!curEl || !curSpans || !curSpans.length) return;
-      const words = synced[sidx].words || [];
+      const words = (synced[sidx].words || []).concat(synced[sidx].adWords || []);
       const lineTot = words.reduce((a, w) => a + (((w.text || '').toLowerCase().match(/[aeiouy]+/g) || []).length || 1), 0) || 1;
       const wt = ((target - cumSyl[sidx]) / lineSyl[sidx]) * lineTot; // syllables into this line -> word space
       let acc = 0;
@@ -1822,7 +1848,8 @@ const Lyrics = (() => {
         } else {
           // Weight words by syllables, plus how singers actually phrase:
           // a breath after punctuation, and the final word of a line held long.
-          const ws2 = line.words || [];
+          // Adlib words are part of the sequence — they're sung too.
+          const ws2 = (line.words || []).concat(line.adWords || []);
           curSyl = ws2.map((w, i2) => {
             let syl = ((w.text || '').toLowerCase().match(/[aeiouy]+/g) || []).length || 1;
             if (/[,;:.!?…—–-]$/.test(w.text || '')) syl += 0.6;
@@ -1871,9 +1898,11 @@ const Lyrics = (() => {
     if (L.e < 0) {
       sylPtr = timeTarget; // no audio -> clock
     } else {
-      if (L.voice) sylPtr += dt * hear.rate * (0.6 + 0.8 * L.e);                // pace by real singing
+      if (L.voice) sylPtr += dt * hear.rate * Math.max(0.6, Math.min(1.5, 1 + 0.6 * (L.e - hear.eAvg))); // unbiased pace
       if (L.voice && L.onset > 0) sylPtr += Math.min(0.9, 0.4 + 0.6 * L.onset); // snap on attacks
-      sylPtr += (timeTarget - sylPtr) * 0.03;   // gentle pull to clock
+      // Catch up to the clock fast when behind (lag is the visible failure),
+      // drift back gently when ahead.
+      sylPtr += (timeTarget - sylPtr) * (sylPtr < timeTarget ? 0.10 : 0.02);
       const band = Math.min(3.2, 1.5 + curSylTotal * 0.15);
       sylPtr = Math.max(sylPtr, timeTarget - band);
       sylPtr = Math.min(sylPtr, timeTarget + band);
@@ -2260,9 +2289,9 @@ function buildUI() {
   document.body.appendChild(launcher);
 
   const discordIdWrap = h('div', { class: 'stardust-discord-id', id: 'stardust-discord-id-wrap' }, [
-    h('div', { class: 'stardust-discord-help', text: 'One-time setup: open the portal, create an app, paste its Application ID below.' }),
-    h('button', { class: 'stardust-mini-btn', dataset: { act: 'discord-portal' }, text: '↗ Open Discord Developer Portal' }),
-    h('input', { type: 'text', id: 'stardust-discord-id', placeholder: 'Paste Application ID (18-digit number)' })
+    h('div', { class: 'stardust-discord-help', text: 'Works out of the box — no setup needed. Optionally paste your own Application ID to change the app name Discord shows.' }),
+    h('button', { class: 'stardust-mini-btn', dataset: { act: 'discord-portal' }, text: '↗ Discord Developer Portal (optional)' }),
+    h('input', { type: 'text', id: 'stardust-discord-id', placeholder: 'Optional: custom Application ID' })
   ]);
 
   const panel = h('div', { id: 'stardust-panel' }, [
