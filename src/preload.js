@@ -1357,7 +1357,9 @@ const Lyrics = (() => {
     return barEl;
   }
   const SRC_LABEL = { musixmatch: 'Musixmatch', lrclib: 'LRCLIB', netease: 'NetEase', kugou: 'KuGou', genius: 'Genius', transcript: 'transcribed', community: 'community transcript', aligned: 'word-synced ⚡' };
+  let lastSource = null;
   function setSourceLabel(source, estimated) {
+    lastSource = source;
     if (!srcEl) return;
     const name = SRC_LABEL[source];
     srcEl.textContent = name ? ('via ' + name + (estimated ? ' · estimated timing' : '')) : '';
@@ -1691,6 +1693,14 @@ const Lyrics = (() => {
     if (srcEl) srcEl.textContent = savedSrc;
     const e2 = res && res.error;
     if (e2 === 'download') return 'download';
+    // Genius text that won't align to the audio (spoken/atypical vocals, or
+    // just wrong words) → transcribe the song instead; Whisper's words become
+    // the lyrics, word-timed. Real line-stamped sources stay as they are.
+    if (e2 === 'align-failed' && !stampsReal && !autoTried.has(forKey)) {
+      autoTried.add(forKey);
+      setTimeout(() => autoTranscribe(forKey, false), 800);
+      return 'fatal';
+    }
     if (!silent) {
       toast(e2 === 'no-key' ? 'Add a free Groq API key in the Stardust panel first'
         : e2 === 'bad-key' ? 'That Groq API key was rejected — check Settings'
@@ -1898,33 +1908,41 @@ const Lyrics = (() => {
         // NOTHING found anywhere → transcribe automatically in the background
         // (direct audio fetch — no listening). Word timing on every song.
         autoTried.add(forKey);
-        setTimeout(async () => {
-          if (!(active && key === forKey) || transcribing || syncing || mode !== 'off') return;
-          const vid = videoIdOf();
-          if (!vid) return;
-          syncing = true;
-          const el = body && body.querySelector('.stardust-lyric-status');
-          if (el) el.textContent = 'No lyrics anywhere — 🎙 transcribing this song in the background…';
-          let r = null;
-          try { r = await ipcRenderer.invoke('stardust:wordsync', { videoId: vid, title: np.title, artist: np.artist, album: np.album, duration: np.duration }); } catch {}
-          syncing = false;
-          if (!(active && key === forKey)) return;
-          if (r && r.syncedLyrics) {
-            applySynced(r.syncedLyrics);
-            localTranscript = r.syncedLyrics; curSourceIsTranscript = true;
-            setSourceLabel('transcript');
-            render(); sync();
-            toast('🎙 Transcribed automatically' + (r.shared ? ' · shared with the community' : ''));
-          } else if (r && r.plainLyrics) {
-            synced = []; plain = r.plainLyrics; mode = 'ours';
-            setSourceLabel('transcript');
-            render(); sync();
-          } else {
-            const el2 = body && body.querySelector('.stardust-lyric-status');
-            if (el2) el2.textContent = statusText() || '';
-          }
-        }, 1800);
+        setTimeout(() => autoTranscribe(forKey, true), 1800);
       }
+    }
+  }
+
+  // Background transcription via the direct audio fetch. Used when no lyrics
+  // exist anywhere, and as the fallback when Genius text won't align to the
+  // audio (spoken/atypical vocals) — Whisper's own words become the lyrics.
+  async function autoTranscribe(forKey, requireOff) {
+    if (!(active && key === forKey) || transcribing || syncing) return;
+    if (requireOff && mode !== 'off') return;
+    const vid = videoIdOf();
+    if (!vid) return;
+    syncing = true;
+    const el = body && body.querySelector('.stardust-lyric-status');
+    if (el) el.textContent = 'No lyrics anywhere — 🎙 transcribing this song in the background…';
+    else if (srcEl) srcEl.textContent = '🎙 transcribing…';
+    let r = null;
+    try { r = await ipcRenderer.invoke('stardust:wordsync', { videoId: vid, title: np.title, artist: np.artist, album: np.album, duration: np.duration }); } catch {}
+    syncing = false;
+    if (!(active && key === forKey)) return;
+    if (r && r.syncedLyrics) {
+      applySynced(r.syncedLyrics);
+      localTranscript = r.syncedLyrics; curSourceIsTranscript = true;
+      setSourceLabel('transcript');
+      render(); sync();
+      toast('🎙 Transcribed automatically' + (r.shared ? ' · shared with the community' : ''));
+    } else if (r && r.plainLyrics && mode === 'off') {
+      synced = []; plain = r.plainLyrics; mode = 'ours';
+      setSourceLabel('transcript');
+      render(); sync();
+    } else {
+      const el2 = body && body.querySelector('.stardust-lyric-status');
+      if (el2) el2.textContent = statusText() || '';
+      setSourceLabel(lastSource, synthMode);
     }
   }
   // Turn plain (untimed) lyrics into an LRC by spreading lines across the track
@@ -2265,8 +2283,9 @@ const Lyrics = (() => {
   }
   // Every active word uses the same continuous-fill style; only --wp changes.
   function setWordFill(el, f) {
-    if (el.className !== 'w cur') el.className = 'w cur';
     if (f > 0 && f < 1) f = Math.pow(f, 0.8); // fast attack, easing hold — matches sung articulation
+    const cls = (f > 0 && f < 1) ? 'w cur on' : 'w cur'; // 'on' = the word being sung right now (pop)
+    if (el.className !== cls) el.className = cls;
     const pct = (f * 100).toFixed(1) + '%';
     if (el._wp !== pct) { el.style.setProperty('--wp', pct); el._wp = pct; }
   }

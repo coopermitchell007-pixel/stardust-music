@@ -243,9 +243,10 @@ async function mxmToken(force) {
   const file = mxmTokenFile();
   if (!mxmTok && file) { try { mxmTok = JSON.parse(fs.readFileSync(file, 'utf8')); } catch {} }
   if (!force && mxmTok && mxmTok.token && Date.now() - mxmTok.at < 7 * 86400e3) return mxmTok.token;
+  if (mxmTok && mxmTok.failedAt && Date.now() - mxmTok.failedAt < 60000) return null; // issuance cooldown
   const r = await getJson(MXM_ROOT + 'token.get?app_id=web-desktop-app-v1.0', MXM_HEADERS);
   const tok = r && r.message && r.message.body && r.message.body.user_token;
-  if (!tok || tok.includes('Upgrade')) return null;
+  if (!tok || tok.includes('Upgrade')) { mxmTok = { failedAt: Date.now() }; return null; }
   mxmTok = { token: tok, at: Date.now() };
   if (file) { try { fs.writeFileSync(file, JSON.stringify(mxmTok)); } catch {} }
   return tok;

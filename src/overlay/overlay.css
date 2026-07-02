@@ -674,7 +674,9 @@ input[type="color"]#stardust-accent {
   text-shadow: 0 0 18px color-mix(in srgb, var(--stardust-accent) 38%, transparent);
   will-change: --wp, transform;
 }
-.stardust-lyric-line.words.active .w.cur { transition: --wp 0.09s linear; }
+.stardust-lyric-line.words.active .w.cur { transition: --wp 0.09s linear, transform 0.18s ease; }
+/* The word being sung right now rises gently (tick-driven modes) */
+.stardust-lyric-line.words.active .w.cur.on { transform: translateY(-1.5px) scale(1.04); }
 /* Scheduled fills: the GPU sweeps each word continuously (delay may be
    negative — entering mid-word after a seek) with a gentle rise as it's sung. */
 .stardust-lyric-line.words.active .w.sched {
