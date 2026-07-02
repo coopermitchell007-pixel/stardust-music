@@ -70,6 +70,18 @@ function goodSegment(sg) {
   return true;
 }
 
+// Words from confident segments only — hallucinated (instrumental) segments
+// must feed NOTHING downstream: not transcripts, and not alignment anchors.
+function confidentWords(json) {
+  const allSegs = (json.segments && json.segments.length) ? json.segments : null;
+  const segs = allSegs ? allSegs.filter(goodSegment) : null;
+  let words = json.words || (allSegs || []).flatMap((s) => s.words || []);
+  if (segs && words && words.length) {
+    words = words.filter((w) => segs.some((sg) => w.start >= sg.start - 0.05 && w.start <= sg.end + 0.05));
+  }
+  return words || [];
+}
+
 // Build an enhanced-LRC string (with <mm:ss.xx> word tags) from Whisper's
 // verbose_json. Groups words into lines using segment boundaries when present;
 // only confident (non-hallucinated) segments contribute.
@@ -77,11 +89,7 @@ function buildLRC(json) {
   if (!json) return '';
   const allSegs = (json.segments && json.segments.length) ? json.segments : null;
   const segs = allSegs ? allSegs.filter(goodSegment) : null;
-  let words = json.words || (allSegs || []).flatMap((s) => s.words || []);
-  if (segs && words && words.length) {
-    // Keep only words inside confident segments.
-    words = words.filter((w) => segs.some((sg) => w.start >= sg.start - 0.05 && w.start <= sg.end + 0.05));
-  }
+  const words = confidentWords(json);
   if (words && words.length) {
     const lines = [];
     if (segs) {
@@ -142,7 +150,7 @@ function postMultipart(url, fieldPairs, fileBuf, apiKey, filename = 'audio.webm'
 }
 
 // Run Whisper on captured audio; returns { json } or { error }.
-async function whisperVerbose(audio, apiKey, audioName, prompt) {
+async function whisperVerbose(audio, apiKey, audioName, prompt, language) {
   if (!apiKey) return { error: 'no-key' };
   if (!audio || !audio.length) return { error: 'no-audio' };
   const buf = Buffer.isBuffer(audio) ? audio : Buffer.from(audio);
@@ -156,6 +164,8 @@ async function whisperVerbose(audio, apiKey, audioName, prompt) {
   // Priming Whisper with the expected words sharply improves recognition on
   // music (vocab, names, slang) → more matched anchors → tighter word timing.
   if (prompt) fields.push(['prompt', String(prompt).slice(0, 890)]);
+  // A language hint prevents mid-song language flips (a classic anchor killer).
+  if (language) fields.push(['language', language]);
   const res = await postMultipart(ENDPOINT, fields, buf, apiKey, audioName || 'audio.webm');
   if (!res) return { error: 'network' };
   console.log('[Stardust] whisper status', res.status, res.json && (res.json.error ? JSON.stringify(res.json.error).slice(0, 200) : ('segments=' + ((res.json.segments || []).length) + ' words=' + ((res.json.words || []).length))));
@@ -192,9 +202,16 @@ async function transcribe({ title, artist, album, duration, audio, audioName } =
 async function alignToLyrics({ title, artist, album, duration, audio, audioName, lyrics, realStamps, force } = {}, apiKey, share) {
   if (!lyrics) return { error: 'no-lyrics' };
   const plainPrompt = String(lyrics).replace(/\[[^\]]*\]|<\d+:\d+(?:\.\d+)?>/g, ' ').replace(/\s+/g, ' ').trim();
-  const w = await whisperVerbose(audio, apiKey, audioName, plainPrompt);
+  // If the lyrics are overwhelmingly Latin-script, hint English — mid-song
+  // language misdetection wipes out whole stretches of anchors.
+  const latin = (plainPrompt.match(/[a-z]/gi) || []).length;
+  const total = (plainPrompt.match(/\p{L}/gu) || []).length || 1;
+  const lang = latin / total > 0.9 ? 'en' : null;
+  const w = await whisperVerbose(audio, apiKey, audioName, plainPrompt, lang);
   if (w.error) return { error: w.error };
-  const words = w.json.words || (w.json.segments || []).flatMap((sg) => sg.words || []);
+  // Confident segments only — hallucinated instrumental segments would
+  // otherwise create FALSE anchors that warp the timing around them.
+  const words = confidentWords(w.json);
   if (!words || words.length < 10) return { error: 'empty' };
   const res = align.alignLyrics(lyrics, words, duration, !!realStamps, !!force);
   if (!res || res.failed) {

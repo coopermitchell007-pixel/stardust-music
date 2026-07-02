@@ -1587,14 +1587,31 @@ const Lyrics = (() => {
   }
   const stripTag = (s) => (s || '').replace(/\s*[([][^)\]]*(?:official|music\s*video|lyric|audio|visuali[sz]er|remaster|sped\s*up|slowed|reverb|extended|\bhd\b|\b4k\b|\blive\b)[^)\]]*[)\]]/gi, '').trim();
 
-  // Split "(...)" adlibs out of a line: the main words carry the timing, the
-  // adlib renders as its own smaller sub-line. Only for lines WITHOUT real
-  // per-word timestamps (adlibs live in Genius/plain text; yrc timing is exact
-  // and must not be re-segmented).
+  // Split "(...)" adlibs out of a line into their own smaller sub-line.
+  // Word-timed lines (richsync/aligned/transcribed — most lyrics now) keep
+  // every word's REAL timestamp through the split; untimed lines re-estimate.
   function splitAdlib(l) {
-    if (l.words && l.words.length && l.words[0].time != null) return;
     const s = l.s || '';
     if (!/[()（）]/.test(s)) return;
+    const timed = l.words && l.words.length && l.words[0].time != null;
+    if (timed) {
+      const main = [], ads = [];
+      let inAd = false;
+      for (const w of l.words) {
+        const txt = w.text || '';
+        if (/^[（(]/.test(txt)) inAd = true;
+        const stripped = txt.replace(/^[（(]+/, '').replace(/[)）]+$/, '');
+        if (stripped) (inAd ? ads : main).push({ ...w, text: stripped });
+        if (/[)）]$/.test(txt)) inAd = false;
+      }
+      if (!ads.length) return;
+      if (!main.length) { l.adOnly = true; return; }
+      l.words = main;
+      l.adWords = ads;
+      l.ad = ads.map((w) => w.text).join(' ');
+      l.s = main.map((w) => w.text).join(' ');
+      return;
+    }
     const ads = [];
     const main = s.replace(/[（(]([^)）]{1,60})[)）]/g, (_, inner) => { ads.push(inner.trim()); return ' '; })
       .replace(/\s+/g, ' ').trim();
@@ -2175,10 +2192,13 @@ const Lyrics = (() => {
         const line = synced[idx];
         const lineEnd = synced[idx + 1] ? synced[idx + 1].t
           : (isFinite(v.duration) && v.duration > line.t ? v.duration : line.t + 6);
-        const real = line.words && line.words.length && line.words[0].time != null;
+        const wordsAll = (line.words || []).concat(line.adWords || []);
+        const real = wordsAll.length && wordsAll[0].time != null;
         curMode = real ? 'real' : 'est';
         if (real) {
-          curTiming = computeWordTiming(line, lineEnd);
+          // Adlib spans sit AFTER the main words in the DOM but interleave in
+          // time — timing is computed over the combined array in DOM order.
+          curTiming = computeWordTiming({ ...line, words: wordsAll }, lineEnd);
         } else {
           // Weight words by syllables, plus how singers actually phrase:
           // a breath after punctuation, and the final word of a line held long.
@@ -2238,7 +2258,7 @@ const Lyrics = (() => {
           scheduleWordAnims(te, rate);
         }
       }
-      markGap(t, curTiming.length ? curTiming[curTiming.length - 1].end : line.t, idx, v);
+      markGap(t, curTiming.length ? Math.max(...curTiming.map((tm) => tm.end)) : line.t, idx, v);
       return;
     }
     if (!curSyl) return;
@@ -2329,10 +2349,14 @@ const Lyrics = (() => {
     const words = line.words || [];
     if (!words.length) return [];
     if (words[0].time != null) {
-      return words.map((w, i) => {
-        const next = (words[i + 1] && words[i + 1].time != null) ? words[i + 1].time : Math.min(lineEnd, w.time + 1.2);
-        // A long gap to the next word is a pause AFTER this word, not a
-        // 2s-long word — cap the sweep so the word completes at singing pace.
+      // End = the next word start IN TIME (array order interleaves adlibs),
+      // capped at singing pace: a long gap after a word is a pause, not a
+      // 2-second-long word.
+      const starts = words.map((w) => w.time).sort((a, b) => a - b);
+      return words.map((w) => {
+        let next = Infinity;
+        for (const t2 of starts) { if (t2 > w.time + 0.01) { next = t2; break; } }
+        if (next === Infinity) next = Math.min(lineEnd, w.time + 1.2);
         return { start: w.time, end: Math.min(next, w.time + Math.max(0.35, 0.12 + 0.07 * (w.text || '').length)) };
       });
     }
