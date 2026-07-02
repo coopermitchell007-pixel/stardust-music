@@ -1712,14 +1712,20 @@ const Lyrics = (() => {
     if (srcEl) srcEl.textContent = savedSrc;
     const e2 = res && res.error;
     if (e2 === 'download' && !silent) return 'download'; // manual ⚡ falls back to listening
-    // Lyrics that won't align to the audio → transcribe instead; Whisper's
-    // words become the lyrics, word-timed. For line-stamped sources this only
-    // happens when the match was DIRE (<35% — the database has the wrong
-    // words, common on KuGou English entries); Genius text falls back always.
+    // Lyrics that won't align to the audio. NEVER force the transcription on
+    // the user unless the database words are CERTAINLY wrong (<15% match, or
+    // <35% for Genius guesses) — borderline coverage keeps the database
+    // lyrics and just says so on the badge. Auto-replacements announce
+    // themselves with the way back (🔎).
     const cov = (res && res.coverage) || 0;
-    if (e2 === 'align-failed' && (!stampsReal || cov < 0.35) && !autoTried.has(forKey)) {
+    const certainlyWrong = cov < 0.15 || (!stampsReal && cov < 0.35);
+    if (e2 === 'align-failed' && certainlyWrong && !autoTried.has(forKey)) {
       autoTried.add(forKey);
       setTimeout(() => autoTranscribe(forKey, false), 800);
+      return 'fatal';
+    }
+    if (e2 === 'align-failed' && silent) {
+      if (srcEl) srcEl.textContent = savedSrc + ' · ⚡ words may not match this audio (🎙 to transcribe)';
       return 'fatal';
     }
     if (silent) {
@@ -1977,11 +1983,14 @@ const Lyrics = (() => {
     syncing = false;
     if (!(active && key === forKey)) return;
     if (r && r.syncedLyrics) {
+      const replaced = mode !== 'off' && synced.length > 0; // we're overwriting visible DB lyrics
       applySynced(r.syncedLyrics);
       localTranscript = r.syncedLyrics; curSourceIsTranscript = true;
       setSourceLabel('transcript');
       render(); sync();
-      toast('🎙 Transcribed automatically' + (r.shared ? ' · shared with the community' : ''));
+      toast(replaced
+        ? "🎙 The database words didn't match this audio — transcribed instead. 🔎 switches back."
+        : '🎙 Transcribed automatically' + (r.shared ? ' · shared with the community' : ''));
     } else if (r && r.plainLyrics && mode === 'off') {
       synced = []; plain = r.plainLyrics; mode = 'ours';
       setSourceLabel('transcript');
