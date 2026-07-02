@@ -57,7 +57,7 @@ function alignSequences(lyr, wsp) {
     const s0 = sim(a.n, b.n);
     if (s0 <= 0) return s0;
     const dt = Math.abs((a.at != null ? a.at : b.t) - b.t);
-    return s0 + 0.5 - Math.min(1.4, dt / 25);
+    return s0 + 0.5 - Math.min(1.4, dt / (a.tight ? 5 : 25));
   };
   const W = m + 1;
   const score = new Float32Array((n + 1) * W);
@@ -95,8 +95,12 @@ const stamp = (sec) => {
 
 // lrcText: the current synced lyrics (line-level or synth timing; existing
 // <word> tags are ignored). whisperWords: [{word, start}] from verbose_json.
+// realStamps: the line timestamps are HUMAN-MADE (lrclib/KuGou/NetEase) — they
+// are ground truth at line level, so Whisper is only trusted to place words
+// WITHIN each line's window. Measured on real songs, free-running alignment
+// drifted whole chorus lines (~2s, p90); window-clamped it cannot.
 // Returns { syncedLyrics, coverage } or null when alignment isn't trustworthy.
-function alignLyrics(lrcText, whisperWords, duration) {
+function alignLyrics(lrcText, whisperWords, duration, realStamps) {
   // Parse the lyric lines: keep text + display words per line.
   const lines = [];
   for (const raw of String(lrcText || '').split('\n')) {
@@ -118,7 +122,8 @@ function alignLyrics(lrcText, whisperWords, duration) {
     const span = Math.max(1, Math.min((next ? next.t - ln.t : 4), ln.words.length * 0.55));
     ln.words.forEach((w, wi) => flat.push({
       li, wi, w, n: norm(w),
-      at: ln.t + span * (wi / Math.max(1, ln.words.length))
+      at: ln.t + span * (wi / Math.max(1, ln.words.length)),
+      tight: !!realStamps
     }));
   });
   const lyrNorm = flat.map((f) => f.n);
@@ -128,14 +133,26 @@ function alignLyrics(lrcText, whisperWords, duration) {
     .filter((w) => w.n && isFinite(w.t));
   if (wsp.length < 10) return null;
 
-  const map = alignSequences(flat.map((f) => ({ n: f.n, at: f.at })), wsp);
+  const map = alignSequences(flat.map((f) => ({ n: f.n, at: f.at, tight: f.tight })), wsp);
 
   // Anchor times must be strictly increasing. Greedy "keep the first" lets a
   // single wrong-occurrence anchor block every legitimate one behind it, so
   // take the LONGEST increasing subsequence instead — the maximal mutually
   // consistent anchor set, discarding the few liars wherever they sit.
   const cand = [];
-  for (let i = 0; i < flat.length; i++) if (map[i] >= 0) cand.push({ i, t: wsp[map[i]].t });
+  for (let i = 0; i < flat.length; i++) {
+    if (map[i] < 0) continue;
+    const t = wsp[map[i]].t;
+    if (realStamps) {
+      // Human line stamps are ground truth: an anchor outside its line's
+      // window (with slack for stamp looseness) is a misalignment — drop it.
+      const ln = lines[flat[i].li], next = lines[flat[i].li + 1];
+      const lo = ln.t - 1.0;
+      const hi = (next ? next.t : (duration > 0 ? duration : ln.t + 12)) + 1.0;
+      if (t < lo || t > hi) continue;
+    }
+    cand.push({ i, t });
+  }
   const tails = [], links = new Array(cand.length).fill(-1), tailIdx = [];
   for (let k = 0; k < cand.length; k++) {
     let lo = 0, hi = tails.length;
@@ -200,16 +217,27 @@ function alignLyrics(lrcText, whisperWords, duration) {
         times[k2] = tNext;
         k2--;
       }
-      // Middle: whole unanchored lines — spread by syllables in what's left.
+      // Middle: whole unanchored lines. With human stamps, each line paces
+      // from its OWN stamp (ground truth); otherwise spread in what's left.
       if (k <= k2) {
-        const lo = times[k - 1] != null ? times[k - 1] : ta;
-        const hi = tNext;
-        let tot = 0;
-        for (let x = k; x <= k2; x++) tot += sylOf(flat[x].w);
-        let acc = 0;
-        for (let x = k; x <= k2; x++) {
-          acc += sylOf(flat[x].w);
-          times[x] = lo + Math.max(0, hi - lo) * (acc / (tot + 1));
+        if (realStamps) {
+          for (let x = k; x <= k2; x++) {
+            const ln = lines[flat[x].li];
+            times[x] = flat[x].wi === 0 || times[x - 1] == null || flat[x - 1].li !== flat[x].li
+              ? Math.max(ta + 0.05, ln.t)
+              : times[x - 1] + pace * sylOf(flat[x - 1].w);
+            times[x] = Math.min(times[x], tNext - 0.05);
+          }
+        } else {
+          const lo = times[k - 1] != null ? times[k - 1] : ta;
+          const hi = tNext;
+          let tot = 0;
+          for (let x = k; x <= k2; x++) tot += sylOf(flat[x].w);
+          let acc = 0;
+          for (let x = k; x <= k2; x++) {
+            acc += sylOf(flat[x].w);
+            times[x] = lo + Math.max(0, hi - lo) * (acc / (tot + 1));
+          }
         }
       }
       // Monotonic safety net over the filled stretch.
@@ -221,6 +249,34 @@ function alignLyrics(lrcText, whisperWords, duration) {
   for (let k = prevIdx + 1; k < times.length; k++) {
     times[k] = times[k - 1] + pace * sylOf(flat[k - 1].w);
     if (duration > 0) times[k] = Math.min(times[k], duration - 0.2);
+  }
+
+  // realStamps: the human line stamps are the absolute truth — Whisper's
+  // absolute clock drifts on music (its strength is RELATIVE spacing). Shift
+  // each line's word times so the first word sits exactly on the human stamp,
+  // keeping Whisper's intra-line rhythm; clamp inside the line's window.
+  if (realStamps) {
+    for (let li = 0; li < lines.length; li++) {
+      const idxs = [];
+      for (let i = 0; i < flat.length; i++) if (flat[i].li === li) idxs.push(i);
+      if (!idxs.length) continue;
+      const t0 = lines[li].t;
+      const end = (lines[li + 1] ? lines[li + 1].t : (duration > 0 ? duration : t0 + 8)) - 0.05;
+      const shift = t0 - times[idxs[0]];
+      if (Math.abs(shift) <= 3.5) {
+        for (const i of idxs) times[i] += shift;
+      } else {
+        // Alignment lost this line entirely — pace it from the human stamp.
+        let t = t0;
+        for (const i of idxs) { times[i] = t; t += pace * sylOf(flat[i].w); }
+      }
+      // Keep every word inside the line window, strictly increasing.
+      let prev = t0 - 0.001;
+      for (const i of idxs) {
+        times[i] = Math.min(Math.max(times[i], prev + 0.02), Math.max(end, t0 + 0.1));
+        prev = times[i];
+      }
+    }
   }
 
   // Rebuild enhanced LRC: each line stamped at its first word's real time.
@@ -237,7 +293,10 @@ function alignLyrics(lrcText, whisperWords, duration) {
     for (const x of ws) body += '<' + stamp(x.t) + '>' + x.w + ' ';
     out.push('[' + stamp(ws[0].t) + ']' + body.trim());
   }
-  return out.length >= 2 ? { syncedLyrics: out.join('\n'), coverage } : null;
+  if (out.length < 2) return null;
+  // Version marker: replays of an already-aligned cache must not re-trigger
+  // the background upgrade (it would cost one Whisper call per play).
+  return { syncedLyrics: '[re:stardust-aligned-v2]\n' + out.join('\n'), coverage };
 }
 
 module.exports = { alignLyrics, alignSequences, norm };

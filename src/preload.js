@@ -1205,6 +1205,8 @@ const Lyrics = (() => {
   let transcribing = false;
   let offset = 0, barEl = null, offEl = null, srcEl = null, alignBtn = null; // sync-offset (s) + toolbar els
   let lastLrcText = '';                      // raw LRC of the current lyrics (for ⚡ alignment)
+  let stampsReal = false;                    // line stamps are human-made (lrclib/KuGou/NetEase)
+  let microOff = 0;                          // live onset phase-lock correction (s)
   let syncing = false;                       // a background word-sync is in flight
   let userScrollUntil = 0;                   // pause auto-scroll while the user scrolls
   const SYL_RATE = 3.6;                      // starting syllables/sec — refined per song
@@ -1625,7 +1627,7 @@ const Lyrics = (() => {
     try {
       res = await ipcRenderer.invoke('stardust:wordsync', {
         videoId: vid, title: np.title, artist: np.artist, album: np.album,
-        duration: np.duration, lyrics: lastLrcText
+        duration: np.duration, lyrics: lastLrcText, realStamps: stampsReal
       });
     } catch {}
     syncing = false;
@@ -1675,7 +1677,7 @@ const Lyrics = (() => {
     if (!audio) { restore(); return; }
     setStatus('⚡ Aligning the words to the audio… (10–30s)');
     let res = null;
-    try { res = await ipcRenderer.invoke('stardust:align', { title: trackTitle, artist: trackArtist, album: trackAlbum, duration: trackDur, audio, lyrics: savedLrc }); } catch {}
+    try { res = await ipcRenderer.invoke('stardust:align', { title: trackTitle, artist: trackArtist, album: trackAlbum, duration: trackDur, audio, lyrics: savedLrc, realStamps: stampsReal }); } catch {}
     if (res && res.syncedLyrics) {
       const nowSame = active && key === forKey;
       if (nowSame) {
@@ -1759,6 +1761,7 @@ const Lyrics = (() => {
     mode = 'searching'; curEl = null; curSpans = null;
     nudge(0);    // the sync offset is per-song
     resetHear(); // fresh hearing model per song (voiced fraction, pace, floor)
+    stampsReal = false; microOff = 0;
     setSourceLabel(null);
     render('Searching lyrics…'); sync(); doFetch();
   }
@@ -1785,6 +1788,7 @@ const Lyrics = (() => {
     let synthed = false;
     if (res && res.syncedLyrics) {
       applySynced(res.syncedLyrics);
+      stampsReal = res.kind === 'line'; // human line timing → alignment may trust it
     } else if (res && res.plainLyrics) {
       const clean = res.plainLyrics.split('\n').filter((l, i) => !isBloatLine(l, i, titleN)).map(stripTag).join('\n');
       // Give plain lyrics timing too: synthesize line timestamps so they get
@@ -1807,8 +1811,28 @@ const Lyrics = (() => {
     // Auto word-sync: when the lyrics lack real word timing and a Groq key is
     // set, fetch + align in the background — no interaction, music keeps
     // playing, the timing upgrades itself mid-song.
-    if (synced.length && !hasWordTiming() && settings && settings.transcribeKey && settings.autoWordSync !== false) {
-      setTimeout(() => { if (active && key === forKey && !hasWordTiming()) remoteWordSync(true); }, 2500);
+    if (settings && settings.transcribeKey && settings.autoWordSync !== false) {
+      if (synced.length && !hasWordTiming()) {
+        setTimeout(() => { if (active && key === forKey && !hasWordTiming()) remoteWordSync(true); }, 2500);
+      } else if (res && (res.source === 'transcript' || res.source === 'community') && synced.length
+        && !(res.syncedLyrics && res.syncedLyrics.includes('stardust-aligned-v2'))) {
+        // Raw transcripts carry Whisper's misheard TEXT. If the databases have
+        // the real words, swap to them and align — the transcript is replaced
+        // (cache overwritten by the aligned result; removed outright on a
+        // word-timed DB hit).
+        setTimeout(async () => {
+          if (!(active && key === forKey)) return;
+          let db = null;
+          try { db = await ipcRenderer.invoke('stardust:lyrics', { artist: np.artist, title: np.title, album: np.album, duration: np.duration, skipTranscript: true }); } catch {}
+          if (!(active && key === forKey) || !db || !db.syncedLyrics || db.kind === 'synth') return;
+          try { ipcRenderer.invoke('stardust:transcript-remove', { title: np.title, artist: np.artist }); } catch {}
+          applySynced(db.syncedLyrics);
+          stampsReal = db.kind === 'line';
+          setSourceLabel(db.source);
+          render(); sync();
+          if (!hasWordTiming()) remoteWordSync(true);
+        }, 2500);
+      }
     }
   }
   // Turn plain (untimed) lyrics into an LRC by spreading lines across the track
@@ -2000,10 +2024,26 @@ const Lyrics = (() => {
     const line = synced[idx];
 
     if (curMode === 'real' && curTiming) {
+      // Live onset phase-lock: a vocal attack near a scheduled word start
+      // means that word is being sung NOW — nudge a smoothed correction so
+      // the fill locks onto the real singing instead of the schedule.
+      if (L && L.e >= 0 && L.voice && L.onset > 0.15) {
+        const tRaw = t - LOOKAHEAD;
+        let best = null, bd = 0.4;
+        for (const tm of curTiming) {
+          const d = Math.abs(tm.start - tRaw);
+          if (d < bd) { bd = d; best = tm.start; }
+        }
+        if (best != null) {
+          microOff += ((best - tRaw) - microOff) * 0.25;
+          microOff = Math.max(-0.45, Math.min(0.45, microOff));
+        }
+      }
+      const te = t + microOff;
       // Exact per-word timing — continuous fill per word.
       for (let i = 0; i < curSpans.length; i++) {
         const tm = curTiming[i]; if (!tm) continue;
-        const f = tm.end > tm.start ? (t - tm.start) / (tm.end - tm.start) : (t >= tm.start ? 1 : 0);
+        const f = tm.end > tm.start ? (te - tm.start) / (tm.end - tm.start) : (te >= tm.start ? 1 : 0);
         setWordFill(curSpans[i], Math.min(1, Math.max(0, f)));
       }
       markGap(t, curTiming.length ? curTiming[curTiming.length - 1].end : line.t, idx, v);

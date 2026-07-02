@@ -146,13 +146,13 @@ async function transcribe({ title, artist, album, duration, audio, audioName } =
 
 // Forced alignment: keep the KNOWN lyrics text, take the audio's word clock.
 // Near-perfect word timing without trusting Whisper's (mishearable) words.
-async function alignToLyrics({ title, artist, album, duration, audio, audioName, lyrics } = {}, apiKey, share) {
+async function alignToLyrics({ title, artist, album, duration, audio, audioName, lyrics, realStamps } = {}, apiKey, share) {
   if (!lyrics) return { error: 'no-lyrics' };
   const w = await whisperVerbose(audio, apiKey, audioName);
   if (w.error) return { error: w.error };
   const words = w.json.words || (w.json.segments || []).flatMap((sg) => sg.words || []);
   if (!words || words.length < 10) return { error: 'empty' };
-  const res = align.alignLyrics(lyrics, words, duration);
+  const res = align.alignLyrics(lyrics, words, duration, !!realStamps);
   if (!res) return { error: 'align-failed' };
   console.log('[Stardust] aligned', title, '— coverage', Math.round(res.coverage * 100) + '%');
   putCached(title, artist, res.syncedLyrics);

@@ -321,7 +321,7 @@ function registerIpc() {
       if (!got) return { error: 'download' };
       const key = config.get('transcribeKey');
       const share = config.get('shareTranscripts') !== false;
-      const payload = { title: p.title, artist: p.artist, album: p.album, duration: p.duration, audio: got.buf, audioName: got.name, lyrics: p.lyrics };
+      const payload = { title: p.title, artist: p.artist, album: p.album, duration: p.duration, audio: got.buf, audioName: got.name, lyrics: p.lyrics, realStamps: p.realStamps };
       return p.lyrics
         ? await transcribe.alignToLyrics(payload, key, share)
         : await transcribe.transcribe(payload, key, share);
