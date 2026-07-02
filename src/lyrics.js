@@ -186,12 +186,19 @@ async function fetchLyrics({ artist, title, album, duration, skipTranscript } = 
 
   // Stage 1: Musixmatch gets a RESERVED window — it needs 2-3 round trips,
   // and the fast line-level sources must not beat its human word-level
-  // richsync to the finish line. The rest race as before.
+  // richsync to the finish line. The rest race as before. Community rows are
+  // fetched ONCE: aligned (word-timed, database text) entries compete in the
+  // race itself so keyless users get shared word timing over line-level
+  // sources; raw transcripts stay a late fallback (stage 1.5).
+  const communityP = skipTranscript ? Promise.resolve(null)
+    : community.getTranscript(title, artist, duration).catch(() => null);
   const mxmP = fetchMusixmatch({ title: fTitle, artist: fArtist, duration, want: fWant }).catch(() => null);
   const othersP = raceLyrics([
     fetchLrclib({ artist, ct, bare, artist1, duration, wants, altPairs }).catch(() => null),
     fetchNetease({ title: fTitle, artist: fArtist, want: fWant }).catch(() => null),
-    fetchKugou({ title: fTitle, artist: fArtist, want: fWant }).catch(() => null)
+    fetchKugou({ title: fTitle, artist: fArtist, want: fWant }).catch(() => null),
+    communityP.then((clrc) => (clrc && clrc.includes('stardust-aligned-v2'))
+      ? { syncedLyrics: clrc, plainLyrics: '', kind: 'word', source: 'community' } : null)
   ]);
   const mxm = await Promise.race([mxmP, new Promise((r) => setTimeout(() => r(undefined), 4000))]);
   if (mxm && mxm.kind === 'word') return mxm;   // richsync — nothing beats it
@@ -202,12 +209,11 @@ async function fetchLyrics({ artist, title, album, duration, skipTranscript } = 
   const late = await Promise.race([mxmP, new Promise((r) => setTimeout(() => r(undefined), 1500))]);
   if (late) return late;
 
-  // Stage 1.5: the community transcript store — someone else already listened
-  // to this exact song (word-timed). Whisper can mishear, so it must never
-  // pre-empt a real synced source; it only beats Genius guessing.
+  // Stage 1.5: RAW community transcripts (whisper text — can mishear) only
+  // beat Genius guessing; aligned entries already competed in stage 1.
   if (!skipTranscript) {
     try {
-      const clrc = await community.getTranscript(title, artist, duration);
+      const clrc = await communityP;
       if (clrc) return { syncedLyrics: clrc, plainLyrics: '', kind: 'word', source: 'community' };
     } catch {}
   }

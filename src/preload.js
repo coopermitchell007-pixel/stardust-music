@@ -1211,6 +1211,7 @@ const Lyrics = (() => {
   let localTranscript = null;                // this song's own transcription (never deleted)
   let microOff = 0;                          // live onset phase-lock correction (s)
   let syncing = false;                       // a background word-sync is in flight
+  const autoTried = new Set();               // one auto-transcribe attempt per song per session
   let userScrollUntil = 0;                   // pause auto-scroll while the user scrolls
   const SYL_RATE = 3.6;                      // starting syllables/sec — refined per song
   const LOOKAHEAD = 0.12;                    // s — highlight leads the audio slightly (a
@@ -1893,6 +1894,36 @@ const Lyrics = (() => {
           render(); sync();
           if (!hasWordTiming()) remoteWordSync(true);
         }, 2500);
+      } else if (mode === 'off' && np.duration > 0 && np.duration < 720 && !autoTried.has(forKey)) {
+        // NOTHING found anywhere → transcribe automatically in the background
+        // (direct audio fetch — no listening). Word timing on every song.
+        autoTried.add(forKey);
+        setTimeout(async () => {
+          if (!(active && key === forKey) || transcribing || syncing || mode !== 'off') return;
+          const vid = videoIdOf();
+          if (!vid) return;
+          syncing = true;
+          const el = body && body.querySelector('.stardust-lyric-status');
+          if (el) el.textContent = 'No lyrics anywhere — 🎙 transcribing this song in the background…';
+          let r = null;
+          try { r = await ipcRenderer.invoke('stardust:wordsync', { videoId: vid, title: np.title, artist: np.artist, album: np.album, duration: np.duration }); } catch {}
+          syncing = false;
+          if (!(active && key === forKey)) return;
+          if (r && r.syncedLyrics) {
+            applySynced(r.syncedLyrics);
+            localTranscript = r.syncedLyrics; curSourceIsTranscript = true;
+            setSourceLabel('transcript');
+            render(); sync();
+            toast('🎙 Transcribed automatically' + (r.shared ? ' · shared with the community' : ''));
+          } else if (r && r.plainLyrics) {
+            synced = []; plain = r.plainLyrics; mode = 'ours';
+            setSourceLabel('transcript');
+            render(); sync();
+          } else {
+            const el2 = body && body.querySelector('.stardust-lyric-status');
+            if (el2) el2.textContent = statusText() || '';
+          }
+        }, 1800);
       }
     }
   }
