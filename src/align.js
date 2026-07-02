@@ -99,8 +99,10 @@ const stamp = (sec) => {
 // are ground truth at line level, so Whisper is only trusted to place words
 // WITHIN each line's window. Measured on real songs, free-running alignment
 // drifted whole chorus lines (~2s, p90); window-clamped it cannot.
+// force: a DELIBERATE user request — produce a best-effort result from
+// whatever anchors matched instead of refusing (line stamps carry the rest).
 // Returns { syncedLyrics, coverage } or null when alignment isn't trustworthy.
-function alignLyrics(lrcText, whisperWords, duration, realStamps) {
+function alignLyrics(lrcText, whisperWords, duration, realStamps, force) {
   // Parse the lyric lines: keep text + display words per line.
   const lines = [];
   for (const raw of String(lrcText || '').split('\n')) {
@@ -193,7 +195,10 @@ function alignLyrics(lrcText, whisperWords, duration, realStamps) {
   const coverage = matched / matchable;
   // Wrong audio OR wrong lyrics text — don't lie; report how bad the match
   // was so the caller can tell "slightly off" from "these aren't the words".
-  if (coverage < 0.5) return { failed: true, coverage };
+  // A forced (user-initiated) run proceeds with any usable anchor set: the
+  // human line stamps keep the skeleton correct, matched words land exactly,
+  // everything else paces between them.
+  if (coverage < 0.5 && !(force && matched >= 5)) return { failed: true, coverage };
 
   // Fill unanchored words. Plain linear interpolation smears words into
   // instrumental gaps (a word next to a 9s break lands seconds off), so the

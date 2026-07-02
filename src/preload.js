@@ -1694,9 +1694,11 @@ const Lyrics = (() => {
     if (srcEl) srcEl.textContent = '⚡ word-syncing…';
     let res = null;
     try {
+      // A deliberate ⚡ press force-aligns: best-effort word timing on THESE
+      // lyrics no matter how few words matched (auto stays gated).
       if (vid) res = await ipcRenderer.invoke('stardust:wordsync', {
         videoId: vid, title: np.title, artist: np.artist, album: np.album,
-        duration: np.duration, lyrics: lastLrcText, realStamps: stampsReal
+        duration: np.duration, lyrics: lastLrcText, realStamps: stampsReal, force: !silent
       });
     } catch {}
     syncing = false;
@@ -1706,7 +1708,8 @@ const Lyrics = (() => {
       applySynced(res.syncedLyrics);
       setSourceLabel('aligned');
       render(); sync();
-      toast('⚡ Word-synced — ' + Math.round((res.coverage || 0) * 100) + '% of words matched');
+      const pct = Math.round((res.coverage || 0) * 100);
+      toast('⚡ Word-synced — ' + pct + '% of words matched' + (pct < 50 ? ' (best-effort)' : ''));
       return 'ok';
     }
     if (srcEl) srcEl.textContent = savedSrc;

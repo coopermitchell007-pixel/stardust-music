@@ -189,14 +189,14 @@ async function transcribe({ title, artist, album, duration, audio, audioName } =
 
 // Forced alignment: keep the KNOWN lyrics text, take the audio's word clock.
 // Near-perfect word timing without trusting Whisper's (mishearable) words.
-async function alignToLyrics({ title, artist, album, duration, audio, audioName, lyrics, realStamps } = {}, apiKey, share) {
+async function alignToLyrics({ title, artist, album, duration, audio, audioName, lyrics, realStamps, force } = {}, apiKey, share) {
   if (!lyrics) return { error: 'no-lyrics' };
   const plainPrompt = String(lyrics).replace(/\[[^\]]*\]|<\d+:\d+(?:\.\d+)?>/g, ' ').replace(/\s+/g, ' ').trim();
   const w = await whisperVerbose(audio, apiKey, audioName, plainPrompt);
   if (w.error) return { error: w.error };
   const words = w.json.words || (w.json.segments || []).flatMap((sg) => sg.words || []);
   if (!words || words.length < 10) return { error: 'empty' };
-  const res = align.alignLyrics(lyrics, words, duration, !!realStamps);
+  const res = align.alignLyrics(lyrics, words, duration, !!realStamps, !!force);
   if (!res || res.failed) {
     const cov = res ? res.coverage : 0;
     console.log('[Stardust] align failed — coverage', Math.round(cov * 100) + '%', '(words heard:', words.length + ')');
