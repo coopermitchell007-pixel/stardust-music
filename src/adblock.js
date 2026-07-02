@@ -48,13 +48,33 @@ function shouldBlock(url) {
   return false;
 }
 
+// The current track's videoId, sniffed from YTM's own /player requests —
+// the ONLY source that works on every page for every kind of track (the DOM
+// often exposes no id at all for album songs). Electron allows a single
+// onBeforeRequest listener per session, so the sniff lives inside the
+// blocker's listener and runs even when blocking is toggled off.
+let lastVideo = { id: null, at: 0 };
+function sniffVideoId(details) {
+  if (!details.url.includes('/youtubei/v1/player') || details.url.includes('ad_break')) return;
+  try {
+    const b = details.uploadData && details.uploadData[0] && details.uploadData[0].bytes;
+    if (!b) return;
+    const m = Buffer.from(b).toString('utf8').match(/"videoId"\s*:\s*"([\w-]{6,20})"/);
+    if (m) lastVideo = { id: m[1], at: Date.now() };
+  } catch {}
+}
+function currentVideoId() {
+  return lastVideo.id && Date.now() - lastVideo.at < 15 * 60000 ? lastVideo.id : null;
+}
+
 function attach(session) {
   attachedSession = session;
   session.webRequest.onBeforeRequest({ urls: ['*://*/*'] }, (details, cb) => {
+    sniffVideoId(details);
     cb({ cancel: shouldBlock(details.url) });
   });
 }
 
 function setEnabled(v) { enabled = !!v; }
 
-module.exports = { attach, setEnabled };
+module.exports = { attach, setEnabled, currentVideoId };

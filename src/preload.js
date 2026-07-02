@@ -1656,6 +1656,13 @@ const Lyrics = (() => {
     return new Uint8Array(await blob.arrayBuffer());
   }
 
+  // Async resolution: DOM first, then the main process's network sniffer —
+  // which sees every /player request and therefore always knows the id.
+  async function resolveVideoId() {
+    const v1 = videoIdOf();
+    if (v1) return v1;
+    try { return await ipcRenderer.invoke('stardust:current-videoid'); } catch { return null; }
+  }
   const videoIdOf = () => {
     // 1) The player element carries the id directly on most builds.
     const pl = document.querySelector('ytmusic-player');
@@ -1678,15 +1685,15 @@ const Lyrics = (() => {
   async function remoteWordSync(silent) {
     if (syncing || transcribing || !synced.length || !lastLrcText) return 'fatal';
     if (silent && hasWordTiming()) return 'fatal'; // manual ⚡ may re-align word-timed songs
-    const vid = videoIdOf();
-    if (!vid) return 'download';
+    const vid = await resolveVideoId();
+    if (!vid && !silent) return 'download'; // silent no-id flows into the retry/badge path below
     syncing = true;
     const forKey = key;
     const savedSrc = srcEl ? srcEl.textContent : '';
     if (srcEl) srcEl.textContent = '⚡ word-syncing…';
     let res = null;
     try {
-      res = await ipcRenderer.invoke('stardust:wordsync', {
+      if (vid) res = await ipcRenderer.invoke('stardust:wordsync', {
         videoId: vid, title: np.title, artist: np.artist, album: np.album,
         duration: np.duration, lyrics: lastLrcText, realStamps: stampsReal
       });
@@ -1801,7 +1808,7 @@ const Lyrics = (() => {
     const trackTitle = np && np.title, trackArtist = np && np.artist, trackAlbum = np && np.album, trackDur = np && np.duration;
     const setStatus = (s2) => { const el = body && body.querySelector('.stardust-lyric-status'); if (el) el.textContent = s2; };
     let res = null, captured = false;
-    const vid = videoIdOf();
+    const vid = await resolveVideoId();
     if (vid) {
       setStatus('🎙 Fetching the song audio…');
       try { res = await ipcRenderer.invoke('stardust:wordsync', { videoId: vid, title: trackTitle, artist: trackArtist, album: trackAlbum, duration: trackDur }); } catch {}
@@ -1951,7 +1958,7 @@ const Lyrics = (() => {
   async function autoTranscribe(forKey, requireOff) {
     if (!(active && key === forKey) || transcribing || syncing) return;
     if (requireOff && mode !== 'off') return;
-    const vid = videoIdOf();
+    const vid = await resolveVideoId();
     if (!vid) return;
     syncing = true;
     const el = body && body.querySelector('.stardust-lyric-status');

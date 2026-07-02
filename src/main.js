@@ -306,6 +306,7 @@ function registerIpc() {
   ipcMain.handle('stardust:lyrics', (_e, meta) => lyrics.fetchLyrics(meta));
   ipcMain.handle('stardust:transcript-remove', (_e, { title, artist } = {}) => { transcribe.removeCached(title, artist); return true; });
   ipcMain.handle('stardust:transcript-get', (_e, { title, artist } = {}) => transcribe.getCached(title, artist));
+  ipcMain.handle('stardust:current-videoid', () => adblock.currentVideoId());
   ipcMain.handle('stardust:transcript-pref', (_e, { title, artist, pref } = {}) => { transcribe.setPref(title, artist, pref); return true; });
   ipcMain.handle('stardust:transcribe', async (_e, payload) => {
     try { return await transcribe.transcribe(payload, config.get('transcribeKey'), config.get('shareTranscripts') !== false); }
