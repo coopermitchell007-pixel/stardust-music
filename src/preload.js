@@ -1211,6 +1211,7 @@ const Lyrics = (() => {
   let microOff = 0;                          // live onset phase-lock correction (s)
   let syncing = false;                       // a background word-sync is in flight
   const autoTried = new Set();               // one auto-transcribe attempt per song per session
+  const autoRetries = new Map();             // transient auto-sync failures retry with backoff
   let userScrollUntil = 0;                   // pause auto-scroll while the user scrolls
   const SYL_RATE = 3.6;                      // starting syllables/sec — refined per song
   const LOOKAHEAD = 0.12;                    // s — highlight leads the audio slightly (a
@@ -1692,7 +1693,7 @@ const Lyrics = (() => {
     }
     if (srcEl) srcEl.textContent = savedSrc;
     const e2 = res && res.error;
-    if (e2 === 'download') return 'download';
+    if (e2 === 'download' && !silent) return 'download'; // manual ⚡ falls back to listening
     // Genius text that won't align to the audio (spoken/atypical vocals, or
     // just wrong words) → transcribe the song instead; Whisper's words become
     // the lyrics, word-timed. Real line-stamped sources stay as they are.
@@ -1701,12 +1702,34 @@ const Lyrics = (() => {
       setTimeout(() => autoTranscribe(forKey, false), 800);
       return 'fatal';
     }
+    if (silent) {
+      // Auto-sync must never fail INVISIBLY again: transient errors retry with
+      // backoff (Groq's per-hour limit gets a longer one), and the badge says
+      // what happened either way.
+      const transient = e2 === 'download' || e2 === 'network' || e2 === 'engine' || e2 === 'rate' || !e2;
+      const tries = autoRetries.get(forKey) || 0;
+      if (transient && tries < 2) {
+        autoRetries.set(forKey, tries + 1);
+        const delay = e2 === 'rate' ? 70000 : 20000;
+        setTimeout(() => { if (active && key === forKey && !hasWordTiming() && !syncing && !transcribing) remoteWordSync(true); }, delay);
+        if (srcEl) srcEl.textContent = savedSrc + ' · ⚡ retrying…';
+      } else if (srcEl) {
+        srcEl.textContent = savedSrc + ' · ⚡ ' + (
+          e2 === 'align-failed' ? "couldn't match the audio"
+            : e2 === 'download' ? 'audio fetch failed — press ⚡ to listen-sync'
+              : e2 === 'rate' ? 'Groq limit reached — press ⚡ later'
+                : e2 === 'no-key' || e2 === 'bad-key' ? 'needs a Groq key'
+                  : 'sync failed — press ⚡ to retry');
+      }
+      return e2 === 'align-failed' || e2 === 'no-key' || e2 === 'bad-key' ? 'fatal' : 'download';
+    }
     if (!silent) {
       toast(e2 === 'no-key' ? 'Add a free Groq API key in the Stardust panel first'
         : e2 === 'bad-key' ? 'That Groq API key was rejected — check Settings'
           : e2 === 'align-failed' ? 'Could not match these lyrics to this audio (different version?)'
-            : e2 === 'network' ? 'Network error reaching the transcription service'
-              : 'Word-sync failed — try again');
+            : e2 === 'rate' ? 'Groq hourly limit reached — try again in a bit'
+              : e2 === 'network' ? 'Network error reaching the transcription service'
+                : 'Word-sync failed — try again');
     }
     return e2 === 'align-failed' || e2 === 'no-key' || e2 === 'bad-key' ? 'fatal' : 'download';
   }

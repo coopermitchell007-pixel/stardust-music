@@ -138,6 +138,7 @@ async function whisperVerbose(audio, apiKey, audioName) {
   if (!res) return { error: 'network' };
   console.log('[Stardust] whisper status', res.status, res.json && (res.json.error ? JSON.stringify(res.json.error).slice(0, 200) : ('segments=' + ((res.json.segments || []).length) + ' words=' + ((res.json.words || []).length))));
   if (res.status === 401 || res.status === 403) return { error: 'bad-key' };
+  if (res.status === 429) return { error: 'rate' }; // Groq per-hour quota — retriable
   if (res.status !== 200 || !res.json) return { error: 'engine' };
   return { json: res.json };
 }

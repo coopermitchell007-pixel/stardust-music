@@ -1,6 +1,6 @@
 {
   "name": "stardust-music",
-  "version": "0.9.44",
+  "version": "0.9.45",
   "description": "Stardust — Spicetify-style theming for YouTube Music, with customizable space themes, a visualizer, glassmorphism, Discord Rich Presence, global hotkeys and a mini player.",
   "main": "src/main.js",
   "author": "Cooper Mitchell",
