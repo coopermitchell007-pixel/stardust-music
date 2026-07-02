@@ -700,13 +700,13 @@ input[type="color"]#stardust-accent {
 .stardust-lyric-line:not(.active).sung-line   { opacity: 0.45; filter: none; }
 #stardust-lyrics:hover .stardust-lyric-line:not(.active) { filter: none; opacity: 0.66; }
 
-/* Dynamic backdrop: the cover art rendered tiny and CSS-upscaled = a free,
-   soft blur that tints the whole lyrics tab (set as --sd-art by the JS). */
-#tab-renderer.stardust-lyrics-on {
-  background:
-    linear-gradient(rgba(5, 5, 13, 0.66), rgba(5, 5, 13, 0.84)),
-    var(--sd-art, linear-gradient(#0a0a18, #0a0a18)) center / cover no-repeat !important;
-}
+/* The lyrics tab stays TRANSPARENT — the theme (starfield/nebula) shows
+   through, per user preference. */
+
+/* Timing-grade tint on the source badge */
+.stardust-lyr-src.good { color: #8be6b0; }
+.stardust-lyr-src.mid  { color: #b7b2dd; }
+.stardust-lyr-src.est  { color: #8b86b3; font-style: italic; }
 
 /* ---- Quick actions floating bar ---- */
 #stardust-quickbar {

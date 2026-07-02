@@ -1207,7 +1207,6 @@ const Lyrics = (() => {
   let lastLrcText = '';                      // raw LRC of the current lyrics (for ⚡ alignment)
   let stampsReal = false;                    // line stamps are human-made (lrclib/KuGou/NetEase)
   let animBase = null;                       // wall-clock base of the scheduled word animations
-  let artKey = '', artData = '';             // blurred cover-art backdrop (tiny canvas, CSS-upscaled)
   let localTranscript = null;                // this song's own transcription (never deleted)
   let microOff = 0;                          // live onset phase-lock correction (s)
   let syncing = false;                       // a background word-sync is in flight
@@ -1291,22 +1290,6 @@ const Lyrics = (() => {
   }
   function stopRAF() { if (raf) { clearInterval(raf); raf = null; } }
 
-  function refreshArtBg() {
-    const art = np && np.art;
-    if (!art || art === artKey) return;
-    artKey = art;
-    const img = new Image(); img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      try {
-        const c = document.createElement('canvas'); c.width = c.height = 24;
-        c.getContext('2d').drawImage(img, 0, 0, 24, 24);
-        artData = c.toDataURL('image/jpeg', 0.7);
-        if (host) host.style.setProperty('--sd-art', 'url("' + artData + '")');
-      } catch {}
-    };
-    img.src = art;
-  }
-
   const lyricsTab = () => [...document.querySelectorAll('ytmusic-player-page tp-yt-paper-tab')]
     .find((t) => /lyric/i.test(t.textContent || ''));
   const tabHost = () => document.querySelector('ytmusic-player-page #tab-renderer');
@@ -1356,13 +1339,31 @@ const Lyrics = (() => {
     barEl = h('div', { class: 'stardust-lyr-tools' }, [minus, offEl, plus, copy, re, again, alignBtn, mineBtn, srcEl]);
     return barEl;
   }
-  const SRC_LABEL = { musixmatch: 'Musixmatch', lrclib: 'LRCLIB', netease: 'NetEase', kugou: 'KuGou', genius: 'Genius', transcript: 'transcribed', community: 'community transcript', aligned: 'word-synced ⚡' };
-  let lastSource = null;
-  function setSourceLabel(source, estimated) {
-    lastSource = source;
+  const SRC_LABEL = { musixmatch: 'Musixmatch', lrclib: 'LRCLIB', netease: 'NetEase', kugou: 'KuGou', genius: 'Genius', transcript: 'transcribed', community: 'community', aligned: 'word-synced ⚡' };
+  let lastSource = null, lastMeta = null;
+  // The badge tells the WHOLE story: which provider, and whether the word
+  // timing is real (human richsync / audio-derived) or estimated — so a badly
+  // synced song can be blamed on the right thing at a glance.
+  function setSourceLabel(source, meta) {
+    lastSource = source; lastMeta = meta || null;
     if (!srcEl) return;
-    const name = SRC_LABEL[source];
-    srcEl.textContent = name ? ('via ' + name + (estimated ? ' · estimated timing' : '')) : '';
+    if (!source) { srcEl.textContent = ''; srcEl.className = 'stardust-lyr-src'; srcEl.title = ''; return; }
+    const kind = meta && meta.kind;
+    const alignedV2 = !!(meta && meta.syncedLyrics && meta.syncedLyrics.includes('stardust-aligned-v2'));
+    let txt, cls;
+    if (source === 'musixmatch') { txt = kind === 'word' ? 'Musixmatch richsync · word-perfect' : 'Musixmatch · line sync'; cls = kind === 'word' ? 'good' : 'mid'; }
+    else if (source === 'netease') { txt = kind === 'word' ? 'NetEase karaoke · word sync' : 'NetEase · line sync'; cls = kind === 'word' ? 'good' : 'mid'; }
+    else if (source === 'lrclib' || source === 'kugou') { txt = SRC_LABEL[source] + ' · line sync'; cls = 'mid'; }
+    else if (source === 'community') { txt = alignedV2 ? 'community · word-synced ⚡' : 'community transcript 🎙'; cls = alignedV2 ? 'good' : 'mid'; }
+    else if (source === 'transcript') { txt = 'your transcription 🎙 · word-timed'; cls = 'good'; }
+    else if (source === 'aligned') { txt = 'word-synced ⚡ · Whisper timing'; cls = 'good'; }
+    else if (source === 'genius') { txt = 'Genius · estimated timing'; cls = 'est'; }
+    else { txt = SRC_LABEL[source] || source; cls = 'mid'; }
+    srcEl.textContent = 'via ' + txt;
+    srcEl.className = 'stardust-lyr-src ' + cls;
+    srcEl.title = cls === 'good' ? 'Word timings are real (human-synced or derived from this audio)'
+      : cls === 'mid' ? 'Line timing is real; word positions are estimated (⚡ word-sync upgrades this)'
+        : 'All timing is estimated from listening';
   }
   // Use MY transcription for this song (sticky): database text can be plain
   // wrong — the user's own transcription of the actual audio wins on words.
@@ -1438,8 +1439,6 @@ const Lyrics = (() => {
       if (host && host !== h0) host.classList.remove('stardust-lyrics-on');
       host = h0;
       host.classList.add('stardust-lyrics-on');
-      refreshArtBg();
-      if (artData) host.style.setProperty('--sd-art', 'url("' + artData + '")');
       ensureBox();
       if (box.parentElement !== host) host.appendChild(box);
       if (!body.firstChild) render(statusText());
@@ -1491,7 +1490,7 @@ const Lyrics = (() => {
     if (!body) return;
     while (body.firstChild) body.removeChild(body.firstChild);
     if (barEl) barEl.style.display = status ? 'none' : 'flex';
-    if (alignBtn) alignBtn.style.display = (!status && synced.length && !hasWordTiming()) ? '' : 'none';
+    if (alignBtn) alignBtn.style.display = (!status && synced.length) ? '' : 'none';
     refreshMineBtn();
     if (status) {
       body.appendChild(h('div', { class: 'stardust-lyric-status', text: status }));
@@ -1667,7 +1666,8 @@ const Lyrics = (() => {
   // force-aligned — the music never stops, the timing hot-swaps in when ready.
   // Returns 'ok' | 'download' (fallback to listening) | 'fatal' (told the user).
   async function remoteWordSync(silent) {
-    if (syncing || transcribing || !synced.length || !lastLrcText || hasWordTiming()) return 'fatal';
+    if (syncing || transcribing || !synced.length || !lastLrcText) return 'fatal';
+    if (silent && hasWordTiming()) return 'fatal'; // manual ⚡ may re-align word-timed songs
     const vid = videoIdOf();
     if (!vid) return 'download';
     syncing = true;
@@ -1857,7 +1857,7 @@ const Lyrics = (() => {
     const scraped = !!(res && res.source === 'genius');
     if (res && res.syncedLyrics) {
       applySynced(res.syncedLyrics, scraped);
-      stampsReal = res.kind === 'line'; // human line timing → alignment may trust it
+      stampsReal = res.kind === 'line' || res.kind === 'word'; // human timing → alignment may trust it
     } else if (res && res.plainLyrics) {
       const clean = res.plainLyrics.split('\n').filter((l, i) => !isBloatLine(l, i, titleN, scraped)).map(stripTag).join('\n');
       // Give plain lyrics timing too: synthesize line timestamps so they get
@@ -1875,7 +1875,7 @@ const Lyrics = (() => {
     synthMode = (synthed || !!(res && res.kind === 'synth')) && synced.length > 0;
     if (synthMode) buildSynthModel();
     lastIdx = -1; curEl = null; curSpans = null; sylAcc = 0;
-    setSourceLabel(res && res.source, synthMode || (res && res.kind === 'synth'));
+    setSourceLabel(res && res.source, res || null);
     render(statusText()); sync();
     // Auto word-sync: when the lyrics lack real word timing and a Groq key is
     // set, fetch + align in the background — no interaction, music keeps
@@ -1899,8 +1899,8 @@ const Lyrics = (() => {
           if (aligned && db.kind !== 'word') return;
           try { ipcRenderer.invoke('stardust:transcript-pref', { title: np.title, artist: np.artist, pref: 'db' }); } catch {}
           applySynced(db.syncedLyrics);
-          stampsReal = db.kind === 'line';
-          setSourceLabel(db.source);
+          stampsReal = db.kind === 'line' || db.kind === 'word';
+          setSourceLabel(db.source, db);
           render(); sync();
           if (!hasWordTiming()) remoteWordSync(true);
         }, 2500);
@@ -1942,7 +1942,7 @@ const Lyrics = (() => {
     } else {
       const el2 = body && body.querySelector('.stardust-lyric-status');
       if (el2) el2.textContent = statusText() || '';
-      setSourceLabel(lastSource, synthMode);
+      setSourceLabel(lastSource, lastMeta);
     }
   }
   // Turn plain (untimed) lyrics into an LRC by spreading lines across the track
