@@ -122,8 +122,7 @@ function alignLyrics(lrcText, whisperWords, duration, realStamps) {
     const span = Math.max(1, Math.min((next ? next.t - ln.t : 4), ln.words.length * 0.55));
     ln.words.forEach((w, wi) => flat.push({
       li, wi, w, n: norm(w),
-      at: ln.t + span * (wi / Math.max(1, ln.words.length)),
-      tight: !!realStamps
+      at: ln.t + span * (wi / Math.max(1, ln.words.length))
     }));
   });
   const lyrNorm = flat.map((f) => f.n);
@@ -133,7 +132,31 @@ function alignLyrics(lrcText, whisperWords, duration, realStamps) {
     .filter((w) => w.n && isFinite(w.t));
   if (wsp.length < 10) return null;
 
-  const map = alignSequences(flat.map((f) => ({ n: f.n, at: f.at, tight: f.tight })), wsp);
+  // PASS 1 — free alignment (loose prior) to measure the GLOBAL OFFSET S
+  // between the lyric stamps and this audio: a music-video intro, a different
+  // edition, or a uniformly early/late human sync all show up as a consistent
+  // per-line shift. Median of per-line first-anchor shifts = S.
+  const pass1 = alignSequences(flat.map((f) => ({ n: f.n, at: f.at })), wsp);
+  let S = 0;
+  {
+    const seen = new Set(), shifts = [];
+    for (let i = 0; i < flat.length; i++) {
+      if (pass1[i] < 0 || seen.has(flat[i].li)) continue;
+      seen.add(flat[i].li);
+      shifts.push(lines[flat[i].li].t - wsp[pass1[i]].t);
+    }
+    shifts.sort((a, b) => a - b);
+    if (shifts.length >= 5) {
+      const med = shifts[shifts.length >> 1];
+      // Only adopt a CONSISTENT offset (at least half the lines agree ±1.2s).
+      const agree = shifts.filter((x) => Math.abs(x - med) <= 1.2).length;
+      if (Math.abs(med) > 0.9 && agree >= shifts.length * 0.5) S = med;
+    }
+  }
+
+  // PASS 2 — align with the offset-corrected priors (tight when the stamps
+  // are human-made, since after the S correction they should be dead on).
+  const map = alignSequences(flat.map((f) => ({ n: f.n, at: f.at - S, tight: !!realStamps })), wsp);
 
   // Anchor times must be strictly increasing. Greedy "keep the first" lets a
   // single wrong-occurrence anchor block every legitimate one behind it, so
@@ -144,11 +167,11 @@ function alignLyrics(lrcText, whisperWords, duration, realStamps) {
     if (map[i] < 0) continue;
     const t = wsp[map[i]].t;
     if (realStamps) {
-      // Human line stamps are ground truth: an anchor outside its line's
-      // window (with slack for stamp looseness) is a misalignment — drop it.
+      // Human line stamps (offset-corrected) are ground truth: an anchor
+      // outside its line's window is a misalignment — drop it.
       const ln = lines[flat[i].li], next = lines[flat[i].li + 1];
-      const lo = ln.t - 1.0;
-      const hi = (next ? next.t : (duration > 0 ? duration : ln.t + 12)) + 1.0;
+      const lo = ln.t - S - 1.0;
+      const hi = (next ? next.t : (duration > 0 ? duration : ln.t + 12)) - S + 1.0;
       if (t < lo || t > hi) continue;
     }
     cand.push({ i, t });
@@ -260,8 +283,8 @@ function alignLyrics(lrcText, whisperWords, duration, realStamps) {
       const idxs = [];
       for (let i = 0; i < flat.length; i++) if (flat[i].li === li) idxs.push(i);
       if (!idxs.length) continue;
-      const t0 = lines[li].t;
-      const end = (lines[li + 1] ? lines[li + 1].t : (duration > 0 ? duration : t0 + 8)) - 0.05;
+      const t0 = lines[li].t - S;
+      const end = (lines[li + 1] ? lines[li + 1].t - S : (duration > 0 ? duration : t0 + 8)) - 0.05;
       const shift = t0 - times[idxs[0]];
       if (Math.abs(shift) <= 3.5) {
         for (const i of idxs) times[i] += shift;

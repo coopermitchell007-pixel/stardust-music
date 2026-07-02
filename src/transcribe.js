@@ -35,6 +35,23 @@ function removeCached(title, artist) {
   try { fs.unlinkSync(path.join(CACHE_DIR, keyFor(title, artist) + '.lrc')); } catch {}
 }
 
+// Per-song source preference: 'db' (use database lyrics) or 'transcript'
+// (use my transcription). Chinese lyric sites often carry wrong English
+// text, so a user's own transcription must stay switchable — never deleted.
+const PREFS_PATH = path.join(app.getPath('userData'), 'transcript-prefs.json');
+let prefsCache = null;
+function loadPrefs() {
+  if (prefsCache) return prefsCache;
+  try { prefsCache = JSON.parse(fs.readFileSync(PREFS_PATH, 'utf8')); } catch { prefsCache = {}; }
+  return prefsCache;
+}
+function getPref(title, artist) { return loadPrefs()[keyFor(title, artist)] || null; }
+function setPref(title, artist, val) {
+  const p = loadPrefs();
+  if (val) p[keyFor(title, artist)] = val; else delete p[keyFor(title, artist)];
+  try { fs.writeFileSync(PREFS_PATH, JSON.stringify(p)); } catch {}
+}
+
 const stamp = (sec) => {
   const t = Math.max(0, sec || 0), mm = Math.floor(t / 60), ss = (t - mm * 60).toFixed(2);
   return String(mm).padStart(2, '0') + ':' + ss.padStart(5, '0');
@@ -160,4 +177,4 @@ async function alignToLyrics({ title, artist, album, duration, audio, audioName,
   return { syncedLyrics: res.syncedLyrics, coverage: res.coverage, shared: !!(share && community.enabled()) };
 }
 
-module.exports = { transcribe, alignToLyrics, getCached, putCached, removeCached, CACHE_DIR };
+module.exports = { transcribe, alignToLyrics, getCached, putCached, removeCached, getPref, setPref, CACHE_DIR };

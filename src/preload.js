@@ -1203,9 +1203,10 @@ const Lyrics = (() => {
   let curSyl = null, curSylTotal = 1, sylPtr = 0;
   let floor = 0, sylAcc = 0;                 // adaptive vocal noise-floor + syllables-sung accumulator
   let transcribing = false;
-  let offset = 0, barEl = null, offEl = null, srcEl = null, alignBtn = null; // sync-offset (s) + toolbar els
+  let offset = 0, barEl = null, offEl = null, srcEl = null, alignBtn = null, mineBtn = null; // sync-offset (s) + toolbar els
   let lastLrcText = '';                      // raw LRC of the current lyrics (for ⚡ alignment)
   let stampsReal = false;                    // line stamps are human-made (lrclib/KuGou/NetEase)
+  let localTranscript = null;                // this song's own transcription (never deleted)
   let microOff = 0;                          // live onset phase-lock correction (s)
   let syncing = false;                       // a background word-sync is in flight
   let userScrollUntil = 0;                   // pause auto-scroll while the user scrolls
@@ -1323,6 +1324,7 @@ const Lyrics = (() => {
     const re = h('button', { class: 'stardust-lyr-tool', title: 'Transcribe this song yourself — listens once and replaces these lyrics with word-timed ones (needs a Groq key)', text: '🎙' });
     const again = h('button', { class: 'stardust-lyr-tool', title: 'Search the lyric databases again — skips transcriptions, and replaces yours if something is found', text: '🔎' });
     alignBtn = h('button', { class: 'stardust-lyr-tool', title: 'Word-sync: listens to the song once and aligns these exact lyrics to the audio — near-perfect per-word timing (needs a Groq key)', text: '⚡' });
+    mineBtn = h('button', { class: 'stardust-lyr-tool', title: 'Use MY transcription instead — lyric databases sometimes carry the wrong words. Sticky for this song; 🔎 switches back.', text: '🎙★' });
     srcEl = h('span', { class: 'stardust-lyr-src', text: '' });
     minus.addEventListener('click', () => nudge(-0.5));
     plus.addEventListener('click', () => nudge(0.5));
@@ -1331,7 +1333,8 @@ const Lyrics = (() => {
     re.addEventListener('click', reTranscribe);
     again.addEventListener('click', searchAgain);
     alignBtn.addEventListener('click', startAlign);
-    barEl = h('div', { class: 'stardust-lyr-tools' }, [minus, offEl, plus, copy, re, again, alignBtn, srcEl]);
+    mineBtn.addEventListener('click', useMyTranscript);
+    barEl = h('div', { class: 'stardust-lyr-tools' }, [minus, offEl, plus, copy, re, again, alignBtn, mineBtn, srcEl]);
     return barEl;
   }
   const SRC_LABEL = { lrclib: 'LRCLIB', netease: 'NetEase', kugou: 'KuGou', genius: 'Genius', transcript: 'transcribed', community: 'community transcript', aligned: 'word-synced ⚡' };
@@ -1340,6 +1343,20 @@ const Lyrics = (() => {
     const name = SRC_LABEL[source];
     srcEl.textContent = name ? ('via ' + name + (estimated ? ' · estimated timing' : '')) : '';
   }
+  // Use MY transcription for this song (sticky): database text can be plain
+  // wrong — the user's own transcription of the actual audio wins on words.
+  let curSourceIsTranscript = false;
+  function useMyTranscript() {
+    if (!localTranscript || transcribing || syncing) return;
+    try { ipcRenderer.invoke('stardust:transcript-pref', { title: np.title, artist: np.artist, pref: 'transcript' }); } catch {}
+    applySynced(localTranscript);
+    stampsReal = false;
+    curSourceIsTranscript = true;
+    setSourceLabel('transcript');
+    render(); sync();
+    toast('🎙 Using your transcription for this song');
+  }
+
   // "Search again": re-run the provider search SKIPPING transcription sources.
   // If the databases have something, it replaces the transcription (and the
   // local transcript cache is forgotten so the choice sticks on replay).
@@ -1444,11 +1461,15 @@ const Lyrics = (() => {
     return out;
   }
   const hasWordTiming = () => synced.some((l) => l.words && l.words.length && l.words[0].time != null);
+  function refreshMineBtn() {
+    if (mineBtn) mineBtn.style.display = (localTranscript && !curSourceIsTranscript && mode === 'ours') ? '' : 'none';
+  }
   function render(status) {
     if (!body) return;
     while (body.firstChild) body.removeChild(body.firstChild);
     if (barEl) barEl.style.display = status ? 'none' : 'flex';
     if (alignBtn) alignBtn.style.display = (!status && synced.length && !hasWordTiming()) ? '' : 'none';
+    refreshMineBtn();
     if (status) {
       body.appendChild(h('div', { class: 'stardust-lyric-status', text: status }));
       // No lyrics anywhere → offer to transcribe from the audio.
@@ -1730,8 +1751,11 @@ const Lyrics = (() => {
       // Show now if we're still on that song.
       const nowSame = active && key === forKey;
       if (nowSame) {
-        if (res.syncedLyrics) applySynced(res.syncedLyrics);
+        if (res.syncedLyrics) { applySynced(res.syncedLyrics); localTranscript = res.syncedLyrics; }
         else { synced = []; plain = res.plainLyrics; mode = 'ours'; }
+        curSourceIsTranscript = true;
+        // Deliberately transcribed → this song prefers the transcription.
+        try { ipcRenderer.invoke('stardust:transcript-pref', { title: trackTitle, artist: trackArtist, pref: 'transcript' }); } catch {}
         setSourceLabel('transcript');
         // Only the LISTEN path pauses near the end (to stop autoplay) — after
         // it, restart from 0 and play so the karaoke actually runs. The direct
@@ -1761,7 +1785,7 @@ const Lyrics = (() => {
     mode = 'searching'; curEl = null; curSpans = null;
     nudge(0);    // the sync offset is per-song
     resetHear(); // fresh hearing model per song (voiced fraction, pace, floor)
-    stampsReal = false; microOff = 0;
+    stampsReal = false; microOff = 0; localTranscript = null; curSourceIsTranscript = false;
     setSourceLabel(null);
     render('Searching lyrics…'); sync(); doFetch();
   }
@@ -1774,9 +1798,10 @@ const Lyrics = (() => {
     if (!active || key !== forKey) return;   // track changed while awaiting
     if (skipTranscript) {
       if (res && (res.syncedLyrics || res.plainLyrics)) {
-        // The user prefers these database lyrics — forget the transcription.
-        try { ipcRenderer.invoke('stardust:transcript-remove', { title: np.title, artist: np.artist }); } catch {}
-        toast('✓ Found database lyrics');
+        // The user prefers these database lyrics — remember that, but KEEP the
+        // transcription (🎙★ switches back; database words can be wrong too).
+        try { ipcRenderer.invoke('stardust:transcript-pref', { title: np.title, artist: np.artist, pref: 'db' }); } catch {}
+        toast('✓ Found database lyrics — 🎙★ switches back to yours');
       } else {
         // Nothing better out there — put the transcription back.
         toast('No database lyrics found — keeping the transcription');
@@ -1786,6 +1811,11 @@ const Lyrics = (() => {
     }
     const titleN = alnum(stripTag(np.title));
     let synthed = false;
+    curSourceIsTranscript = !!(res && res.source === 'transcript');
+    // Know whether this song has its own transcription (shows the 🎙★ switch).
+    ipcRenderer.invoke('stardust:transcript-get', { title: np.title, artist: np.artist })
+      .then((lrc) => { if (key === forKey) { localTranscript = lrc || null; refreshMineBtn(); } })
+      .catch(() => {});
     if (res && res.syncedLyrics) {
       applySynced(res.syncedLyrics);
       stampsReal = res.kind === 'line'; // human line timing → alignment may trust it
@@ -1814,18 +1844,18 @@ const Lyrics = (() => {
     if (settings && settings.transcribeKey && settings.autoWordSync !== false) {
       if (synced.length && !hasWordTiming()) {
         setTimeout(() => { if (active && key === forKey && !hasWordTiming()) remoteWordSync(true); }, 2500);
-      } else if (res && (res.source === 'transcript' || res.source === 'community') && synced.length
+      } else if (res && res.source === 'transcript' && !res.pinned && synced.length
         && !(res.syncedLyrics && res.syncedLyrics.includes('stardust-aligned-v2'))) {
         // Raw transcripts carry Whisper's misheard TEXT. If the databases have
-        // the real words, swap to them and align — the transcript is replaced
-        // (cache overwritten by the aligned result; removed outright on a
-        // word-timed DB hit).
+        // the real words, swap to them and align — but the transcription file
+        // is KEPT (🎙★ switches back), and a user-pinned transcript is never
+        // touched.
         setTimeout(async () => {
           if (!(active && key === forKey)) return;
           let db = null;
           try { db = await ipcRenderer.invoke('stardust:lyrics', { artist: np.artist, title: np.title, album: np.album, duration: np.duration, skipTranscript: true }); } catch {}
           if (!(active && key === forKey) || !db || !db.syncedLyrics || db.kind === 'synth') return;
-          try { ipcRenderer.invoke('stardust:transcript-remove', { title: np.title, artist: np.artist }); } catch {}
+          try { ipcRenderer.invoke('stardust:transcript-pref', { title: np.title, artist: np.artist, pref: 'db' }); } catch {}
           applySynced(db.syncedLyrics);
           stampsReal = db.kind === 'line';
           setSourceLabel(db.source);

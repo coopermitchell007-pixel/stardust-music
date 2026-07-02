@@ -150,7 +150,15 @@ async function fetchLyrics({ artist, title, album, duration, skipTranscript } = 
   // actual audio's words, word-timed) — use it instantly. skipTranscript is the
   // "search the databases again" path: ignore transcription sources entirely.
   if (!skipTranscript) {
-    try { const c = transcribe.getCached(title, artist); if (c) return { syncedLyrics: c, plainLyrics: '', kind: 'word', source: 'transcript' }; } catch {}
+    try {
+      const pref = transcribe.getPref(title, artist);
+      if (pref !== 'db') {
+        const c = transcribe.getCached(title, artist);
+        // pinned: the user explicitly chose their transcription — the renderer
+        // must not auto-upgrade it away.
+        if (c) return { syncedLyrics: c, plainLyrics: '', kind: 'word', source: 'transcript', pinned: pref === 'transcript' };
+      }
+    } catch {}
   }
   if (!(duration > 0)) duration = undefined; // 0/NaN at track start → don't over-constrain
   const ct = cleanTitle(title);
