@@ -324,7 +324,13 @@ function registerIpc() {
     try {
       // The player's own (sniffed, authorized) stream first — it works even
       // where YouTube refuses direct downloads; InnerTube is the fallback.
-      let got = await songAudio.fetchStreamUrl(adblock.currentAudioUrl());
+      // The sniff can hold a DIFFERENT track (YTM prefetches the next song
+      // mid-play; fast skips outrun it) — syncing lyrics against the wrong
+      // audio poisons the timing, so the stream's duration must vouch for it.
+      const sniffed = adblock.currentAudio();
+      const durOk = !sniffed || !(p.duration > 0) || !(sniffed.dur > 0) || Math.abs(sniffed.dur - p.duration) <= 3;
+      if (sniffed && !durOk) console.log('[Stardust] sniffed stream is another track (dur ' + sniffed.dur + 's vs ' + p.duration + 's) — using InnerTube');
+      let got = sniffed && durOk ? await songAudio.fetchStreamUrl(sniffed.url) : null;
       if (!got) got = await songAudio.fetchSongAudio(p.videoId);
       if (!got) return { error: 'download' };
       const key = config.get('transcribeKey');

@@ -1488,6 +1488,12 @@ const Lyrics = (() => {
   // (single vs extended mix). Cheap, certain, and fixable by re-alignment.
   function editionMismatch() {
     if (!np || !(np.duration > 60) || !synced.length) return false;
+    // Timing born from our own pipeline carries the track length it was made
+    // against. Matching length = same edition (the vocals may genuinely end
+    // early — long instrumental outros must NOT re-sync on every play);
+    // different length = another edition's cache → re-time.
+    const lm = lastLrcText && lastLrcText.match(/\[length:(\d+):(\d+(?:\.\d+)?)\]/);
+    if (lm) return Math.abs(toSec(lm[1], lm[2]) - np.duration) > 15;
     let last = 0;
     for (const l of synced) {
       if (l.t > last) last = l.t;
@@ -1713,11 +1719,17 @@ const Lyrics = (() => {
   async function remoteWordSync(silent, evenWordTimed) {
     if (syncing || transcribing || !synced.length || !lastLrcText) return 'fatal';
     if (silent && hasWordTiming() && !evenWordTimed) return 'fatal'; // manual ⚡ / edition fix may re-time
+    // Snapshot THIS song before any await — autoplay can advance mid-await,
+    // and a mixed payload (old lyrics, new title) caches garbage under the
+    // new song's name.
+    const forKey = key;
+    const meta = { title: np.title, artist: np.artist, album: np.album, duration: np.duration };
+    const lrcSnap = lastLrcText, realSnap = stampsReal;
     const vid = await resolveVideoId();
-    console.log('[Stardust] word-sync start: silent=' + !!silent, 'vid=' + (vid || 'NONE'), 'realStamps=' + stampsReal);
+    if (key !== forKey) return 'fatal'; // track changed while resolving
+    console.log('[Stardust] word-sync start: silent=' + !!silent, 'vid=' + (vid || 'NONE'), 'realStamps=' + realSnap);
     if (!vid && !silent) return 'download'; // silent no-id flows into the retry/badge path below
     syncing = true;
-    const forKey = key;
     const savedSrc = srcEl ? srcEl.textContent : '';
     if (srcEl) srcEl.textContent = '⚡ word-syncing…';
     let res = null;
@@ -1729,8 +1741,8 @@ const Lyrics = (() => {
       // via the align-failed path, which is the right fix for vocals the
       // aligner can't hear well.
       if (vid) res = await ipcRenderer.invoke('stardust:wordsync', {
-        videoId: vid, title: np.title, artist: np.artist, album: np.album,
-        duration: np.duration, lyrics: lastLrcText, realStamps: stampsReal, force: !silent
+        videoId: vid, title: meta.title, artist: meta.artist, album: meta.album,
+        duration: meta.duration, lyrics: lrcSnap, realStamps: realSnap, force: !silent
       });
     } catch {}
     syncing = false;
@@ -2022,14 +2034,15 @@ const Lyrics = (() => {
   async function autoTranscribe(forKey, requireOff) {
     if (!(active && key === forKey) || transcribing || syncing) return;
     if (requireOff && mode !== 'off') return;
+    const meta = { title: np.title, artist: np.artist, album: np.album, duration: np.duration };
     const vid = await resolveVideoId();
-    if (!vid) return;
+    if (!vid || !(active && key === forKey)) return; // track may change mid-await
     syncing = true;
     const el = body && body.querySelector('.stardust-lyric-status');
     if (el) el.textContent = 'No lyrics anywhere — 🎙 transcribing this song in the background…';
     else if (srcEl) srcEl.textContent = '🎙 transcribing…';
     let r = null;
-    try { r = await ipcRenderer.invoke('stardust:wordsync', { videoId: vid, title: np.title, artist: np.artist, album: np.album, duration: np.duration }); } catch {}
+    try { r = await ipcRenderer.invoke('stardust:wordsync', { videoId: vid, title: meta.title, artist: meta.artist, album: meta.album, duration: meta.duration }); } catch {}
     syncing = false;
     if (!(active && key === forKey)) return;
     if (r && r.syncedLyrics) {

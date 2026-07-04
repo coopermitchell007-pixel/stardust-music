@@ -330,7 +330,12 @@ function alignLyrics(lrcText, whisperWords, duration, realStamps, force) {
   // LOW-COVERAGE (forced) results stay unmarked — usable now, but eligible
   // for a future remake instead of sticking forever.
   const marker = coverage >= 0.5 ? '[re:stardust-aligned-v3]\n' : '';
-  return { syncedLyrics: marker + out.join('\n'), coverage };
+  // Length tag: which EDITION this timing was made against. Lets replays
+  // distinguish "vocals genuinely end early on this track" from "this cache
+  // was timed to a different cut" — without it, songs with long instrumental
+  // outros re-synced on every single play.
+  const lenTag = duration > 0 ? '[length:' + stamp(duration) + ']\n' : '';
+  return { syncedLyrics: marker + lenTag + out.join('\n'), coverage };
 }
 
 module.exports = { alignLyrics, alignSequences, norm };

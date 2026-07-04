@@ -67,7 +67,9 @@ function sniffVideoId(details) {
       // ump/sabr/srfvp: ask for RAW media — the UMP framing the player uses
       // isn't a valid media file for Whisper.
       for (const k of ['range', 'rn', 'rbuf', 'ump', 'sabr', 'srfvp']) u.searchParams.delete(k);
-      lastAudio = { url: u.href, at: Date.now() };
+      // dur: the stream's own length — the caller's ONLY way to tell whether
+      // this URL is the current track or a prefetched/stale neighbour.
+      lastAudio = { url: u.href, at: Date.now(), dur: parseFloat(u.searchParams.get('dur')) || 0 };
     } catch {}
     return;
   }
@@ -82,8 +84,8 @@ function sniffVideoId(details) {
 function currentVideoId() {
   return lastVideo.id && Date.now() - lastVideo.at < 15 * 60000 ? lastVideo.id : null;
 }
-function currentAudioUrl() {
-  return lastAudio.url && Date.now() - lastAudio.at < 5 * 60000 ? lastAudio.url : null;
+function currentAudio() {
+  return lastAudio.url && Date.now() - lastAudio.at < 5 * 60000 ? lastAudio : null;
 }
 
 function attach(session) {
@@ -96,4 +98,4 @@ function attach(session) {
 
 function setEnabled(v) { enabled = !!v; }
 
-module.exports = { attach, setEnabled, currentVideoId, currentAudioUrl };
+module.exports = { attach, setEnabled, currentVideoId, currentAudio };

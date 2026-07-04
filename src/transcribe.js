@@ -85,8 +85,11 @@ function confidentWords(json) {
 // Build an enhanced-LRC string (with <mm:ss.xx> word tags) from Whisper's
 // verbose_json. Groups words into lines using segment boundaries when present;
 // only confident (non-hallucinated) segments contribute.
-function buildLRC(json) {
+function buildLRC(json, duration) {
   if (!json) return '';
+  // Which EDITION this timing was made against — replays use it to decide
+  // whether a re-time is warranted (see editionMismatch in preload.js).
+  const lenTag = duration > 0 ? '[length:' + stamp(duration) + ']\n' : '';
   const allSegs = (json.segments && json.segments.length) ? json.segments : null;
   const segs = allSegs ? allSegs.filter(goodSegment) : null;
   const words = confidentWords(json);
@@ -110,10 +113,10 @@ function buildLRC(json) {
         lines.push('[' + stamp(chunk[0].start) + ']' + body.trim());
       }
     }
-    return '[re:stardust-transcript-v3]\n' + lines.join('\n');
+    return '[re:stardust-transcript-v3]\n' + lenTag + lines.join('\n');
   }
   if (segs && segs.length) {
-    return '[re:stardust-transcript-v3]\n' + segs.map((sg) => '[' + stamp(sg.start) + ']' + String(sg.text || '').trim()).join('\n');
+    return '[re:stardust-transcript-v3]\n' + lenTag + segs.map((sg) => '[' + stamp(sg.start) + ']' + String(sg.text || '').trim()).join('\n');
   }
   return '';
 }
@@ -180,7 +183,7 @@ async function whisperVerbose(audio, apiKey, audioName, prompt, language) {
 async function transcribe({ title, artist, album, duration, audio, audioName } = {}, apiKey, share) {
   const w = await whisperVerbose(audio, apiKey, audioName);
   if (w.error) return { error: w.error };
-  const lrc = buildLRC(w.json);
+  const lrc = buildLRC(w.json, duration);
   if (lrc) {
     putCached(title, artist, lrc);
     // Fire-and-forget: share with the Stardust community store (Supabase) so
