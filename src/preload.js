@@ -1260,7 +1260,8 @@ const Crossfade = (() => {
         if (v.duration - loudEnd > 8 && v.currentTime > loudEnd + 1.5) {
           outroSkipped = true;
           Visualizer.fx.fade(0.0001, 0.8);
-          setTimeout(() => { doCommand('next'); }, 850);
+          // The DJ's Booth owns "next" when it's running — its pick wins.
+          setTimeout(() => { if (!DJQueue.playNow()) doCommand('next'); }, 850);
           toast('🎧 Dead outro — mixing into the next track');
         }
       }
@@ -1348,8 +1349,11 @@ const DJQueue = (() => {
       const s = await ipcRenderer.invoke('stardust:stats').catch(() => null);
       const skips = skipCounts();
       const nowKey = np.title + '|' + np.artist;
-      const avoid = new Set(played.slice(-40));
-      for (const r of ((s && s.recent) || []).slice(0, 20)) avoid.add(r.title + '|' + r.artist);
+      // "Recent" avoidance stays tight (this session + last 10 logged) — too
+      // wide and it starves the pool down to nothing on young libraries.
+      const avoid = new Set(played.slice(-30));
+      const recent = (s && s.recent) || [];
+      for (const r of recent.slice(0, 10)) avoid.add(r.title + '|' + r.artist);
       avoid.add(nowKey);
       const cand = [];
       const push = (title, artist, tag, videoId) => {
@@ -1358,9 +1362,9 @@ const DJQueue = (() => {
         if (cand.some((c) => c.title === title)) return;
         cand.push({ title, artist: artist || '', tag, videoId });
       };
-      // Hour affinity: what the listener historically plays around this hour.
+      // Hour affinity: OLDER history (past the avoid window) around this hour.
       const hr = new Date().getHours();
-      for (const r of ((s && s.recent) || [])) {
+      for (const r of recent.slice(10)) {
         const rh = new Date(r.ts).getHours();
         if (Math.abs(rh - hr) <= 1 && cand.length < 4) push(r.title, r.artist, 'often played around this hour');
       }
@@ -1373,6 +1377,7 @@ const DJQueue = (() => {
         const rel = await ipcRenderer.invoke('stardust:up-next', { videoId: vid }).catch(() => []);
         for (const r of (rel || []).slice(0, 8)) push(r.title, r.artist, 'discovery — flows from the current song', r.videoId);
       }
+      console.log('[Stardust] DJ booth: ' + cand.length + ' candidates (vid=' + (vid || 'none') + ')');
       if (!cand.length || !active) return;
       let chosen = null, reason = '';
       if (await aiOK()) {
@@ -1394,6 +1399,7 @@ const DJQueue = (() => {
       }
       if (!active) return;
       pick = chosen; pick.reason = reason;
+      console.log('[Stardust] DJ booth pick: "' + pick.title + '" [' + pick.tag + ']' + (reason ? ' — ' + reason : ''));
       renderPill();
     } finally { picking = false; }
   }
@@ -1406,17 +1412,35 @@ const DJQueue = (() => {
       pick = null; renderPill(); choose(np);
     }
     const v = q('video');
-    if (pick && v && isFinite(v.duration) && v.duration > 30 && v.currentTime > 0 && v.duration - v.currentTime < 2.2) {
-      const p = pick; pick = null;
-      AIDJ.suppressOnce(); // the pick line replaces the regular intro
-      const line = 'Next up: ' + p.title + (p.artist ? ' by ' + p.artist : '') + '.' + (p.reason ? ' ' + p.reason : '');
-      try { sessionStorage.setItem('sd-dj-say', JSON.stringify({ line, at: Date.now() })); } catch {}
-      toast('🎧 DJ pick: "' + p.title + '"' + (p.reason ? ' — ' + p.reason : ''));
-      if (p.videoId) location.href = 'https://music.youtube.com/watch?v=' + p.videoId;
-      else VoiceControl.playSearch(p.title + ' ' + (p.artist || ''));
-    }
+    if (!v || !isFinite(v.duration) || v.duration <= 30 || !(v.currentTime > 0)) return;
+    const left = v.duration - v.currentTime;
+    // Still empty-handed near the end (starved pool, failed fetch)? Dig again.
+    if (!pick && !picking && left < 30 && left > 8) choose(np);
+    if (pick && left < 2.2) { const p = pick; pick = null; fire(p); }
   }
-  return { enable, disable, onPoll };
+  function fire(p) {
+    AIDJ.suppressOnce(); // no double-talking over the transition
+    // Speak only when there's something worth SAYING — discoveries and
+    // resurfaced tracks get the voice; regular favorites change silently.
+    const worthSaying = p.reason && /discovery|lost/.test(p.tag || '');
+    if (worthSaying) {
+      const line = 'Next up: ' + p.title + (p.artist ? ' by ' + p.artist : '') + '. ' + p.reason;
+      try { sessionStorage.setItem('sd-dj-say', JSON.stringify({ line, at: Date.now() })); } catch {}
+    }
+    console.log('[Stardust] DJ booth: playing pick "' + p.title + '"');
+    toast('🎧 DJ pick: "' + p.title + '"' + (p.reason ? ' — ' + p.reason : ''));
+    if (p.videoId) location.href = 'https://music.youtube.com/watch?v=' + p.videoId;
+    else VoiceControl.playSearch(p.title + ' ' + (p.artist || ''));
+  }
+  // Other features (crossfade's outro-skip) hand their "next" to the booth
+  // so the DJ's pick wins even on early transitions.
+  function playNow() {
+    if (!active || !pick) return false;
+    const p = pick; pick = null;
+    fire(p);
+    return true;
+  }
+  return { enable, disable, onPoll, playNow };
 })();
 
 // --- Normalize: every song at the same perceived volume ----------------------
@@ -2414,31 +2438,41 @@ const AIDJ = (() => {
   }
   function pickSystemVoice() {
     const vs = window.speechSynthesis.getVoices() || [];
-    return vs.find((v) => /Samantha|Daniel|Ava|Google (US|UK) English/i.test(v.name) && v.lang.startsWith('en'))
-      || vs.find((v) => v.lang && v.lang.startsWith('en')) || null;
+    // Premium/natural voices first — the compact defaults are the robotic ones.
+    for (const re of [/Ava.*Premium|Zoe.*Premium|Evan.*Premium/i, /Samantha|Allison|Ava|Nathan|Evan|Tom/i, /Google US English/i, /Daniel|Karen|Moira/i]) {
+      const hit = vs.find((v) => re.test(v.name) && (v.lang || '').startsWith('en'));
+      if (hit) return hit;
+    }
+    return vs.find((v) => (v.lang || '').startsWith('en')) || null;
   }
-  // Speak a line no matter what's configured: Groq TTS → system voice.
+  // Speak a line: the music PAUSES while the DJ talks and resumes right after
+  // (a real radio break, not talking over the record). Voice chain: Groq →
+  // Google voice → system voice.
   async function speak(line) {
     stopVoice();
     speaking = true;
-    Visualizer.fx.fade(0.2, 0.5);
-    const un_duck = () => { speaking = false; Visualizer.fx.fade(1, 0.6); };
+    const v0 = q('video');
+    const wasPlaying = !!(v0 && !v0.paused);
     const t = await ipcRenderer.invoke('stardust:ai-tts', { text: line }).catch(() => null);
+    if (wasPlaying) { try { q('video').pause(); } catch {} }
+    const resume = () => {
+      speaking = false;
+      if (wasPlaying) { const vv = q('video'); if (vv && vv.paused) { try { vv.play(); } catch {} } }
+    };
     if (t && t.buf) {
       const blob = new Blob([t.buf], { type: t.mime || 'audio/wav' });
       voiceEl = new Audio(URL.createObjectURL(blob));
-      voiceEl.onended = voiceEl.onerror = () => { voiceEl = null; un_duck(); };
+      voiceEl.onended = voiceEl.onerror = () => { voiceEl = null; resume(); };
       try { await voiceEl.play(); return; } catch { voiceEl = null; }
     }
     if (t && t.error === 'tts-terms') console.log('[Stardust] Groq TTS needs a one-time terms click: console.groq.com/playground?model=canopylabs%2Forpheus-v1-english');
-    // Built-in voice — free, offline, always there.
     try {
       const u = new SpeechSynthesisUtterance(line);
-      const v = pickSystemVoice(); if (v) u.voice = v;
-      u.rate = 1.04; u.pitch = 1.0;
-      u.onend = u.onerror = un_duck;
+      const sv = pickSystemVoice(); if (sv) u.voice = sv;
+      u.rate = 0.98; u.pitch = 1.0;
+      u.onend = u.onerror = resume;
       window.speechSynthesis.speak(u);
-    } catch { un_duck(); }
+    } catch { resume(); }
   }
   // Template lines: the keyless fallback DJ. Facts only, no LLM.
   function templateLine(np, tr, artistRank) {
@@ -2453,7 +2487,7 @@ const AIDJ = (() => {
   }
   async function onTrack(np) {
     if (!active || busy || speaking || !np || !np.isTrack) return;
-    if (++sinceAnnounce < 2) return; // speaks every 2nd track
+    if (++sinceAnnounce < 4) return; // an occasional voice, not a chatterbox
     busy = true; sinceAnnounce = 0;
     const forTrack = np.title + '|' + np.artist;
     try {

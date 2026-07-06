@@ -76,20 +76,50 @@ async function chat(apiKey, messages, { maxTokens = 300, temperature = 0.8, json
 }
 
 // ---- tts --------------------------------------------------------------------
+// Voice chain: Groq Orpheus (needs a one-time terms click) → Google's
+// translate voice (free, natural, unofficial) → the caller's speechSynthesis.
+function get(url, headers, binary) {
+  return new Promise((resolve) => {
+    let u;
+    try { u = new URL(url); } catch { return resolve(null); }
+    const req = https.request({ hostname: u.hostname, path: u.pathname + u.search, method: 'GET', headers, timeout: 12000 }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve({ status: res.statusCode, buf: Buffer.concat(chunks) }));
+    });
+    req.on('error', () => resolve(null));
+    req.on('timeout', () => { try { req.destroy(); } catch {} resolve(null); });
+    req.end();
+  });
+}
+async function googleTTS(text) {
+  // ~190-char cap per request — split on sentences and stitch the MP3 frames.
+  const parts = [];
+  let cur = '';
+  for (const s of String(text).split(/(?<=[.!?])\s+/)) {
+    if ((cur + ' ' + s).length > 180) { if (cur) parts.push(cur); cur = s; } else cur = cur ? cur + ' ' + s : s;
+  }
+  if (cur) parts.push(cur);
+  const bufs = [];
+  for (const p of parts.slice(0, 4)) {
+    const r = await get('https://translate.google.com/translate_tts?ie=UTF-8&tl=en&client=tw-ob&q=' + encodeURIComponent(p),
+      { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' });
+    if (!r || r.status !== 200 || !r.buf || r.buf.length < 500) return null;
+    bufs.push(r.buf);
+  }
+  return bufs.length ? Buffer.concat(bufs) : null;
+}
 async function tts(apiKey, text, voice) {
   if (!text) return { error: 'empty' };
   const body = { model: TTS_MODEL, voice: voice || TTS_VOICE, input: String(text).slice(0, 600), response_format: 'wav' };
   let res = await viaProxy('tts', body, true);
   if ((!res || res.status !== 200) && apiKey) res = await post(TTS_URL, body, { Authorization: 'Bearer ' + apiKey }, true);
-  if (!res) return { error: 'network' };
-  if (res.status !== 200 || !res.buf || res.buf.length < 200) {
-    // Surface WHY (decommissioned model / terms not accepted) in the log so
-    // it's diagnosable — then the caller speaks via speechSynthesis instead.
-    console.log('[Stardust] tts failed:', res.status, res.raw || '(no body)');
-    const terms = res.raw && /terms/i.test(res.raw);
-    return { error: terms ? 'tts-terms' : 'tts-unavailable' };
-  }
-  return { buf: res.buf, mime: 'audio/wav' };
+  if (res && res.status === 200 && res.buf && res.buf.length >= 200) return { buf: res.buf, mime: 'audio/wav' };
+  if (res) console.log('[Stardust] groq tts unavailable:', res.status, (res.raw || '').slice(0, 160));
+  const g = await googleTTS(text);
+  if (g) return { buf: g, mime: 'audio/mpeg' };
+  const terms = res && res.raw && /terms/i.test(res.raw);
+  return { error: terms ? 'tts-terms' : 'tts-unavailable' };
 }
 
 // ---- stt (proxy path — keyless voice commands) --------------------------------
