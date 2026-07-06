@@ -385,6 +385,7 @@ const Visualizer = (() => {
   let audioCtx = null, analyser = null, freq = null, attachedEl = null;
   let bass = null, treble = null, volume = null, panner = null, reverb = null, wet = null, lfo = null, fade = null;
   let karOn = false, karNodes = null; // karaoke (center-vocal cancel) rewiring
+  let vinylSrc = null, vinylGain = null; // vinyl crackle bed + warmth EQ
   let useReal = false;       // true once we get non-zero spectrum data
   let zeroFrames = 0;        // consecutive silent frames while playing -> tainted
   let reactiveColor = null;  // per-track reactive theming override
@@ -582,6 +583,34 @@ const Visualizer = (() => {
       }
     },
     reverb: (on) => { ensureAudio(); if (wet) wet.gain.value = on ? 0.32 : 0; },
+    // Vinyl: a generated crackle bed (sparse pops over faint hiss) + warmth
+    // (rolled-off highs, a touch of low shelf). The crackle joins at the FADE
+    // node — the audible path only — so it never leaks into the capture tap
+    // that feeds transcription.
+    vinyl: (on) => {
+      ensureAudio();
+      if (!audioCtx || !bass || !treble || !fade) return;
+      if (on && !vinylSrc) {
+        const len = audioCtx.sampleRate * 2;
+        const buf = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
+        const ch = buf.getChannelData(0);
+        for (let i = 0; i < len; i++) ch[i] = (Math.random() * 2 - 1) * 0.006;
+        for (let p = 0; p < 26; p++) {
+          const at = Math.floor(Math.random() * (len - 40));
+          const amp = 0.1 + Math.random() * 0.22;
+          for (let j = 0; j < 24; j++) ch[at + j] += (Math.random() * 2 - 1) * amp * (1 - j / 24);
+        }
+        vinylSrc = audioCtx.createBufferSource(); vinylSrc.buffer = buf; vinylSrc.loop = true;
+        vinylGain = audioCtx.createGain(); vinylGain.gain.value = 1;
+        vinylSrc.connect(vinylGain); vinylGain.connect(fade);
+        vinylSrc.start();
+        treble.gain.value = -5; bass.gain.value = 2.5; // shares the shelves with the boost toggles — last one wins
+      } else if (!on && vinylSrc) {
+        try { vinylSrc.stop(); vinylSrc.disconnect(); vinylGain.disconnect(); } catch {}
+        vinylSrc = null; vinylGain = null;
+        treble.gain.value = 0; bass.gain.value = 0;
+      }
+    },
     // Center-channel cancel (L−R): vocals sit dead-center in most stereo
     // mixes, so subtracting the channels removes them and leaves the band.
     karaoke: (on) => {
@@ -727,7 +756,19 @@ const Visualizer = (() => {
     });
   }
 
-  return { configure, setPlaying, resumeAudio, fx, getBars, setReactiveColor, vocalEnergy, vocalOnset, captureStart, captureStop };
+  // Live audio as a MediaStream (for the lyric-clip exporter) — taps the same
+  // capture destination the transcriber uses, without a MediaRecorder.
+  function tapStream() {
+    ensureAudio();
+    if (!audioCtx || !analyser) return null;
+    try {
+      if (!capDest) capDest = audioCtx.createMediaStreamDestination();
+      try { analyser.connect(capDest); } catch {} // already-connected throws — fine
+      return capDest.stream;
+    } catch { return null; }
+  }
+
+  return { configure, setPlaying, resumeAudio, fx, getBars, setReactiveColor, vocalEnergy, vocalOnset, captureStart, captureStop, tapStream };
 })();
 
 // A user gesture is required before an AudioContext can produce sound/data.
@@ -830,7 +871,11 @@ const BEHAVIORS = {
   'feat-playlist-tools':{ on: () => PlaylistTools.show(), off: () => PlaylistTools.hide() },
   'anim-vinyl-spin':    { on: () => VinylSpin.on(), off: () => VinylSpin.off() },
   'anim-prism-accent':  { on: () => PrismAccent.on(), off: () => PrismAccent.off() },
-  'audio-karaoke':      { on: () => Visualizer.fx.karaoke(true), off: () => Visualizer.fx.karaoke(false) }
+  'audio-karaoke':      { on: () => Visualizer.fx.karaoke(true), off: () => Visualizer.fx.karaoke(false) },
+  'audio-vinyl':        { on: () => Visualizer.fx.vinyl(true),   off: () => Visualizer.fx.vinyl(false) },
+  'feat-focus-instrumental': { on: () => FocusMode.enable(), off: () => FocusMode.disable() },
+  'feat-practice-mode': { on: () => PracticeMode.show(), off: () => PracticeMode.hide() },
+  'feat-xray-seekbar':  { on: () => XraySeekbar.enable(), off: () => XraySeekbar.disable() }
 };
 
 // --- Vinyl Spin: find the actual artwork <img> at runtime (YTM class names are
@@ -1090,6 +1135,8 @@ const PrismAccent = (() => {
 })();
 
 // Pull a vibrant colour out of album art (bright + saturated pixel, else avg).
+// The callback also gets a small palette { vibrant, deep } — deep is the art's
+// average tone pulled down to background darkness, for living-theme gradients.
 function extractColor(artUrl, cb) {
   const img = new Image(); img.crossOrigin = 'anonymous';
   img.onload = () => {
@@ -1108,8 +1155,9 @@ function extractColor(artUrl, cb) {
         if (val > 0.25 && score > bestScore) { bestScore = score; best = [r, g, b]; }
       }
       if (!best) best = [Math.round(ar / n), Math.round(ag / n), Math.round(ab / n)];
-      const hex = '#' + best.map((x) => Math.min(255, Math.max(0, x)).toString(16).padStart(2, '0')).join('');
-      cb(hex);
+      const hex = (rgb) => '#' + rgb.map((x) => Math.min(255, Math.max(0, Math.round(x))).toString(16).padStart(2, '0')).join('');
+      const avg = [ar / n, ag / n, ab / n];
+      cb(hex(best), { vibrant: hex(best), deep: hex(avg.map((x) => x * 0.22)) });
     } catch { cb(null); }
   };
   img.onerror = () => cb(null);
@@ -1126,15 +1174,22 @@ const ReactiveTheme = (() => {
   function disable() {
     active = false; last = ''; reactiveAccent = null;
     document.documentElement.style.removeProperty('--stardust-accent');
+    document.documentElement.style.removeProperty('--stardust-bg');
     Visualizer.setReactiveColor(null); BlackHole.setColor(null);
   }
   function onTrack(np) {
     if (!active || !np || !np.art || np.art === last) return;
     last = np.art;
-    extractColor(np.art, (hex) => {
+    extractColor(np.art, (hex, pal) => {
       if (!active || !hex) return;
       reactiveAccent = hex;
       document.documentElement.style.setProperty('--stardust-accent', hex);
+      // Living theme: the whole page settles into the album's own tones —
+      // a deep wash of the art's colour under the theme, lyrics untouched.
+      if (pal && pal.deep) {
+        document.documentElement.style.setProperty('--stardust-bg',
+          `radial-gradient(circle at 50% 0%, ${pal.deep}, #05060f 74%)`);
+      }
       Visualizer.setReactiveColor(hex); BlackHole.setColor(hex);
       // Push the new colour to the mini player immediately.
       try { const np2 = readNowPlaying(); if (np2) ipcRenderer.send('stardust:nowplaying', np2); } catch {}
@@ -1162,6 +1217,228 @@ const Crossfade = (() => {
       const left = v.duration - v.currentTime;
       if (!faded && left > 0 && left <= OUT) { faded = true; Visualizer.fx.fade(0.0001, left); }
     }
+  }
+  return { enable, disable, onTrack };
+})();
+
+// --- Instrumental focus mode: auto-skip tracks with vocals ------------------
+// Reuses the lyrics engine's vocal detector: listen to the first stretch of
+// each track; sustained voice → skip. Replaying a skipped song whitelists it.
+const FocusMode = (() => {
+  let timer = null, voicedMs = 0, checkedKey = '', floor = 0, decided = false;
+  const allow = new Set();
+  let lastSkipKey = '', lastSkipAt = 0;
+  function reset(key) { voicedMs = 0; floor = 0; decided = false; checkedKey = key; }
+  function enable() { if (!timer) { reset(''); timer = setInterval(tick, 400); } }
+  function disable() { if (timer) { clearInterval(timer); timer = null; } }
+  function onTrack(np) {
+    if (!timer || !np) return;
+    const key = np.title + '|' + np.artist;
+    // Coming straight back to a just-skipped song = "I want this one".
+    if (key === lastSkipKey && Date.now() - lastSkipAt < 45000) {
+      allow.add(key);
+      toast('🎧 Focus mode: keeping "' + np.title + '"');
+    }
+    reset(key);
+  }
+  function tick() {
+    const v = q('video'); if (!v || v.paused) return;
+    const np = readNowPlaying(); if (!np || !np.isTrack) return;
+    const key = np.title + '|' + np.artist;
+    if (key !== checkedKey) reset(key);
+    if (decided || allow.has(key)) return;
+    const t = v.currentTime || 0;
+    if (t < 3) return;               // skip the fade-in
+    if (t > 45) { decided = true; return; } // verdict window closed — it stays
+    const { e, ratio } = Visualizer.vocalEnergy();
+    if (e < 0) return;               // can't read the audio — never skip blind
+    floor += (e - floor) * (e < floor ? 0.25 : 0.01);
+    const voice = (e > floor + 0.06 || e > floor * 1.7) && ratio > 0.35;
+    if (voice) voicedMs += 400;
+    if (voicedMs >= 5000) {
+      decided = true; lastSkipKey = key; lastSkipAt = Date.now();
+      toast('🎧 Focus mode: skipping "' + np.title + '" (vocals) — replay it to keep it');
+      doCommand('next');
+    }
+  }
+  return { enable, disable, onTrack };
+})();
+
+// --- Practice mode: A-B loop + pitch-preserved slowdown for learning songs --
+const PracticeMode = (() => {
+  let el = null, timer = null, a = null, b = null, si = 0;
+  const SPEEDS = [1, 0.75, 0.5];
+  const fmt = (s) => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
+  function refresh() {
+    if (!el) return;
+    el.querySelector('#sd-pr-a').textContent = a == null ? 'A' : 'A ' + fmt(a);
+    el.querySelector('#sd-pr-b').textContent = b == null ? 'B' : 'B ' + fmt(b);
+    el.querySelector('#sd-pr-s').textContent = SPEEDS[si] === 1 ? '1×' : SPEEDS[si] === 0.75 ? '¾×' : '½×';
+    el.classList.toggle('looping', a != null && b != null);
+  }
+  function setA() { const v = q('video'); if (!v) return; a = v.currentTime; if (b != null && b <= a) b = null; toast('Loop start set — play to the end point and press B'); refresh(); }
+  function setB() {
+    const v = q('video'); if (!v) return;
+    if (a == null || v.currentTime <= a + 0.5) { toast('Press A first, then B a little later'); return; }
+    b = v.currentTime; v.currentTime = a; refresh();
+  }
+  function clearLoop() { a = b = null; refresh(); }
+  function cycleSpeed() { si = (si + 1) % SPEEDS.length; refresh(); }
+  function show() {
+    if (el) return;
+    el = h('div', { id: 'stardust-practice' }, [
+      h('button', { class: 'stardust-qa', id: 'sd-pr-a', title: 'Set loop start (at the playhead)', text: 'A' }),
+      h('button', { class: 'stardust-qa', id: 'sd-pr-b', title: 'Set loop end — starts looping', text: 'B' }),
+      h('button', { class: 'stardust-qa', id: 'sd-pr-s', title: 'Cycle speed 1× → ¾× → ½× (pitch preserved)', text: '1×' }),
+      h('button', { class: 'stardust-qa', id: 'sd-pr-x', title: 'Clear the loop', text: '✕' })
+    ]);
+    el.querySelector('#sd-pr-a').addEventListener('click', setA);
+    el.querySelector('#sd-pr-b').addEventListener('click', setB);
+    el.querySelector('#sd-pr-s').addEventListener('click', cycleSpeed);
+    el.querySelector('#sd-pr-x').addEventListener('click', clearLoop);
+    document.body.appendChild(el);
+    timer = setInterval(tick, 150);
+    refresh();
+  }
+  function hide() {
+    if (timer) { clearInterval(timer); timer = null; }
+    if (el) { el.remove(); el = null; }
+    a = b = null; si = 0;
+    const v = q('video');
+    if (v) { try { v.playbackRate = 1; } catch {} }
+    enforceRate(); // hand the rate back to nightcore/slowed if one is on
+  }
+  function onTrack() { if (el) clearLoop(); }
+  function tick() {
+    const v = q('video'); if (!v) return;
+    // Practice speed wins over rateMode while the bar is up; pitch stays true.
+    const target = SPEEDS[si];
+    if (target !== 1) {
+      try { v.preservesPitch = v.mozPreservesPitch = v.webkitPreservesPitch = true; } catch {}
+      if (Math.abs(v.playbackRate - target) > 0.001) { try { v.playbackRate = target; } catch {} }
+    } else if (Math.abs(v.playbackRate - 1) > 0.001 && !rateMode) {
+      enforceRate(); // back to 1× (or the nightcore/slowed rate if one is on)
+    }
+    if (a != null && b != null && (v.currentTime > b || v.currentTime < a - 0.5)) v.currentTime = a;
+  }
+  return { show, hide, onTrack };
+})();
+
+// --- Song X-ray: paint the track's anatomy onto the seekbar -----------------
+// Fetches the song's audio in the background (~1s, same authorized source as
+// word-sync), computes an energy profile, and overlays it on YTM's progress
+// bar — plus a jump-to-chorus pill. Chorus = the loudest sustained window
+// past the song's first stretch.
+const XraySeekbar = (() => {
+  let active = false, canvas = null, cx = null, btn = null, timer = null;
+  let profile = null, chorusAt = null, forKey = '';
+  const cache = new Map();
+  const N = 220; // energy buckets across the track
+  function enable() {
+    if (active) return;
+    active = true;
+    timer = setInterval(place, 700);
+    forKey = ''; onTrack(readNowPlaying());
+  }
+  function disable() {
+    active = false;
+    if (timer) { clearInterval(timer); timer = null; }
+    if (canvas) { canvas.remove(); canvas = null; cx = null; }
+    if (btn) { btn.remove(); btn = null; }
+    profile = null; chorusAt = null; forKey = '';
+  }
+  async function onTrack(np) {
+    if (!active || !np || !np.isTrack) return;
+    const key = np.title + '|' + np.artist;
+    if (key === forKey) return;
+    forKey = key; profile = null; chorusAt = null; draw();
+    const hit = cache.get(key);
+    if (hit) { profile = hit.profile; chorusAt = hit.chorusAt; draw(); return; }
+    let vid = null;
+    try { vid = await ipcRenderer.invoke('stardust:current-videoid'); } catch {}
+    let raw = null;
+    try { raw = await ipcRenderer.invoke('stardust:track-audio', { videoId: vid, duration: np.duration }); } catch {}
+    if (!active || forKey !== key || !raw) return;
+    try {
+      const ab = raw.buffer ? raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength) : raw;
+      const ac = new (window.AudioContext || window.webkitAudioContext)();
+      const audio = await ac.decodeAudioData(ab);
+      const ch = audio.getChannelData(0);
+      const win = Math.max(1, Math.floor(ch.length / N));
+      const prof = new Array(N).fill(0);
+      for (let i = 0; i < N; i++) {
+        let sum = 0;
+        const s0 = i * win, s1 = Math.min(ch.length, s0 + win);
+        for (let j = s0; j < s1; j += 8) sum += ch[j] * ch[j]; // stride-sampled RMS
+        prof[i] = Math.sqrt(sum / Math.max(1, (s1 - s0) / 8));
+      }
+      const mx = Math.max(...prof) || 1;
+      for (let i = 0; i < N; i++) prof[i] = prof[i] / mx;
+      // Chorus: max mean over a ~12s window, searched past the intro.
+      const dur = audio.duration || np.duration || 1;
+      const w = Math.max(3, Math.round(N * 12 / dur));
+      let bestI = -1, bestV = -1;
+      for (let i = Math.floor(N * 0.15); i + w <= Math.floor(N * 0.9); i++) {
+        let m = 0; for (let j = i; j < i + w; j++) m += prof[j];
+        if (m > bestV) { bestV = m; bestI = i; }
+      }
+      profile = prof;
+      chorusAt = bestI >= 0 ? bestI / N * dur : null;
+      cache.set(key, { profile, chorusAt });
+      if (cache.size > 40) cache.delete(cache.keys().next().value);
+      try { ac.close(); } catch {}
+      draw();
+    } catch (e) { console.log('[Stardust] x-ray analysis failed:', e && e.message); }
+  }
+  function slider() { return q('ytmusic-player-bar #progress-bar'); }
+  function place() {
+    if (!active) return;
+    const s = slider();
+    if (!s) { if (canvas) canvas.style.display = 'none'; if (btn) btn.style.display = 'none'; return; }
+    if (!canvas) {
+      canvas = h('canvas', { id: 'stardust-xray' });
+      document.body.appendChild(canvas);
+      cx = canvas.getContext('2d');
+      canvas.addEventListener('click', (e) => {
+        const v = q('video'); if (!v || !isFinite(v.duration)) return;
+        const r = canvas.getBoundingClientRect();
+        v.currentTime = ((e.clientX - r.left) / r.width) * v.duration;
+      });
+    }
+    if (!btn) {
+      btn = h('button', { id: 'stardust-xray-btn', class: 'stardust-qa', title: 'Jump to the chorus', text: '⏩ chorus' });
+      btn.addEventListener('click', () => {
+        const v = q('video');
+        if (v && chorusAt != null) { v.currentTime = chorusAt; toast('⏩ Chorus'); }
+      });
+      document.body.appendChild(btn);
+    }
+    const r = s.getBoundingClientRect();
+    if (r.width < 50) { canvas.style.display = 'none'; btn.style.display = 'none'; return; }
+    canvas.style.display = 'block';
+    canvas.style.left = r.left + 'px';
+    canvas.style.width = r.width + 'px';
+    canvas.style.top = (r.top - 16) + 'px';
+    btn.style.display = chorusAt != null ? 'block' : 'none';
+    if (canvas.width !== Math.floor(r.width)) { canvas.width = Math.floor(r.width); canvas.height = 14; draw(); }
+  }
+  function draw() {
+    if (!cx || !canvas) return;
+    cx.clearRect(0, 0, canvas.width, canvas.height);
+    if (!profile) return;
+    const accent = reactiveAccent || (settings && settings.accentOverride) || (activeTheme && activeTheme.accent) || '#8b5cff';
+    const bw = canvas.width / N;
+    const dur = (q('video') || {}).duration || 1;
+    const chorusI0 = chorusAt != null ? Math.floor(chorusAt / dur * N) : -1;
+    const chorusI1 = chorusI0 >= 0 ? chorusI0 + Math.max(3, Math.round(N * 12 / dur)) : -1;
+    for (let i = 0; i < N; i++) {
+      const inChorus = i >= chorusI0 && i < chorusI1;
+      cx.globalAlpha = inChorus ? 0.95 : 0.45;
+      cx.fillStyle = accent;
+      const bh = Math.max(1, profile[i] * 13);
+      cx.fillRect(i * bw, 14 - bh, Math.max(1, bw - 0.5), bh);
+    }
+    cx.globalAlpha = 1;
   }
   return { enable, disable, onTrack };
 })();
@@ -1328,6 +1605,7 @@ const Lyrics = (() => {
     const again = h('button', { class: 'stardust-lyr-tool', title: 'Search the lyric databases again — skips transcriptions, and replaces yours if something is found', text: '🔎' });
     alignBtn = h('button', { class: 'stardust-lyr-tool', title: 'Word-sync: listens to the song once and aligns these exact lyrics to the audio — near-perfect per-word timing (needs a Groq key)', text: '⚡' });
     mineBtn = h('button', { class: 'stardust-lyr-tool', title: 'Use MY transcription instead — lyric databases sometimes carry the wrong words. Sticky for this song; 🔎 switches back.', text: '🎙★' });
+    const clip = h('button', { class: 'stardust-lyr-tool', title: 'Export a 15s lyric clip — the words lighting up over the album art, with audio (.webm)', text: '🎬' });
     srcEl = h('span', { class: 'stardust-lyr-src', text: '' });
     minus.addEventListener('click', () => nudge(-0.5));
     plus.addEventListener('click', () => nudge(0.5));
@@ -1337,7 +1615,8 @@ const Lyrics = (() => {
     again.addEventListener('click', searchAgain);
     alignBtn.addEventListener('click', startAlign);
     mineBtn.addEventListener('click', useMyTranscript);
-    barEl = h('div', { class: 'stardust-lyr-tools' }, [minus, offEl, plus, copy, re, again, alignBtn, mineBtn, srcEl]);
+    clip.addEventListener('click', () => exportClip(clip));
+    barEl = h('div', { class: 'stardust-lyr-tools' }, [minus, offEl, plus, copy, re, again, alignBtn, mineBtn, clip, srcEl]);
     return barEl;
   }
   const SRC_LABEL = { musixmatch: 'Musixmatch', lrclib: 'LRCLIB', netease: 'NetEase', kugou: 'KuGou', genius: 'Genius', transcript: 'transcribed', community: 'community', aligned: 'word-synced ⚡' };
@@ -1406,6 +1685,100 @@ const Lyrics = (() => {
       offEl.classList.toggle('nonzero', offset !== 0);
     }
   }
+  // 🎬 Export a 15-second kinetic lyric clip: album art backdrop + the words
+  // lighting up word-by-word, with the song's own audio — saved as .webm.
+  let clipRec = null;
+  async function exportClip(btn2) {
+    if (clipRec) { toast('Already recording a clip'); return; }
+    const v = playingVideo();
+    if (!v || !synced.length) { toast('Play a song with synced lyrics first'); return; }
+    const stream = Visualizer.tapStream();
+    if (!stream || !stream.getAudioTracks().length) { toast('Could not tap the audio'); return; }
+    const dur = Math.min(15, Math.max(5, (v.duration || 15) - 1));
+    // Start at the beginning of the line under the playhead, so the clip
+    // opens on a lyric, not mid-word.
+    const t0raw = v.currentTime || 0;
+    let start = t0raw;
+    for (const l of synced) if (l.t <= t0raw + 0.2) start = l.t; else break;
+    if (start + dur > (v.duration || Infinity)) start = Math.max(0, (v.duration || dur) - dur);
+    const art = new Image(); art.crossOrigin = 'anonymous';
+    await new Promise((res) => { art.onload = res; art.onerror = res; art.src = (np && np.art || '').replace(/=w\d+-h\d+/, '=w720-h720'); });
+    const W = 720, HH = 720;
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = HH;
+    const c2 = cv.getContext('2d');
+    const accent = reactiveAccent || (settings && settings.accentOverride) || (activeTheme && activeTheme.accent) || '#8b5cff';
+    const media = new MediaStream([...cv.captureStream(30).getVideoTracks(), ...stream.getAudioTracks()]);
+    const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus') ? 'video/webm;codecs=vp9,opus' : 'video/webm';
+    const chunks = [];
+    clipRec = new MediaRecorder(media, { mimeType: mime, videoBitsPerSecond: 5e6 });
+    clipRec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+    if (btn2) btn2.textContent = '🎬 …';
+    v.currentTime = start;
+    if (v.paused) { try { doCommand('playpause'); } catch {} }
+    toast('🎬 Recording a ' + Math.round(dur) + 's lyric clip…');
+    clipRec.start(500);
+    const fit = (text, max, px) => { c2.font = '700 ' + px + 'px system-ui, sans-serif'; while (px > 18 && c2.measureText(text).width > max) { px -= 2; c2.font = '700 ' + px + 'px system-ui, sans-serif'; } return px; };
+    const paint = () => {
+      const t = (v.currentTime || 0) + LOOKAHEAD;
+      c2.clearRect(0, 0, W, HH);
+      // backdrop: blurred art, dark wash
+      c2.save(); c2.filter = 'blur(26px)';
+      if (art.width) c2.drawImage(art, -40, -40, W + 80, HH + 80); else { c2.fillStyle = '#0a0a14'; c2.fillRect(0, 0, W, HH); }
+      c2.restore();
+      c2.fillStyle = 'rgba(5,6,15,0.62)'; c2.fillRect(0, 0, W, HH);
+      // find current line
+      let idx = -1;
+      for (let i = 0; i < synced.length; i++) { if (synced[i].t <= t) idx = i; else break; }
+      const line = idx >= 0 ? synced[idx] : null;
+      const next = synced[idx + 1];
+      const prev = synced[idx - 1];
+      c2.textAlign = 'center'; c2.textBaseline = 'middle';
+      if (prev) { c2.font = '500 22px system-ui, sans-serif'; c2.fillStyle = 'rgba(255,255,255,0.35)'; c2.fillText(prev.s || '', W / 2, HH / 2 - 96, W - 90); }
+      if (line) {
+        const words = (line.words && line.words.length) ? line.words : [{ text: line.s || '♪', time: line.t }];
+        const full = words.map((w) => w.text).join(' ');
+        const px = fit(full, W - 80, 42);
+        // how far through the line are we?
+        const end = next ? next.t : line.t + 6;
+        const frac = Math.max(0, Math.min(1, (t - line.t) / Math.max(0.5, end - line.t)));
+        let lit = 0;
+        for (let i = 0; i < words.length; i++) { if (words[i].time != null ? words[i].time <= t : (i + 1) / words.length <= frac) lit = i + 1; }
+        // draw word by word, centered as one string
+        const totalW = c2.measureText(full).width;
+        let x = W / 2 - totalW / 2;
+        for (let i = 0; i < words.length; i++) {
+          const seg = words[i].text + (i < words.length - 1 ? ' ' : '');
+          c2.textAlign = 'left';
+          c2.fillStyle = i < lit ? accent : 'rgba(255,255,255,0.85)';
+          if (i < lit) { c2.shadowColor = accent; c2.shadowBlur = 18; } else c2.shadowBlur = 0;
+          c2.fillText(seg, x, HH / 2, W);
+          x += c2.measureText(seg).width;
+        }
+        c2.shadowBlur = 0; c2.textAlign = 'center';
+      }
+      if (next) { c2.font = '500 22px system-ui, sans-serif'; c2.fillStyle = 'rgba(255,255,255,0.35)'; c2.fillText(next.s || '', W / 2, HH / 2 + 96, W - 90); }
+      // footer: title + watermark
+      c2.font = '600 20px system-ui, sans-serif'; c2.fillStyle = 'rgba(255,255,255,0.8)';
+      c2.fillText(((np && np.title) || '') + ((np && np.artist) ? ' — ' + np.artist : ''), W / 2, HH - 72, W - 80);
+      c2.font = '600 15px system-ui, sans-serif'; c2.fillStyle = 'rgba(255,255,255,0.4)';
+      c2.fillText('✦ Stardust', W / 2, HH - 40);
+    };
+    const iv = setInterval(paint, 33); paint();
+    setTimeout(() => {
+      clearInterval(iv);
+      const rec = clipRec; clipRec = null;
+      if (btn2) btn2.textContent = '🎬';
+      rec.onstop = async () => {
+        const blob = new Blob(chunks, { type: 'video/webm' });
+        const ab = await blob.arrayBuffer();
+        const name = (((np && np.title) || 'clip') + ' lyric clip.webm');
+        const ok = await ipcRenderer.invoke('stardust:save-clip', { name, buf: new Uint8Array(ab) }).catch(() => false);
+        toast(ok ? '🎬 Lyric clip saved' : 'Clip export canceled');
+      };
+      try { rec.stop(); } catch {}
+    }, dur * 1000);
+  }
+
   function copyLyrics() {
     const text = synced.length
       ? synced.map((l) => (l.s || '') + (l.ad ? ' (' + l.ad + ')' : '')).map((x) => x.trim()).filter(Boolean).join('\n')
@@ -2484,6 +2857,9 @@ function pollNowPlaying() {
     ReactiveTheme.onTrack(np);
     Crossfade.onTrack(np);
     Lyrics.onTrack(np);
+    FocusMode.onTrack(np);
+    PracticeMode.onTrack();
+    XraySeekbar.onTrack(np);
   }
 
   const sig = `${track}|${np.playing}|${np.position}`;
@@ -2941,6 +3317,29 @@ function renderStats(s) {
     list('Top songs', s.topSongs, (t) => t.title + (t.artist ? ' — ' + t.artist : '')),
     list('Top artists', s.topArtists, (a) => a.name)
   ]));
+  // Personal Billboard: this week's chart with movement vs last week.
+  if (s.charts && (s.charts.songs.length || s.charts.artists.length)) {
+    const move = (m) => m === 'new' ? { text: 'NEW', cls: 'new' }
+      : m > 0 ? { text: '▲' + m, cls: 'up' }
+        : m < 0 ? { text: '▼' + (-m), cls: 'down' } : { text: '—', cls: 'hold' };
+    const chart = (title, rows) => {
+      const els = rows.length ? rows.map((r) => {
+        const mv = move(r.move);
+        return h('div', { class: 'stardust-stat-row' }, [
+          h('span', { class: 'stardust-stat-rank', text: String(r.rank) }),
+          h('span', { class: 'stardust-chart-move ' + mv.cls, text: mv.text }),
+          h('span', { class: 'stardust-stat-main', text: r.title + (r.artist ? ' — ' + r.artist : '') }),
+          h('span', { class: 'stardust-stat-sub', text: r.plays + (r.plays === 1 ? ' play' : ' plays') })
+        ]);
+      }) : [h('div', { class: 'stardust-hint', text: 'No plays yet this week' })];
+      return h('div', { class: 'stardust-stat-col' }, [h('div', { class: 'stardust-label', text: title }), ...els]);
+    };
+    body.appendChild(h('div', { class: 'stardust-label stardust-chart-head', text: '📈 Your charts — week ' + s.charts.week.split('-W')[1] }));
+    body.appendChild(h('div', { class: 'stardust-stat-cols' }, [
+      chart('Hot 15 songs', s.charts.songs),
+      chart('Top artists this week', s.charts.artists)
+    ]));
+  }
 }
 
 async function onSetting(key, value) {

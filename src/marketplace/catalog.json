@@ -209,7 +209,7 @@
     "type": "font",
     "name": "Orbitron",
     "author": "Google Fonts",
-    "description": "Geometric sci-fi display font — full UI.",
+    "description": "Geometric sci-fi display font \u2014 full UI.",
     "tags": [
       "futuristic",
       "display"
@@ -225,7 +225,7 @@
     "type": "font",
     "name": "Inter",
     "author": "Google Fonts",
-    "description": "Crisp, modern neutral sans — easy on the eyes.",
+    "description": "Crisp, modern neutral sans \u2014 easy on the eyes.",
     "tags": [
       "clean",
       "modern"
@@ -461,7 +461,7 @@
     "type": "feature",
     "name": "Sleep Timer",
     "author": "Stardust",
-    "description": "Auto-pause after 15/30/60 min — a floating countdown pill.",
+    "description": "Auto-pause after 15/30/60 min \u2014 a floating countdown pill.",
     "tags": [
       "smart",
       "sleep"
@@ -510,7 +510,7 @@
     "type": "feature",
     "name": "Auto-DJ",
     "author": "Stardust",
-    "description": "Keeps the music going — enables autoplay/radio as the queue runs out.",
+    "description": "Keeps the music going \u2014 enables autoplay/radio as the queue runs out.",
     "tags": [
       "smart",
       "playlist",
@@ -561,7 +561,7 @@
     "type": "audio",
     "name": "Karaoke Mode",
     "author": "Stardust",
-    "description": "Cancels the center-channel vocals so you can sing them yourself — pairs perfectly with Synced Lyrics. Works best on stereo mixes.",
+    "description": "Cancels the center-channel vocals so you can sing them yourself \u2014 pairs perfectly with Synced Lyrics. Works best on stereo mixes.",
     "tags": [
       "karaoke",
       "vocals",
@@ -574,7 +574,7 @@
     "type": "animation",
     "name": "Prism Accent",
     "author": "Stardust",
-    "description": "Your accent colour slowly drifts through the whole spectrum — every glow, button and slider cycles with it.",
+    "description": "Your accent colour slowly drifts through the whole spectrum \u2014 every glow, button and slider cycles with it.",
     "tags": [
       "color",
       "rainbow",
@@ -636,5 +636,57 @@
       },
       "css": ""
     }
+  },
+  {
+    "id": "audio-vinyl",
+    "type": "audio",
+    "name": "Vinyl",
+    "author": "Stardust",
+    "description": "Warm rolled-off highs and a soft crackle bed \u2014 every song sounds like it spins on a turntable.",
+    "tags": [
+      "vinyl",
+      "lofi",
+      "warm"
+    ],
+    "preview": "radial-gradient(circle at 50% 50%, #2a2119, #0d0a07 70%)"
+  },
+  {
+    "id": "feat-focus-instrumental",
+    "type": "feature",
+    "name": "Instrumental Focus",
+    "author": "Stardust",
+    "description": "Work mode: listens for vocals and auto-skips sung tracks, leaving instrumentals. Replay a skipped song to keep it.",
+    "tags": [
+      "smart",
+      "focus",
+      "instrumental"
+    ],
+    "preview": "linear-gradient(135deg, #16302b, #0a0e1a)"
+  },
+  {
+    "id": "feat-practice-mode",
+    "type": "feature",
+    "name": "Practice Mode",
+    "author": "Stardust",
+    "description": "For musicians: A-B loop any section and slow it to \u00be\u00d7 or \u00bd\u00d7 with the pitch preserved.",
+    "tags": [
+      "practice",
+      "loop",
+      "musician"
+    ],
+    "preview": "linear-gradient(135deg, #2b1c38, #0a0e1a)"
+  },
+  {
+    "id": "feat-xray-seekbar",
+    "type": "feature",
+    "name": "Song X-Ray",
+    "author": "Stardust",
+    "description": "Paints the song's anatomy over the seekbar \u2014 see the quiet verses and loud choruses, click to jump, or hit \u23e9 chorus.",
+    "tags": [
+      "smart",
+      "seekbar",
+      "chorus"
+    ],
+    "preview": "linear-gradient(135deg, #10263c, #0a0e1a)"
   }
 ]

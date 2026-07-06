@@ -772,6 +772,35 @@ input[type="color"]#stardust-accent {
   display: flex; flex-direction: column; gap: 8px;
 }
 
+/* ---- Practice mode A-B loop bar (right side, above the player bar) ---- */
+#stardust-practice {
+  position: fixed; right: 18px; bottom: 150px; z-index: 2147483640;
+  display: flex; flex-direction: row; gap: 8px;
+}
+#stardust-practice .stardust-qa { min-width: 44px; }
+#stardust-practice.looping .stardust-qa {
+  border-color: var(--stardust-accent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--stardust-accent) 45%, transparent);
+}
+
+/* ---- Song X-ray seekbar overlay ---- */
+#stardust-xray {
+  position: fixed; height: 14px; z-index: 2147483639;
+  cursor: pointer; opacity: 0.9;
+}
+#stardust-xray-btn {
+  position: fixed; right: 18px; bottom: 96px; z-index: 2147483640;
+  font-size: 11px; padding: 4px 10px;
+}
+
+/* ---- Personal Billboard chart movement badges ---- */
+.stardust-chart-head { margin-top: 18px; }
+.stardust-chart-move { font-size: 11px; font-weight: 700; min-width: 34px; text-align: center; border-radius: 6px; padding: 1px 4px; }
+.stardust-chart-move.up { color: #4ade80; }
+.stardust-chart-move.down { color: #f87171; }
+.stardust-chart-move.hold { color: rgba(255,255,255,0.45); }
+.stardust-chart-move.new { color: #facc15; background: rgba(250,204,21,0.12); }
+
 /* ---- Import dialog ---- */
 #stardust-import-ta {
   width: 100%; min-height: 180px; box-sizing: border-box; margin: 10px 0;

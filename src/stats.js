@@ -27,16 +27,29 @@ function load() {
       byDay: d.byDay || {},
       tracks: d.tracks || {},
       artists: d.artists || {},
-      recent: d.recent || []
+      recent: d.recent || [],
+      weeks: d.weeks || {}
     };
     // Scrub any junk (ads/placeholders) recorded before filtering existed.
     for (const [k, t] of Object.entries(out.tracks)) if (isJunkTrack(t)) delete out.tracks[k];
     out.recent = out.recent.filter((r) => !isJunkTrack(r));
     return out;
   } catch {
-    return { totalMs: 0, byDay: {}, tracks: {}, artists: {}, recent: [] };
+    return { totalMs: 0, byDay: {}, tracks: {}, artists: {}, recent: [], weeks: {} };
   }
 }
+
+// ISO week key ('2026-W28') — plays bucket by week so the charts can show
+// rank movement against LAST week, Billboard-style.
+function weekKey(d = new Date()) {
+  const dt = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const day = dt.getUTCDay() || 7;
+  dt.setUTCDate(dt.getUTCDate() + 4 - day); // ISO: week belongs to its Thursday
+  const y = dt.getUTCFullYear();
+  const wk = Math.ceil(((dt - Date.UTC(y, 0, 1)) / 86400000 + 1) / 7);
+  return y + '-W' + String(wk).padStart(2, '0');
+}
+const prevWeekKey = () => weekKey(new Date(Date.now() - 7 * 86400000));
 
 function saveSoon() {
   if (saveTimer) return;
@@ -85,6 +98,26 @@ function countPlay(np, key) {
   const ar = np.artist && data.artists[np.artist]; if (ar) ar.count++;
   data.recent.unshift({ title: np.title, artist: np.artist || '', art: np.art || '', ts: Date.now() });
   if (data.recent.length > RECENT_CAP) data.recent.length = RECENT_CAP;
+  // Weekly chart buckets (kept to the last 10 weeks).
+  const wk = weekKey();
+  const w = data.weeks[wk] || (data.weeks[wk] = { tracks: {}, artists: {} });
+  w.tracks[key] = (w.tracks[key] || 0) + 1;
+  if (np.artist) w.artists[np.artist] = (w.artists[np.artist] || 0) + 1;
+  const keys = Object.keys(data.weeks).sort();
+  while (keys.length > 10) delete data.weeks[keys.shift()];
+}
+
+// This week's top-15, ranked, with movement vs last week: +n climbed, -n
+// fell, 0 held, 'new' debuted. Billboard-style, entirely local.
+function chartOf(field, labelOf) {
+  const cur = (data.weeks[weekKey()] || {})[field] || {};
+  const prev = (data.weeks[prevWeekKey()] || {})[field] || {};
+  const rank = (m) => Object.entries(m).sort((a, b) => b[1] - a[1]).map(([k]) => k);
+  const prevRank = rank(prev);
+  return rank(cur).slice(0, 15).map((k, i) => {
+    const pi = prevRank.indexOf(k);
+    return { ...labelOf(k), plays: cur[k], rank: i + 1, move: pi < 0 ? 'new' : pi - i };
+  });
 }
 
 function get() {
@@ -99,12 +132,17 @@ function get() {
     distinctSongs: Object.keys(data.tracks).length,
     distinctArtists: Object.keys(data.artists).length,
     topSongs, topArtists,
-    recent: data.recent.slice(0, 60)
+    recent: data.recent.slice(0, 60),
+    charts: {
+      week: weekKey(),
+      songs: chartOf('tracks', (k) => { const t = data.tracks[k] || {}; return { title: t.title || k, artist: t.artist || '' }; }),
+      artists: chartOf('artists', (k) => ({ title: k, artist: '' }))
+    }
   };
 }
 
 function reset() {
-  data = { totalMs: 0, byDay: {}, tracks: {}, artists: {}, recent: [] };
+  data = { totalMs: 0, byDay: {}, tracks: {}, artists: {}, recent: [], weeks: {} };
   last = { key: '', ts: 0, ms: 0, counted: false, np: null };
   try { fs.writeFileSync(FILE, JSON.stringify(data)); } catch {}
 }

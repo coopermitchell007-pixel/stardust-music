@@ -1,7 +1,8 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, globalShortcut, shell, Menu, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, globalShortcut, shell, Menu, nativeImage, dialog } = require('electron');
 const path = require('path');
+const fs = require('fs');
 
 const config = require('./config');
 const themes = require('./themes');
@@ -340,6 +341,26 @@ function registerIpc() {
         ? await transcribe.alignToLyrics(payload, key, share)
         : await transcribe.transcribe(payload, key, share);
     } catch (err) { return { error: 'download' }; }
+  });
+  // Raw track audio for renderer-side analysis (X-ray seekbar). Same source
+  // rules as word-sync: the sniffed stream only when its duration vouches.
+  ipcMain.handle('stardust:track-audio', async (_e, p = {}) => {
+    try {
+      const sniffed = adblock.currentAudio();
+      const durOk = !sniffed || !(p.duration > 0) || !(sniffed.dur > 0) || Math.abs(sniffed.dur - p.duration) <= 3;
+      let got = sniffed && durOk ? await songAudio.fetchStreamUrl(sniffed.url) : null;
+      if (!got) got = await songAudio.fetchSongAudio(p.videoId);
+      return got ? got.buf : null;
+    } catch { return null; }
+  });
+  // Save an exported lyric clip (webm buffer) wherever the user picks.
+  ipcMain.handle('stardust:save-clip', async (_e, { name, buf } = {}) => {
+    if (!buf) return false;
+    const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+      defaultPath: path.join(app.getPath('downloads'), String(name || 'stardust-clip.webm').replace(/[\\/:*?"<>|]+/g, '_'))
+    });
+    if (canceled || !filePath) return false;
+    try { fs.writeFileSync(filePath, Buffer.from(buf)); return true; } catch { return false; }
   });
   ipcMain.handle('stardust:stats', () => stats.get());
   ipcMain.handle('stardust:stats-reset', () => { stats.reset(); return true; });
