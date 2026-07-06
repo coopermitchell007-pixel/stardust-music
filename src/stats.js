@@ -142,6 +142,18 @@ function get() {
       artists: chartOf('artists', (k) => ({ title: k, artist: '' }))
     },
     byHour: data.byHour,
+    // Daily listening streak: consecutive days with 5+ minutes, today counts
+    // once it happens (a quiet morning doesn't break yesterday's streak).
+    streak: (() => {
+      let n = 0;
+      for (let i = 0; i < 3650; i++) {
+        const d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
+        if ((data.byDay[d] || 0) >= 5 * 60000) n++;
+        else if (i === 0) continue;
+        else break;
+      }
+      return n;
+    })(),
     // Time capsule: songs you clearly loved (5+ plays) and quietly dropped.
     lostTracks: Object.values(data.tracks)
       .filter((t) => t.count >= 5 && t.last && Date.now() - t.last > 45 * 86400000)

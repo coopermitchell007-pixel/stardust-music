@@ -924,5 +924,18 @@
       "smart"
     ],
     "preview": "radial-gradient(circle at 30% 20%, #8b5cff33, transparent 55%), linear-gradient(135deg, #241242, #0a0e1a)"
+  },
+  {
+    "id": "feat-night-mode",
+    "type": "feature",
+    "name": "Night Mode",
+    "author": "Stardust",
+    "description": "\ud83c\udf19 after 10 PM the volume eases down automatically and comes back in the morning \u2014 no more midnight blasts.",
+    "tags": [
+      "night",
+      "volume",
+      "smart"
+    ],
+    "preview": "linear-gradient(135deg, #0a0e1a, #101b3a)"
   }
 ]

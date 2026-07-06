@@ -383,7 +383,7 @@ const Visualizer = (() => {
   //   source -> bass -> treble -> volume -> panner -> analyser -> destination
   //                                          panner -> reverb -> wet -> analyser
   let audioCtx = null, analyser = null, freq = null, attachedEl = null;
-  let bass = null, treble = null, volume = null, norm = null, panner = null, reverb = null, wet = null, lfo = null, fade = null;
+  let bass = null, treble = null, volume = null, norm = null, night = null, panner = null, reverb = null, wet = null, lfo = null, fade = null;
   let karOn = false, karNodes = null; // karaoke (center-vocal cancel) rewiring
   let vinylSrc = null, vinylGain = null; // vinyl crackle bed + warmth EQ
   let useReal = false;       // true once we get non-zero spectrum data
@@ -444,6 +444,7 @@ const Visualizer = (() => {
         treble = audioCtx.createBiquadFilter(); treble.type = 'highshelf'; treble.frequency.value = 3200; treble.gain.value = 0;
         volume = audioCtx.createGain(); volume.gain.value = 1;
         norm = audioCtx.createGain(); norm.gain.value = 1; // per-track loudness normalization
+        night = audioCtx.createGain(); night.gain.value = 1; // late-hours softening
         panner = audioCtx.createStereoPanner ? audioCtx.createStereoPanner() : null;
         reverb = audioCtx.createConvolver(); reverb.buffer = makeImpulse(2.4, 3.0);
         wet = audioCtx.createGain(); wet.gain.value = 0;
@@ -453,8 +454,9 @@ const Visualizer = (() => {
       // dry chain
       src.connect(bass); bass.connect(treble); treble.connect(volume);
       volume.connect(norm);
-      const tail = panner || norm;
-      if (panner) norm.connect(panner);
+      norm.connect(night);
+      const tail = panner || night;
+      if (panner) night.connect(panner);
       tail.connect(analyser);
       // wet (reverb) send in parallel
       tail.connect(reverb); reverb.connect(wet); wet.connect(analyser);
@@ -639,6 +641,13 @@ const Visualizer = (() => {
         karOn = false;
       }
     },
+    // Late-hours softening (Night Mode) — its own node so it stacks cleanly
+    // with Normalize and the boost toggles.
+    night: (on) => {
+      ensureAudio();
+      if (!night || !audioCtx) return;
+      try { night.gain.setTargetAtTime(on ? 0.7 : 1, audioCtx.currentTime, 1.2); } catch {}
+    },
     // Per-track loudness correction (Normalize feature) — eased, not stepped.
     normalize: (k) => {
       ensureAudio();
@@ -782,6 +791,14 @@ const Visualizer = (() => {
 // A user gesture is required before an AudioContext can produce sound/data.
 window.addEventListener('pointerdown', () => Visualizer.resumeAudio(), { capture: true });
 
+// The player bar's OWN next button also belongs to the DJ's Booth while it
+// runs — intercepted in capture phase before YTM sees the click.
+window.addEventListener('click', (e) => {
+  const btn = e.target && e.target.closest && e.target.closest('ytmusic-player-bar .next-button');
+  if (!btn) return;
+  if (DJQueue.playNow()) { e.preventDefault(); e.stopPropagation(); }
+}, { capture: true });
+
 // ---------------------------------------------------------------------------
 // Theme application
 // ---------------------------------------------------------------------------
@@ -900,7 +917,8 @@ const BEHAVIORS = {
   'feat-energy-dial':   { on: () => EnergyDial.show(), off: () => EnergyDial.hide() },
   'feat-ai-playlist':   { on: () => AIPlaylist.show(), off: () => AIPlaylist.hide() },
   'feat-tv-mode':       { on: () => TVMode.show(), off: () => TVMode.hide() },
-  'feat-dj-queue':      { on: () => DJQueue.enable(), off: () => DJQueue.disable() }
+  'feat-dj-queue':      { on: () => DJQueue.enable(), off: () => DJQueue.disable() },
+  'feat-night-mode':    { on: () => NightMode.enable(), off: () => NightMode.disable() }
 };
 
 // --- Vinyl Spin: find the actual artwork <img> at runtime (YTM class names are
@@ -1323,14 +1341,59 @@ const FocusMode = (() => {
 const DJQueue = (() => {
   let active = false, pill = null, panel = null, plan = [], picking = false, lastKey = '';
   const played = []; // session history, newest last
+  // Standing instructions from the listener ("keep it mellow", requests from
+  // phones, tonight-arc mode, radio-show themes). Each may carry an expiry.
+  let directives = [];
+  const saveDirectives = () => { try { sessionStorage.setItem('sd-djq-dir', JSON.stringify(directives)); } catch {} };
+  const loadDirectives = () => { try { directives = (JSON.parse(sessionStorage.getItem('sd-djq-dir') || '[]') || []).filter((d) => !d.until || d.until > Date.now()); } catch { directives = []; } };
+  const liveDirectives = () => { directives = directives.filter((d) => !d.until || d.until > Date.now()); return directives; };
+  function direct(text, opts = {}) {
+    if (!text) return;
+    directives.push({ text: String(text).slice(0, 200), until: opts.until || null });
+    if (directives.length > 6) directives.shift();
+    saveDirectives();
+    plan = []; render(); redig(); // the new instruction reshapes the plan now
+  }
+  // A request from the floor (phone remote): jumps the queue, gets a shout-out.
+  function request(query) {
+    if (!active || !query) return;
+    plan.unshift({ title: String(query).slice(0, 120), artist: '', tag: 'request', reason: 'requested from the floor' });
+    plan = plan.slice(0, 6);
+    toast('🎧 Request from the floor: ' + query);
+    AIDJ.speak('We got a request from the floor: ' + query + '. Coming right up.', { pause: false });
+    render();
+  }
+  // Built-in radio shows: themed hours the DJ hosts on his own.
+  const SHOWS = [
+    { day: 4, hour: 19, name: 'Throwback Thursday', dir: 'It is Throwback Thursday: for this hour prefer older classics and the listener\'s longest-loved favorites.' },
+    { day: 5, hour: 18, name: 'Fresh Friday', dir: 'It is Fresh Friday: for this hour lean into discoveries the listener has not heard before.' },
+    { day: 0, hour: 21, name: 'Sunday Wind-down', dir: 'It is the Sunday wind-down: for this hour keep everything gentle and slow.' }
+  ];
+  function checkShows() {
+    if (!active) return;
+    const now = new Date();
+    for (const s2 of SHOWS) {
+      if (now.getDay() !== s2.day || now.getHours() !== s2.hour) continue;
+      const mark = 'sd-show-' + s2.name + '-' + now.toDateString();
+      if (localStorage.getItem(mark)) continue;
+      localStorage.setItem(mark, '1');
+      direct(s2.dir, { until: Date.now() + 3600000 });
+      AIDJ.speak('You are tuned into ' + s2.name + ' on Stardust — I will take it from here for the hour.');
+    }
+  }
+  let showTimer = null;
   function enable() {
     active = true;
+    loadDirectives();
     ensurePill();
+    checkShows();
+    if (!showTimer) showTimer = setInterval(checkShows, 5 * 60000);
     const np = readNowPlaying();
     if (np && np.isTrack) { lastKey = np.title + '|' + np.artist; choose(np); }
   }
   function disable() {
-    active = false; plan = [];
+    active = false; plan = []; directives = [];
+    if (showTimer) { clearInterval(showTimer); showTimer = null; }
     if (pill) { pill.remove(); pill = null; }
     if (panel) { panel.remove(); panel = null; }
     for (const el of document.querySelectorAll('.stardust-djq-hidden')) el.classList.remove('stardust-djq-hidden');
@@ -1382,9 +1445,10 @@ const DJQueue = (() => {
       let picks = [];
       if (await aiOK()) {
         const list = cand.slice(0, 30).map((c, i) => i + '. ' + c.title + ' — ' + c.artist + '  [' + c.tag + ']').join('\n');
+        const dirs = liveDirectives().map((d) => d.text);
         const r = await ipcRenderer.invoke('stardust:ai-chat', {
           messages: [
-            { role: 'system', content: 'You are Stardust\'s radio DJ planning the next FIVE songs, in play order. Think about flow from the current song, the hour, and variety — mostly favorites, an occasional discovery or lost track where it fits. Reply JSON only: {"picks":[{"pick":<candidate number>,"reason":"<spoken line, under 14 words, why this song here>"}, ...5 entries]}. Reasons must not invent facts about the songs.' },
+            { role: 'system', content: 'You are Stardust\'s radio DJ planning the next FIVE songs, in play order. Think about flow from the current song, the hour, and variety — mostly favorites, an occasional discovery or lost track where it fits.' + (dirs.length ? ' THE LISTENER\'S STANDING INSTRUCTIONS — OBEY THEM ABOVE ALL: ' + dirs.join(' | ') : '') + ' Reply JSON only: {"picks":[{"pick":<candidate number>,"reason":"<spoken line, under 14 words, why this song here>"}, ...5 entries]}. Reasons must not invent facts about the songs.' },
             { role: 'user', content: 'Now playing: "' + np.title + '" by ' + np.artist + '. Hour: ' + hr + '. Just played: ' + played.slice(-4).join('; ') + '\n\nCANDIDATES:\n' + list }
           ], maxTokens: 300, json: true
         }).catch(() => null);
@@ -1433,23 +1497,50 @@ const DJQueue = (() => {
   function renderPanel() {
     if (!panel || !panel.isConnected) return;
     while (panel.firstChild) panel.removeChild(panel.firstChild);
-    panel.appendChild(h('div', { class: 'stardust-djq-head', text: "🎧 DJ's Booth — hand-picked up next" }));
-    if (!plan.length) { panel.appendChild(h('div', { class: 'stardust-hint', text: 'Digging through your library…' })); return; }
+    const tonight = h('button', { class: 'stardust-lyr-tool', title: 'Programme the whole evening: build → peak → wind-down', text: '🌙 Tonight' });
+    tonight.addEventListener('click', () => {
+      direct('Programme tonight as a DJ set arc: build the energy over the next hour, peak it, then wind down gradually toward late night. Sequence every plan accordingly.', { until: Date.now() + 5 * 3600000 });
+      toast('🌙 Tonight is programmed — build, peak, wind-down');
+      AIDJ.speak('I have got the night. We will build it up, peak it, and land soft.', { pause: false });
+    });
+    panel.appendChild(h('div', { class: 'stardust-djq-head' }, [
+      h('span', { text: "🎧 DJ's Booth — hand-picked up next  " }), tonight
+    ]));
+    // Standing instructions, dismissible.
+    for (const d of liveDirectives()) {
+      const chip = h('div', { class: 'stardust-djq-dir', title: 'Click to drop this instruction', text: '📌 ' + d.text.slice(0, 70) + (d.text.length > 70 ? '…' : '') });
+      chip.addEventListener('click', () => { directives = directives.filter((x) => x !== d); saveDirectives(); redig(); render(); });
+      panel.appendChild(chip);
+    }
+    if (!plan.length) panel.appendChild(h('div', { class: 'stardust-hint', text: 'Digging through your library…' }));
     plan.forEach((p2, i) => {
-      const row = h('div', { class: 'stardust-djq-row' }, [
+      const row = h('div', { class: 'stardust-djq-row', title: 'Click to play now' }, [
         h('span', { class: 'stardust-djq-n', text: String(i + 1) }),
         h('div', { class: 'stardust-djq-meta' }, [
           h('div', { class: 'stardust-djq-title', text: p2.title + (p2.artist ? ' — ' + p2.artist : '') }),
           p2.reason ? h('div', { class: 'stardust-djq-why', text: p2.reason }) : null
         ]),
-        h('button', { class: 'stardust-lyr-tool', title: 'Play now', text: '▶' }),
         h('button', { class: 'stardust-lyr-tool', title: 'Veto — the DJ digs again', text: '✕' })
       ]);
-      const [playB, vetoB] = row.querySelectorAll('button');
-      playB.addEventListener('click', () => { plan.splice(0, i + 1); fire(p2); });
-      vetoB.addEventListener('click', () => { plan.splice(i, 1); if (plan.length < 3) redig(); render(); });
+      // The whole row plays the song; only the ✕ vetoes.
+      row.addEventListener('click', () => { plan.splice(0, i + 1); fire(p2); });
+      row.querySelector('button').addEventListener('click', (e) => {
+        e.stopPropagation();
+        plan.splice(i, 1); if (plan.length < 3) redig(); render();
+      });
       panel.appendChild(row);
     });
+    // Tell the DJ — standing instructions typed straight into the booth.
+    const inp = h('input', { id: 'stardust-djq-tell', placeholder: 'Tell the DJ — "keep it mellow", "no ballads tonight"…' });
+    inp.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      const text = inp.value.trim();
+      if (!text) return;
+      inp.value = '';
+      direct(text);
+      AIDJ.speak('You got it.', { pause: false });
+    });
+    panel.appendChild(inp);
     panel.appendChild(h('div', { class: 'stardust-hint', text: 'Picked from your plays, lost favorites and fitting discoveries — not YouTube\'s ads-driven queue.' }));
   }
 
@@ -1496,7 +1587,7 @@ const DJQueue = (() => {
     fire(plan.shift());
     return true;
   }
-  return { enable, disable, onPoll, playNow, resumePlan };
+  return { enable, disable, onPoll, playNow, resumePlan, direct, request };
 })();
 
 // --- Normalize: every song at the same perceived volume ----------------------
@@ -1526,6 +1617,23 @@ const Normalize = (() => {
     if (entry && entry.loud > 0.005) { clearInterval(iv); Visualizer.fx.normalize(TARGET / entry.loud); }
   }
   return { enable, disable, onTrack };
+})();
+
+// --- Night mode: softer after dark --------------------------------------------
+const NightMode = (() => {
+  let timer = null, on = false;
+  const isNight = () => { const hr = new Date().getHours(); return hr >= 22 || hr < 7; };
+  function tick() {
+    const want = isNight();
+    if (want !== on) {
+      on = want;
+      Visualizer.fx.night(on);
+      if (on) toast('🌙 Night mode — easing the volume down');
+    }
+  }
+  function enable() { if (!timer) { on = false; tick(); timer = setInterval(tick, 60000); } }
+  function disable() { if (timer) { clearInterval(timer); timer = null; } if (on) { on = false; Visualizer.fx.night(false); } }
+  return { enable, disable };
 })();
 
 // --- Intro skip: get to the song ---------------------------------------------
@@ -1652,9 +1760,14 @@ const AIPlaylist = (() => {
     let songs = [];
     try { songs = JSON.parse((r && r.text) || '').songs || []; } catch {}
     if (!songs.length) { toast('Could not build that — try rephrasing'); return; }
-    queue = songs; at = 0;
-    toast('📝 ' + songs.length + ' songs — starting with ' + songs[0]);
-    VoiceControl.playSearch(songs[0]);
+    run(songs);
+  }
+  // Drive any explicit list of songs as a session (AI-built or imported).
+  function run(songs) {
+    if (!songs || !songs.length) return;
+    queue = songs.slice(0, 40); at = 0;
+    toast('📝 ' + queue.length + ' songs — starting with ' + queue[0]);
+    VoiceControl.playSearch(queue[0]);
     watch();
   }
   // Drive the session: when the current song is nearly done, launch the next.
@@ -1670,8 +1783,42 @@ const AIPlaylist = (() => {
       }
     }, 1000);
   }
-  return { show, hide };
+  return { show, hide, run };
 })();
+
+// 📋 Playlist importer: paste any list of songs (a copied Spotify playlist,
+// a text list) — parsed (LLM when available, line-split otherwise) and played
+// as a session through the same runner AI playlists use.
+function openImporter() {
+  const ta = h('textarea', { id: 'stardust-import-ta', placeholder: 'Paste songs — one per line, or a copied playlist…' });
+  const go = h('button', { class: 'stardust-market-btn primary', text: 'Build the queue' });
+  const modal = h('div', { id: 'stardust-quiz' }, [
+    h('div', { class: 'stardust-label', text: '📋 Import a playlist' }),
+    ta, go,
+    h('button', { class: 'stardust-mini-btn', id: 'imp-close', text: 'Cancel' })
+  ]);
+  modal.querySelector('#imp-close').addEventListener('click', () => modal.remove());
+  go.addEventListener('click', async () => {
+    const text = ta.value.trim();
+    if (!text) return;
+    modal.remove();
+    let songs = [];
+    if (await aiOK()) {
+      const r = await ipcRenderer.invoke('stardust:ai-chat', {
+        messages: [
+          { role: 'system', content: 'Extract the songs from this pasted playlist text as JSON {"songs":["<title> <artist>", ...]}. Keep the original order; skip durations, numbering, album names and junk. JSON only.' },
+          { role: 'user', content: text.slice(0, 6000) }
+        ], maxTokens: 800, json: true
+      }).catch(() => null);
+      try { songs = JSON.parse((r && r.text) || '').songs || []; } catch {}
+    }
+    if (!songs.length) songs = text.split('\n').map((x) => x.replace(/^\s*\d+[.)]?\s*/, '').trim()).filter((x) => x.length > 2);
+    if (!songs.length) { toast('Nothing to import there'); return; }
+    AIPlaylist.run(songs);
+  });
+  document.body.appendChild(modal);
+  ta.focus();
+}
 
 // --- TV mode: the jukebox idle screen ------------------------------------------
 const TVMode = (() => {
@@ -1920,6 +2067,10 @@ const RoomLights = (() => {
       intensity = 0.15 + bass * 0.85;
       colors = bars.map((b, i) => rotate(accent, i * 8).map((c) => Math.round(c * (0.25 + 0.75 * b))));
     }
+    // In a Listen Together room: guests follow the host's frames instead of
+    // their own, so every room pulses to the same beat; hosts broadcast.
+    if (ListenTogether.followingLights()) return;
+    ListenTogether.broadcastLights({ colors, intensity });
     ipcRenderer.send('stardust:lights-frame', { colors, intensity });
   }
   function enable() { if (!timer) timer = setInterval(frame, 100); }
@@ -2347,6 +2498,11 @@ const ListenTogether = (() => {
       toast('🎵 ' + (p.name || 'someone') + ' requests: ' + p.query + ' — say yes?');
       addChat(p.name || 'someone', '🎵 requested "' + p.query + '"');
     }
+    // The host's beat frames drive every listener's real lights in unison.
+    if (event === 'lights' && p && !isHost && settings && settings.lightsHost) {
+      ListenTogether._lightsSeen();
+      ipcRenderer.send('stardust:lights-frame', p);
+    }
   }
   async function applySync(p) {
     const v = q('video');
@@ -2379,7 +2535,18 @@ const ListenTogether = (() => {
     });
   }
   function shareQuizScore(score) { if (room) Realtime.send(topicOf(room), 'quiz', { name: me, score }); }
-  return { show, hide, onPoll, shareQuizScore, resumeRoom };
+  // Synced room lights: the host's beat frames light EVERY listener's room.
+  let lightsSent = 0;
+  function broadcastLights(f) {
+    if (!room || !isHost) return;
+    const now = Date.now();
+    if (now - lightsSent < 200) return; // 5Hz over the wire is plenty
+    lightsSent = now;
+    Realtime.send(topicOf(room), 'lights', f);
+  }
+  let remoteLightsAt = 0;
+  const followingLights = () => !!room && !isHost && Date.now() - remoteLightsAt < 1600;
+  return { show, hide, onPoll, shareQuizScore, resumeRoom, broadcastLights, followingLights, _lightsSeen: () => { remoteLightsAt = Date.now(); } };
 })();
 
 // --- World ticker: what Stardust listeners are playing right now -------------
@@ -2505,19 +2672,22 @@ const AIDJ = (() => {
     }
     return vs.find((v) => (v.lang || '').startsWith('en')) || null;
   }
-  // Speak a line: the music PAUSES while the DJ talks and resumes right after
-  // (a real radio break, not talking over the record). Voice chain: Groq →
-  // Google voice → system voice.
-  async function speak(line) {
+  // Speak a line. Track-start announcements PAUSE the music (a real radio
+  // break); conversation replies just duck it — you asked mid-song, the
+  // song keeps going. Voice chain: Groq → Google voice → system voice.
+  async function speak(line, opts = {}) {
+    const pauseSong = opts.pause !== false;
     stopVoice();
     speaking = true;
     const v0 = q('video');
     const wasPlaying = !!(v0 && !v0.paused);
     const t = await ipcRenderer.invoke('stardust:ai-tts', { text: line }).catch(() => null);
-    if (wasPlaying) { try { q('video').pause(); } catch {} }
+    if (pauseSong && wasPlaying) { try { q('video').pause(); } catch {} }
+    else if (!pauseSong) Visualizer.fx.fade(0.18, 0.4);
     const resume = () => {
       speaking = false;
-      if (wasPlaying) { const vv = q('video'); if (vv && vv.paused) { try { vv.play(); } catch {} } }
+      if (pauseSong && wasPlaying) { const vv = q('video'); if (vv && vv.paused) { try { vv.play(); } catch {} } }
+      else if (!pauseSong) Visualizer.fx.fade(1, 0.6);
     };
     if (t && t.buf) {
       const blob = new Blob([t.buf], { type: t.mime || 'audio/wav' });
@@ -2545,14 +2715,27 @@ const AIDJ = (() => {
     ].filter(Boolean);
     return opts[Math.floor(Math.random() * Math.min(2, opts.length))];
   }
+  const MILESTONES = [25, 50, 100, 250, 500];
   async function onTrack(np) {
     if (!active || busy || speaking || !np || !np.isTrack) return;
+    // Milestone plays get a shout no matter the cadence.
+    const s0 = await ipcRenderer.invoke('stardust:stats').catch(() => null);
+    const tr0 = s0 && s0.topSongs && s0.topSongs.find((t2) => t2.title === np.title && t2.artist === np.artist);
+    if (tr0 && MILESTONES.includes(tr0.count + 1)) {
+      const mk = 'sd-mile-' + np.title + '|' + np.artist + '|' + (tr0.count + 1);
+      if (!localStorage.getItem(mk)) {
+        localStorage.setItem(mk, '1');
+        sinceAnnounce = 0;
+        speak('Big one — this is spin number ' + (tr0.count + 1) + ' of ' + np.title + '. A certified favorite.');
+        return;
+      }
+    }
     if (++sinceAnnounce < 4) return; // an occasional voice, not a chatterbox
     busy = true; sinceAnnounce = 0;
     const forTrack = np.title + '|' + np.artist;
     try {
-      const s = await ipcRenderer.invoke('stardust:stats').catch(() => null);
-      const tr = s && s.topSongs && s.topSongs.find((t2) => t2.title === np.title && t2.artist === np.artist);
+      const s = s0;
+      const tr = tr0;
       const rank = s && s.topArtists ? s.topArtists.findIndex((a) => a.name === np.artist) : -1;
       let line = null;
       if (await aiOK()) {
@@ -2580,7 +2763,7 @@ const AIDJ = (() => {
   // Talk to the DJ (routed here by Voice Control): converse in persona,
   // remember the exchange, answer out loud.
   async function converse(said) {
-    if (!(await aiOK())) { speak('I can chat once the AI is set up. For now, tell me play, pause, or next.'); return; }
+    if (!(await aiOK())) { speak('I can chat once the AI is set up. For now, tell me play, pause, or next.', { pause: false }); return; }
     const np = readNowPlaying();
     convo.push({ role: 'user', content: said });
     while (convo.length > 8) convo.shift();
@@ -2593,7 +2776,7 @@ const AIDJ = (() => {
     const reply = (r && r.text) ? r.text.replace(/^["']|["']$/g, '') : 'Say that again? The booth got loud.';
     convo.push({ role: 'assistant', content: reply });
     toast('📻 ' + reply);
-    await speak(reply);
+    await speak(reply, { pause: false }); // answering a question — duck, don't stop the record
   }
   // The DJ's Booth speaks its own pick line — skip the next regular intro.
   function suppressOnce() { sinceAnnounce = 0; }
@@ -2652,13 +2835,18 @@ const VoiceControl = (() => {
     // One LLM decision: is this a request to PLAY something, or talk to the DJ?
     const r = await ipcRenderer.invoke('stardust:ai-chat', {
       messages: [
-        { role: 'system', content: 'The user spoke to a music app. Reply as JSON only. If they want music played/queued/searched: {"action":"search","query":"<strong YouTube Music search terms>"}. Anything else (questions, chat, opinions): {"action":"chat"}.' },
+        { role: 'system', content: 'The user spoke to a music app with a DJ. Reply as JSON only. A specific song/artist/mood to play NOW: {"action":"search","query":"<strong YouTube Music search terms>"}. A standing instruction about what to play GOING FORWARD ("keep it mellow", "no more ballads", "more like this"): {"action":"direct","instruction":"<the instruction, cleanly restated>"}. Anything else (questions, chat, opinions): {"action":"chat"}.' },
         { role: 'user', content: said }
-      ], maxTokens: 80, json: true
+      ], maxTokens: 90, json: true
     }).catch(() => null);
     let intent = null;
     try { intent = JSON.parse((r && r.text) || ''); } catch {}
     if (intent && intent.action === 'chat') { AIDJ.converse(said); return; }
+    if (intent && intent.action === 'direct') {
+      DJQueue.direct(intent.instruction || said);
+      AIDJ.speak('You got it. Reshaping the queue.', { pause: false });
+      return;
+    }
     const query = (intent && intent.query) || said.replace(/^(play|put on|queue)\s+/i, '');
     playSearch(query);
   }
@@ -2984,6 +3172,7 @@ const Lyrics = (() => {
     mineBtn = h('button', { class: 'stardust-lyr-tool', title: 'Use MY transcription instead — lyric databases sometimes carry the wrong words. Sticky for this song; 🔎 switches back.', text: '🎙★' });
     const clip = h('button', { class: 'stardust-lyr-tool', title: 'Export a 15s lyric clip — the words lighting up over the album art, with audio (.webm)', text: '🎬' });
     const poster = h('button', { class: 'stardust-lyr-tool', title: 'Export a lyric poster — the whole song as a print-quality PNG in the album\'s palette', text: '🖼' });
+    const lsearch = h('button', { class: 'stardust-lyr-tool', title: 'Find the song by the words — search every lyric you\'ve played', text: '🔍' });
     srcEl = h('span', { class: 'stardust-lyr-src', text: '' });
     minus.addEventListener('click', () => nudge(-0.5));
     plus.addEventListener('click', () => nudge(0.5));
@@ -2995,7 +3184,8 @@ const Lyrics = (() => {
     mineBtn.addEventListener('click', useMyTranscript);
     clip.addEventListener('click', () => exportClip(clip));
     poster.addEventListener('click', exportPoster);
-    barEl = h('div', { class: 'stardust-lyr-tools' }, [minus, offEl, plus, copy, re, again, alignBtn, mineBtn, clip, poster, srcEl]);
+    lsearch.addEventListener('click', openLyricSearch);
+    barEl = h('div', { class: 'stardust-lyr-tools' }, [minus, offEl, plus, copy, re, again, alignBtn, mineBtn, clip, poster, lsearch, srcEl]);
     return barEl;
   }
   const SRC_LABEL = { musixmatch: 'Musixmatch', lrclib: 'LRCLIB', netease: 'NetEase', kugou: 'KuGou', genius: 'Genius', transcript: 'transcribed', community: 'community', aligned: 'word-synced ⚡' };
@@ -3486,6 +3676,8 @@ const Lyrics = (() => {
       kept.push(l);
     }
     synced = kept.filter((l, i) => !isBloatLine(l.s, i, titleN, scraped));
+    // Feed the local "find the song by the words" index (fire-and-forget).
+    try { ipcRenderer.send('stardust:lyric-index', { title: np && np.title, artist: np && np.artist, text: synced.map((l) => l.s).filter(Boolean).join('\n') }); } catch {}
     for (const l of synced) {
       const s2 = stripTag(l.s);
       // The words spans are what actually render — rebuild them if a tag came
@@ -4386,6 +4578,9 @@ function doCommand(action) {
       }
       break;
     case 'next':
+      // With the DJ's Booth running, "next" means HIS next pick — every skip
+      // path (hotkeys, voice, remote, mini player) lands on the plan.
+      if (DJQueue.playNow()) break;
       click('ytmusic-player-bar .next-button');
       break;
     case 'previous':
@@ -4456,6 +4651,14 @@ function randomLibrary() {
   if (play) { play.click(); toast('🎲 Playing something random'); }
   else toast('Could not start a random item');
 }
+
+// Requests from phones on the remote page → the DJ's Booth (or straight to
+// playback when the booth is off).
+ipcRenderer.on('stardust:remote-request', (_e, { query } = {}) => {
+  if (!query) return;
+  if ((settings.enabledFeatures || []).includes('feat-dj-queue')) DJQueue.request(query);
+  else { toast('📱 Request: ' + query); VoiceControl.playSearch(query); }
+});
 
 ipcRenderer.on('stardust:command', (_e, { action }) => {
   // Parameterized commands from the phone remote: "seek:<0..1 fraction>".
@@ -4647,7 +4850,8 @@ function buildUI() {
       label('Smart'),
       h('button', { class: 'stardust-market-cta', dataset: { act: 'open-stats' }, text: '✦  Listening Stats' }),
       h('div', { class: 'stardust-row' }, [
-        miniBtn('toggle-lyrics', 'Lyrics: off')
+        miniBtn('toggle-lyrics', 'Lyrics: off'),
+        miniBtn('import-playlist', '📋 Import playlist')
       ]),
       h('div', { class: 'stardust-row' }, [
         h('select', { id: 'stardust-dj-voice', class: 'stardust-text-input' }, [
@@ -4763,6 +4967,7 @@ function wirePanel(panel) {
       }
       if (act === 'open-market') openMarket();
       if (act === 'open-stats') openStats();
+      if (act === 'import-playlist') { panel.classList.remove('open'); openImporter(); }
       if (act === 'discord-portal') ipcRenderer.invoke('stardust:open-external', 'https://discord.com/developers/applications');
       if (act === 'toggle-lyrics') {
         const on = (settings.enabledFeatures || []).includes('feat-lyrics');
@@ -4873,7 +5078,8 @@ function renderStats(s) {
     stat(fmtDur(s.totalMs), 'Total listened'),
     stat(fmtDur(s.todayMs), 'Today'),
     stat(String(s.distinctSongs), 'Songs'),
-    stat(String(s.distinctArtists), 'Artists')
+    stat(String(s.distinctArtists), 'Artists'),
+    stat((s.streak || 0) + ' 🔥', 'Day streak')
   ]));
   const list = (title, items, line) => {
     const rows = items.length ? items.map((it, i) => h('div', { class: 'stardust-stat-row' }, [
@@ -4954,6 +5160,37 @@ function renderStats(s) {
     body.appendChild(h('div', { class: 'stardust-ask-row' }, [input, ask]));
     body.appendChild(out);
   }
+}
+
+// 🔍 Find the song by the words — searches every lyric you've ever seen.
+function openLyricSearch() {
+  const input = h('input', { id: 'stardust-quiz-input', placeholder: 'Type the words you remember — "silver lining in the clouds"…' });
+  const out = h('div', { id: 'stardust-lsearch-out' });
+  const modal = h('div', { id: 'stardust-quiz' }, [
+    h('div', { class: 'stardust-label', text: '🔍 Find the song by the words' }),
+    input, out,
+    h('button', { class: 'stardust-mini-btn', id: 'ls-close', text: 'Close' })
+  ]);
+  modal.querySelector('#ls-close').addEventListener('click', () => modal.remove());
+  let t2 = null;
+  input.addEventListener('input', () => {
+    clearTimeout(t2);
+    t2 = setTimeout(async () => {
+      const rows = await ipcRenderer.invoke('stardust:lyric-search', { q: input.value }).catch(() => []);
+      while (out.firstChild) out.removeChild(out.firstChild);
+      if (!rows.length) { out.appendChild(h('div', { class: 'stardust-hint', text: input.value.trim().length >= 3 ? 'Nothing in your listened lyrics yet' : 'Searches lyrics of every song you\'ve played' })); return; }
+      for (const r of rows) {
+        const row = h('div', { class: 'stardust-live-row', title: 'Play it' }, [
+          h('span', { class: 'stardust-live-song', text: r.title + (r.artist ? ' — ' + r.artist : '') }),
+          h('span', { class: 'stardust-live-when', text: r.snippet.slice(0, 44) })
+        ]);
+        row.addEventListener('click', () => { modal.remove(); VoiceControl.playSearch(r.title + ' ' + (r.artist || '')); });
+        out.appendChild(row);
+      }
+    }, 250);
+  });
+  document.body.appendChild(modal);
+  input.focus();
 }
 
 // ✨ Stardust Wrapped — a little cinematic recap of the listening stats, with
@@ -5348,6 +5585,19 @@ async function boot() {
     sessionStorage.removeItem('sd-dj-say');
     if (say && say.line && Date.now() - say.at < 25000) setTimeout(() => AIDJ.speak(say.line), 3000);
   } catch {}
+
+  // Monthly rewind: first week of a new month, one gentle pointer.
+  setTimeout(async () => {
+    try {
+      const mk = new Date().toISOString().slice(0, 7);
+      if (localStorage.getItem('sd-rewind-done') === mk || new Date().getDate() > 7) return;
+      const s = await ipcRenderer.invoke('stardust:stats');
+      if (s && s.totalMs > 3600000) {
+        localStorage.setItem('sd-rewind-done', mk);
+        toast('🗓 New month — your rewind is ready in Stats → ✨ Wrapped');
+      }
+    } catch {}
+  }, 15000);
 }
 
 function safeBoot() {

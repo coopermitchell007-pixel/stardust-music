@@ -911,6 +911,20 @@ input[type="color"]#stardust-accent {
 .stardust-djq-title { font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.92); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stardust-djq-why { font-size: 11px; color: color-mix(in srgb, var(--stardust-accent) 80%, #fff); font-style: italic; margin-top: 2px; }
 
+.stardust-djq-dir {
+  font-size: 11px; color: color-mix(in srgb, var(--stardust-accent) 85%, #fff);
+  padding: 5px 10px; border-radius: 999px; cursor: pointer; margin: 0 8px;
+  background: color-mix(in srgb, var(--stardust-accent) 12%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--stardust-accent) 40%, transparent);
+}
+.stardust-djq-dir:hover { opacity: 0.7; }
+#stardust-djq-tell {
+  margin: 6px 8px; padding: 8px 12px; border-radius: 10px; font-size: 12px;
+  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.14); color: #fff;
+}
+#stardust-djq-tell:focus { outline: none; border-color: var(--stardust-accent); }
+#stardust-lsearch-out { display: flex; flex-direction: column; gap: 2px; max-height: 40vh; overflow-y: auto; }
+
 /* ---- DJ's Booth up-next pill ---- */
 #stardust-djq {
   position: fixed; left: 18px; bottom: 134px; z-index: 2147483639;
@@ -1063,7 +1077,13 @@ body.stardust-playing img.stardust-vinyl { animation-play-state: running !import
 .stardust-lyr-tools {
   display: flex; align-items: center; gap: 6px;
   margin-bottom: 12px; position: sticky; top: 0; z-index: 2;
+  /* The toolbar outgrew the tab — it scrolls sideways instead of wrapping. */
+  overflow-x: auto; flex-wrap: nowrap; white-space: nowrap;
+  scrollbar-width: thin; padding-bottom: 4px;
 }
+.stardust-lyr-tools::-webkit-scrollbar { height: 4px; }
+.stardust-lyr-tools::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--stardust-accent) 40%, transparent); border-radius: 2px; }
+.stardust-lyr-tools > * { flex: none; }
 .stardust-lyr-tool {
   border: 1px solid rgba(255,255,255,0.14); background: rgba(12,13,28,0.72);
   color: #cfcae6; border-radius: 999px; padding: 4px 11px;

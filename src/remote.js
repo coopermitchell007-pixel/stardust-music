@@ -7,7 +7,7 @@
 const http = require('http');
 const os = require('os');
 
-let server = null, token = '', state = {}, onCmd = null;
+let server = null, token = '', state = {}, onCmd = null, onReq = null;
 
 function lanIP() {
   for (const ifs of Object.values(os.networkInterfaces())) {
@@ -50,9 +50,15 @@ button.on{border-color:var(--ac,#8b5cff);box-shadow:0 0 12px var(--ac,#8b5cff)}
 <button onclick="cmd('like')" title="Like">♥</button>
 <button id=hap onclick="haptics=!haptics;hap.classList.toggle('on',haptics)" title="Vibrate on the beat">〰</button>
 </div>
+<div class=row style="width:min(420px,88vw)">
+<input id=reqi placeholder="Request a song…" style="flex:1;padding:12px 14px;border-radius:12px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.08);color:#fff;font-size:14px">
+<button onclick="sendReq()" style="width:auto;border-radius:12px;padding:0 18px;font-size:15px">Send</button>
+</div>
 <script>
 const T='${tok}';let haptics=false,lastBeat=0,dur=0;
 function cmd(a){fetch('/'+T+'/cmd',{method:'POST',body:a})}
+function sendReq(){const v=reqi.value.trim();if(!v)return;reqi.value='';fetch('/'+T+'/req',{method:'POST',body:v.slice(0,120)});reqi.placeholder='Sent to the DJ ✓'}
+
 const fmt=s=>{s=Math.max(0,Math.floor(s||0));return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')}
 bar.addEventListener('click',e=>{const r=bar.getBoundingClientRect();cmd('seek:'+((e.clientX-r.left)/r.width).toFixed(4))});
 async function tick(){try{
@@ -70,9 +76,10 @@ if(haptics&&s.beat&&Date.now()-lastBeat>250&&navigator.vibrate){lastBeat=Date.no
 setInterval(tick,700);tick();
 </script>`;
 
-function start(handler) {
+function start(handler, reqHandler) {
   if (server) return url();
   onCmd = handler;
+  onReq = reqHandler || null;
   token = Math.random().toString(36).slice(2, 8);
   server = http.createServer((req, res) => {
     const parts = (req.url || '').split('/').filter(Boolean);
@@ -82,6 +89,16 @@ function start(handler) {
       req.on('data', (c) => (body += c));
       req.on('end', () => {
         if (/^[a-z-]{2,20}(:[\d.]{1,10})?$/.test(body) && onCmd) onCmd(body);
+        res.writeHead(204); res.end();
+      });
+      return;
+    }
+    if (req.method === 'POST' && parts[1] === 'req') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        const t = String(body).slice(0, 120).replace(/[<>]/g, '');
+        if (t.trim() && onReq) onReq(t.trim());
         res.writeHead(204); res.end();
       });
       return;

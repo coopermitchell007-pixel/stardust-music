@@ -348,6 +348,39 @@ function registerIpc() {
     } catch (err) { return { error: 'download' }; }
   });
   ipcMain.handle('stardust:community-info', () => community.info());
+  // Lyric index: every lyric the user has SEEN becomes searchable by words —
+  // "which song says …". Plain lowercase text, capped, local only.
+  const LYRIC_INDEX = path.join(app.getPath('userData'), 'lyric-index.json');
+  let lyricIdx = null, lyricIdxTimer = null;
+  const loadLyricIdx = () => {
+    if (!lyricIdx) { try { lyricIdx = JSON.parse(fs.readFileSync(LYRIC_INDEX, 'utf8')); } catch { lyricIdx = {}; } }
+    return lyricIdx;
+  };
+  ipcMain.on('stardust:lyric-index', (_e, { title, artist, text } = {}) => {
+    if (!title || !text) return;
+    const idx = loadLyricIdx();
+    idx[title + '|' + (artist || '')] = String(text).toLowerCase().slice(0, 12000);
+    const keys = Object.keys(idx);
+    while (keys.length > 800) delete idx[keys.shift()];
+    clearTimeout(lyricIdxTimer);
+    lyricIdxTimer = setTimeout(() => { try { fs.writeFileSync(LYRIC_INDEX, JSON.stringify(idx)); } catch {} }, 3000);
+  });
+  ipcMain.handle('stardust:lyric-search', (_e, { q } = {}) => {
+    const needle = String(q || '').toLowerCase().trim();
+    if (needle.length < 3) return [];
+    const out = [];
+    for (const [k, text] of Object.entries(loadLyricIdx())) {
+      const at = text.indexOf(needle);
+      if (at < 0) continue;
+      const cut = k.indexOf('|');
+      out.push({
+        title: k.slice(0, cut), artist: k.slice(cut + 1),
+        snippet: ('…' + text.slice(Math.max(0, at - 28), at + needle.length + 28).replace(/\n/g, ' ') + '…')
+      });
+      if (out.length >= 12) break;
+    }
+    return out;
+  });
   // Room lighting: fire-and-forget colour frames from the renderer's beat
   // detector; the config lives in settings (panel → Lights).
   const lightsCfg = () => ({
@@ -358,7 +391,14 @@ function registerIpc() {
   ipcMain.on('stardust:lights-frame', (_e, f) => { try { lights.frame(lightsCfg(), f); } catch {} });
   ipcMain.handle('stardust:lights-test', async () => { try { return await lights.test(lightsCfg()); } catch { return false; } });
   // Phone remote: LAN server; commands come back through sendCommand.
-  ipcMain.handle('stardust:remote-start', () => { try { return remote.start((a) => sendCommand(a)); } catch { return null; } });
+  ipcMain.handle('stardust:remote-start', () => {
+    try {
+      return remote.start(
+        (a) => sendCommand(a),
+        (q2) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('stardust:remote-request', { query: q2 }); }
+      );
+    } catch { return null; }
+  });
   ipcMain.handle('stardust:remote-stop', () => { remote.stop(); return true; });
   ipcMain.on('stardust:remote-state', (_e, s) => remote.setState(s));
   // YTM's own "up next" suggestions for the current track — the discovery
