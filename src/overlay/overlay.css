@@ -793,6 +793,41 @@ input[type="color"]#stardust-accent {
   font-size: 11px; padding: 4px 10px;
 }
 
+/* ---- Rhythm game ---- */
+#stardust-rg-btn { position: fixed; right: 18px; bottom: 356px; z-index: 2147483640; }
+#stardust-rg {
+  position: fixed; left: 50%; top: 6%; transform: translateX(-50%);
+  z-index: 2147483644; padding: 14px; display: flex; flex-direction: column; align-items: center; gap: 8px;
+  background: color-mix(in srgb, var(--stardust-accent) 7%, rgba(8,8,16,0.85));
+  border: 1px solid color-mix(in srgb, var(--stardust-accent) 30%, rgba(255,255,255,0.08));
+  border-radius: 16px; backdrop-filter: blur(14px);
+}
+#stardust-rg-hud { font-size: 13px; font-weight: 700; color: #fff; letter-spacing: 0.3px; }
+#stardust-rg .stardust-x { position: absolute; top: 8px; right: 8px; }
+
+/* ---- Karaoke Night ---- */
+#stardust-kn-btn { position: fixed; right: 18px; bottom: 408px; z-index: 2147483640; }
+#stardust-kn {
+  position: fixed; inset: 0; z-index: 2147483644;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 26px;
+  background: var(--stardust-bg); /* the theme shows through — never opaque art */
+  padding: 6vh 6vw;
+}
+#stardust-kn-prev, #stardust-kn-next {
+  font-size: clamp(16px, 2.4vw, 26px); color: rgba(255,255,255,0.35); text-align: center;
+}
+#stardust-kn-line {
+  font-size: clamp(28px, 4.6vw, 54px); font-weight: 800; text-align: center;
+  color: rgba(255,255,255,0.92); line-height: 1.35; max-width: 90vw;
+}
+#stardust-kn-line .kn-w { transition: color 0.12s, text-shadow 0.12s; }
+#stardust-kn-line .kn-w.sung {
+  color: var(--stardust-accent);
+  text-shadow: 0 0 26px color-mix(in srgb, var(--stardust-accent) 70%, transparent);
+}
+#stardust-kn-score { font-size: 15px; font-weight: 700; color: var(--stardust-accent); min-height: 20px; }
+#stardust-kn-controls { position: absolute; bottom: 5vh; display: flex; gap: 10px; }
+
 /* ---- Listen Together ---- */
 #stardust-lt-btn { position: fixed; right: 18px; bottom: 252px; z-index: 2147483640; }
 #stardust-lt-btn.active { border-color: var(--stardust-accent); box-shadow: 0 0 12px color-mix(in srgb, var(--stardust-accent) 45%, transparent); }

@@ -757,5 +757,49 @@
       "party"
     ],
     "preview": "linear-gradient(135deg, #3a2a14, #0a0e1a)"
+  },
+  {
+    "id": "feat-room-lights",
+    "type": "feature",
+    "name": "Room Lights",
+    "author": "Stardust",
+    "description": "Your real lights pulse with the beat in the track's colour \u2014 WLED, Govee (LAN), Philips Hue and Nanoleaf. Set the device IP in the panel \u2192 Lights.",
+    "tags": [
+      "lights",
+      "hue",
+      "govee",
+      "wled",
+      "nanoleaf",
+      "party"
+    ],
+    "preview": "linear-gradient(135deg, #3a1440, #16062a, #0a0e1a)"
+  },
+  {
+    "id": "feat-rhythm-game",
+    "type": "feature",
+    "name": "Rhythm Game",
+    "author": "Stardust",
+    "description": "\ud83c\udfae turns any word-synced song into a tap game \u2014 notes fall on the vocals, SPACE to hit, combos multiply, high scores stick per song.",
+    "tags": [
+      "game",
+      "rhythm",
+      "tap",
+      "party"
+    ],
+    "preview": "linear-gradient(135deg, #14203a, #2a0a2e)"
+  },
+  {
+    "id": "feat-karaoke-night",
+    "type": "feature",
+    "name": "Karaoke Night",
+    "author": "Stardust",
+    "description": "\ud83c\udfa4\u2728 fullscreen sing-along: vocals cancelled, giant word-fill lyrics over your theme, and the mic can grade how on-the-words you are.",
+    "tags": [
+      "karaoke",
+      "party",
+      "sing",
+      "mic"
+    ],
+    "preview": "radial-gradient(circle at 50% 20%, #ffd23f22, transparent 50%), linear-gradient(135deg, #2e1436, #0a0e1a)"
   }
 ]

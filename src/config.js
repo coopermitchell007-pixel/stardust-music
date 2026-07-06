@@ -39,7 +39,15 @@ const DEFAULTS = {
   // Share successful transcriptions with the Stardust community store
   // (Supabase) so nobody has to transcribe the same song twice. Transcripts
   // stay out of public lyric databases — they can mishear words.
-  shareTranscripts: true
+  shareTranscripts: true,
+  // Room lighting sync (Room Lights marketplace feature): which ecosystem,
+  // the device/bridge IP on the LAN, and a token where one is needed (Hue
+  // bridge username / Nanoleaf auth token — WLED and Govee need none, but
+  // Govee needs "LAN control" switched on in its app).
+  lightsProtocol: 'wled',   // 'wled' | 'govee' | 'hue' | 'nanoleaf'
+  lightsHost: '',
+  lightsToken: '',
+  lightsCount: 120          // WLED LED count
 };
 
 let cache = null;

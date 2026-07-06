@@ -880,7 +880,10 @@ const BEHAVIORS = {
   'feat-voice-control': { on: () => VoiceControl.show(), off: () => VoiceControl.hide() },
   'feat-listen-together': { on: () => ListenTogether.show(), off: () => ListenTogether.hide() },
   'feat-world-ticker':  { on: () => WorldTicker.enable(), off: () => WorldTicker.disable() },
-  'feat-lyric-quiz':    { on: () => QuizBtn.show(), off: () => QuizBtn.hide() }
+  'feat-lyric-quiz':    { on: () => QuizBtn.show(), off: () => QuizBtn.hide() },
+  'feat-room-lights':   { on: () => RoomLights.enable(), off: () => RoomLights.disable() },
+  'feat-rhythm-game':   { on: () => RhythmGame.show(), off: () => RhythmGame.hide() },
+  'feat-karaoke-night': { on: () => KaraokeNight.show(), off: () => KaraokeNight.hide() }
 };
 
 // --- Vinyl Spin: find the actual artwork <img> at runtime (YTM class names are
@@ -1327,6 +1330,231 @@ const PracticeMode = (() => {
     if (a != null && b != null && (v.currentTime > b || v.currentTime < a - 0.5)) v.currentTime = a;
   }
   return { show, hide, onTrack };
+})();
+
+// --- Room lights: beat energy + track colour → real lights on the LAN -------
+// Samples the visualizer's low end ~10x/s and streams colour frames to the
+// main process, which speaks WLED / Govee / Hue / Nanoleaf (panel → Lights).
+const RoomLights = (() => {
+  let timer = null;
+  const hexRgb = (hex) => {
+    const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+    if (!m) return { r: 139, g: 92, b: 255 };
+    const v = parseInt(m[1], 16);
+    return { r: v >> 16, g: (v >> 8) & 255, b: v & 255 };
+  };
+  function enable() {
+    if (timer) return;
+    timer = setInterval(() => {
+      if (!(settings && settings.lightsHost)) return;
+      const bars = Visualizer.getBars(12);
+      // The bottom bars carry the kick/bass — that's the pulse.
+      const bass = (bars[0] + bars[1] + bars[2]) / 3;
+      const c = hexRgb(reactiveAccent || (settings && settings.accentOverride) || (activeTheme && activeTheme.accent) || '#8b5cff');
+      ipcRenderer.send('stardust:lights-frame', { r: c.r, g: c.g, b: c.b, intensity: 0.15 + bass * 0.85 });
+    }, 100);
+  }
+  function disable() { if (timer) { clearInterval(timer); timer = null; } }
+  return { enable, disable };
+})();
+
+// --- Rhythm game: your library as a tap game ---------------------------------
+// Word-timed lyrics ARE a note map: every word onset falls down the lane;
+// hit SPACE (or click) as it crosses the line. Local high score per song.
+const RhythmGame = (() => {
+  let btn = null, wrap = null, cv = null, cx = null, raf = null;
+  let notes = [], score = 0, combo = 0, best = 0, hits = 0, misses = 0, songKey = '';
+  const LEAD = 2.2, HIT = 0.16, GOOD = 0.32;
+  function show() {
+    if (btn) return;
+    btn = h('button', { id: 'stardust-rg-btn', class: 'stardust-qa', title: 'Rhythm game — tap the words as they land', text: '🎮' });
+    btn.addEventListener('click', open);
+    document.body.appendChild(btn);
+  }
+  function hide() { close(); if (btn) { btn.remove(); btn = null; } }
+  function open() {
+    const st = Lyrics.state();
+    if (!st.hasWords) { toast('Needs word-synced lyrics (⚡) — play a synced song'); return; }
+    songKey = (st.np ? st.np.title + '|' + st.np.artist : 'song');
+    notes = [];
+    for (const l of st.synced) for (const w of (l.words || [])) if (w.time != null) notes.push({ t: w.time, state: 0 });
+    notes.sort((a, b) => a.t - b.t);
+    if (notes.length < 20) { toast('Not enough word timing on this song'); return; }
+    score = 0; combo = 0; hits = 0; misses = 0;
+    best = parseInt(localStorage.getItem('sd-rg-' + songKey) || '0', 10) || 0;
+    wrap = h('div', { id: 'stardust-rg' }, [
+      h('div', { id: 'stardust-rg-hud' }),
+      h('button', { class: 'stardust-x', id: 'stardust-rg-x', text: '✕' })
+    ]);
+    cv = h('canvas');
+    wrap.insertBefore(cv, wrap.firstChild);
+    document.body.appendChild(wrap);
+    cv.width = 360; cv.height = Math.round(window.innerHeight * 0.72);
+    cx = cv.getContext('2d');
+    wrap.querySelector('#stardust-rg-x').addEventListener('click', close);
+    window.addEventListener('keydown', onKey, true);
+    cv.addEventListener('pointerdown', tap);
+    loop();
+  }
+  function close() {
+    if (raf) { cancelAnimationFrame(raf); raf = null; }
+    window.removeEventListener('keydown', onKey, true);
+    if (wrap) { wrap.remove(); wrap = null; cv = null; cx = null; }
+    if (score > best && songKey) { localStorage.setItem('sd-rg-' + songKey, String(score)); toast('🎮 New high score: ' + score); }
+  }
+  function onKey(e) { if (e.code === 'Space') { e.preventDefault(); e.stopPropagation(); tap(); } if (e.key === 'Escape') close(); }
+  function tap() {
+    const v = q('video'); if (!v) return;
+    const t = v.currentTime || 0;
+    let bestN = null, bestD = 1e9;
+    for (const n of notes) {
+      if (n.state) continue;
+      const d = Math.abs(n.t - t);
+      if (d < bestD) { bestD = d; bestN = n; }
+      if (n.t > t + 1) break;
+    }
+    if (bestN && bestD <= GOOD) {
+      bestN.state = bestD <= HIT ? 2 : 1;
+      combo++; hits++;
+      score += (bestD <= HIT ? 100 : 50) * Math.min(10, 1 + Math.floor(combo / 10));
+    } else { combo = 0; misses++; }
+  }
+  function loop() {
+    raf = requestAnimationFrame(loop);
+    const v = q('video'); if (!v || !cx) return;
+    const t = v.currentTime || 0;
+    const W = cv.width, H = cv.height, hitY = H - 70;
+    cx.clearRect(0, 0, W, H);
+    const accent = reactiveAccent || (settings && settings.accentOverride) || '#8b5cff';
+    // lane + hit line
+    cx.fillStyle = 'rgba(255,255,255,0.05)'; cx.fillRect(W / 2 - 60, 0, 120, H);
+    cx.strokeStyle = accent; cx.lineWidth = 3;
+    cx.beginPath(); cx.moveTo(W / 2 - 80, hitY); cx.lineTo(W / 2 + 80, hitY); cx.stroke();
+    for (const n of notes) {
+      const dt = n.t - t;
+      if (dt < -0.6 || dt > LEAD) { if (dt < -GOOD && !n.state && n.missed !== true) { n.missed = true; combo = 0; misses++; } continue; }
+      const y = hitY - (dt / LEAD) * (hitY - 20);
+      cx.beginPath();
+      cx.arc(W / 2, y, 14, 0, Math.PI * 2);
+      cx.fillStyle = n.state === 2 ? '#4ade80' : n.state === 1 ? '#facc15' : accent;
+      cx.globalAlpha = n.state ? 0.35 : 0.95;
+      cx.fill();
+      cx.globalAlpha = 1;
+    }
+    const hud = wrap && wrap.querySelector('#stardust-rg-hud');
+    if (hud) hud.textContent = score + ' pts · ' + combo + '× combo · best ' + Math.max(best, score);
+  }
+  return { show, hide };
+})();
+
+// --- Karaoke Night: fullscreen sing-along over the theme ---------------------
+// Big word-fill lyrics, the vocal-cancel filter on, and (optionally) the mic
+// grading your timing — onsets near word times count as on-beat singing.
+const KaraokeNight = (() => {
+  let btn = null, wrap = null, timer = null, micCtx = null, micAn = null, micStream = null;
+  let micPrev = null, micAvg = 0, sungHits = 0, sungChances = 0, lastLineEl = null, lastIdx = -1;
+  function show() {
+    if (btn) return;
+    btn = h('button', { id: 'stardust-kn-btn', class: 'stardust-qa', title: 'Karaoke Night — fullscreen sing-along, vocals cancelled', text: '🎤✨' });
+    btn.addEventListener('click', open);
+    document.body.appendChild(btn);
+  }
+  function hide() { close(); if (btn) { btn.remove(); btn = null; } }
+  function open() {
+    const st = Lyrics.state();
+    if (!st.synced || !st.synced.length) { toast('Needs synced lyrics — open the Lyrics tab first'); return; }
+    Visualizer.fx.karaoke(true);
+    sungHits = 0; sungChances = 0; lastIdx = -1;
+    wrap = h('div', { id: 'stardust-kn' }, [
+      h('div', { id: 'stardust-kn-score' }),
+      h('div', { id: 'stardust-kn-prev' }),
+      h('div', { id: 'stardust-kn-line' }),
+      h('div', { id: 'stardust-kn-next' }),
+      h('div', { class: 'stardust-row', id: 'stardust-kn-controls' }, [
+        h('button', { class: 'stardust-mini-btn', id: 'stardust-kn-mic', text: '🎙 Score my singing' }),
+        h('button', { class: 'stardust-mini-btn', id: 'stardust-kn-close', text: 'Exit' })
+      ])
+    ]);
+    document.body.appendChild(wrap);
+    wrap.querySelector('#stardust-kn-close').addEventListener('click', close);
+    wrap.querySelector('#stardust-kn-mic').addEventListener('click', micToggle);
+    timer = setInterval(paint, 66);
+  }
+  function close() {
+    if (timer) { clearInterval(timer); timer = null; }
+    micStop();
+    Visualizer.fx.karaoke(false);
+    if (wrap) { wrap.remove(); wrap = null; }
+  }
+  async function micToggle() { micStream ? micStop() : micStart(); }
+  async function micStart() {
+    try { micStream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+    catch { toast('Microphone access denied'); return; }
+    micCtx = new (window.AudioContext || window.webkitAudioContext)();
+    micAn = micCtx.createAnalyser(); micAn.fftSize = 512;
+    micCtx.createMediaStreamSource(micStream).connect(micAn);
+    micPrev = new Float32Array(micAn.frequencyBinCount);
+    if (wrap) wrap.querySelector('#stardust-kn-mic').textContent = '🎙 Scoring… (tap to stop)';
+  }
+  function micStop() {
+    try { micStream && micStream.getTracks().forEach((t) => t.stop()); } catch {}
+    try { micCtx && micCtx.close(); } catch {}
+    micStream = null; micCtx = null; micAn = null;
+    if (wrap) wrap.querySelector('#stardust-kn-mic').textContent = '🎙 Score my singing';
+  }
+  // Spectral-flux onset on the mic (same trick as the song-side detector).
+  function micOnset() {
+    if (!micAn) return false;
+    const f = new Uint8Array(micAn.frequencyBinCount);
+    micAn.getByteFrequencyData(f);
+    let flux = 0;
+    for (let i = 2; i < f.length; i++) { const d = f[i] - micPrev[i]; if (d > 0) flux += d; micPrev[i] = f[i]; }
+    flux /= f.length * 255;
+    micAvg += (flux - micAvg) * 0.15;
+    return flux > micAvg * 1.6 && flux > 0.02;
+  }
+  function paint() {
+    const st = Lyrics.state();
+    const v = q('video');
+    if (!wrap || !v || !st.synced.length) return;
+    const t = (v.currentTime || 0) + 0.12;
+    let idx = -1;
+    for (let i = 0; i < st.synced.length; i++) { if (st.synced[i].t <= t) idx = i; else break; }
+    const put2 = (id, text) => { const el = wrap.querySelector(id); if (el.textContent !== text) el.textContent = text; };
+    put2('#stardust-kn-prev', idx > 0 ? (st.synced[idx - 1].s || '') : '');
+    put2('#stardust-kn-next', st.synced[idx + 1] ? (st.synced[idx + 1].s || '') : '');
+    const lineEl = wrap.querySelector('#stardust-kn-line');
+    const line = idx >= 0 ? st.synced[idx] : null;
+    if (idx !== lastIdx) {
+      lastIdx = idx;
+      while (lineEl.firstChild) lineEl.removeChild(lineEl.firstChild);
+      if (line) for (const w of (line.words && line.words.length ? line.words : [{ text: line.s || '♪' }])) {
+        lineEl.appendChild(h('span', { class: 'kn-w', text: w.text + ' ' }));
+      }
+    }
+    if (line && line.words && line.words.length) {
+      const spans = lineEl.children;
+      for (let i = 0; i < line.words.length && i < spans.length; i++) {
+        const w = line.words[i];
+        const sung = w.time != null ? w.time <= t : false;
+        spans[i].classList.toggle('sung', sung);
+      }
+      // mic scoring: each word onset is a chance; a mic onset within the
+      // window means the singer was on it.
+      if (micAn) {
+        const on = micOnset();
+        for (const w of line.words) {
+          if (w.time != null && Math.abs(w.time - t) < 0.09 && !w._counted) {
+            w._counted = true; sungChances++;
+            if (on || micAvg > 0.025) sungHits++;
+          }
+        }
+        const pct = sungChances ? Math.round(100 * sungHits / sungChances) : 0;
+        put2('#stardust-kn-score', sungChances > 4 ? '🎙 ' + pct + '% on the words' : '🎙 sing!');
+      } else put2('#stardust-kn-score', '');
+    }
+  }
+  return { show, hide };
 })();
 
 // --- Realtime: a minimal Phoenix-protocol client for Supabase broadcast -----
@@ -3212,7 +3440,9 @@ const Lyrics = (() => {
   }
 
   function onTrack(track) { if (active) fetchFor(track); }
-  return { enable, disable, onTrack, quiz };
+  // Read-only view for the rhythm game / karaoke night overlays.
+  function state() { return { synced, np, hasWords: hasWordTiming() }; }
+  return { enable, disable, onTrack, quiz, state };
 })();
 
 // --- Lyric quiz launcher (floating 🎯) ---------------------------------------
@@ -3592,6 +3822,23 @@ function buildUI() {
       h('div', { class: 'stardust-hint', text: 'Hotkeys: ⌘/Ctrl+Shift+↑ like · ↓ dislike · S shuffle · C copy link' })
     ]),
     section([
+      label('Lights'),
+      h('div', { class: 'stardust-row' }, [
+        h('select', { id: 'stardust-lights-proto', class: 'stardust-text-input' }, [
+          h('option', { value: 'wled', text: 'WLED' }),
+          h('option', { value: 'govee', text: 'Govee (LAN control on)' }),
+          h('option', { value: 'hue', text: 'Philips Hue' }),
+          h('option', { value: 'nanoleaf', text: 'Nanoleaf' })
+        ])
+      ]),
+      h('input', { id: 'stardust-lights-host', class: 'stardust-text-input', placeholder: 'Device / bridge IP (e.g. 192.168.1.50)' }),
+      h('input', { id: 'stardust-lights-token', class: 'stardust-text-input', placeholder: 'Token (Hue username / Nanoleaf token — not needed for WLED & Govee)' }),
+      h('div', { class: 'stardust-row' }, [
+        miniBtn('lights-test', '💡 Test the lights')
+      ]),
+      h('div', { class: 'stardust-hint', text: 'Enable the Room Lights marketplace feature and your lights pulse with the beat in the track\'s colour.' })
+    ]),
+    section([
       toggleRow('Ad blocker', 'adBlock'),
       toggleRow('Mini player', 'miniPlayer'),
       toggleRow('Global hotkeys', 'globalHotkeys'),
@@ -3681,6 +3928,24 @@ function wirePanel(panel) {
   if (tk) {
     tk.value = settings.transcribeKey || '';
     tk.addEventListener('change', () => setSetting('transcribeKey', tk.value.trim()));
+  }
+
+  // Room lights config.
+  const lp = panel.querySelector('#stardust-lights-proto');
+  const lh = panel.querySelector('#stardust-lights-host');
+  const ltk = panel.querySelector('#stardust-lights-token');
+  if (lp) {
+    lp.value = settings.lightsProtocol || 'wled';
+    lh.value = settings.lightsHost || '';
+    ltk.value = settings.lightsToken || '';
+    lp.addEventListener('change', () => setSetting('lightsProtocol', lp.value));
+    lh.addEventListener('change', () => setSetting('lightsHost', lh.value.trim()));
+    ltk.addEventListener('change', () => setSetting('lightsToken', ltk.value.trim()));
+    const testBtn = panel.querySelector('[data-act="lights-test"]');
+    if (testBtn) testBtn.addEventListener('click', async () => {
+      const ok = await ipcRenderer.invoke('stardust:lights-test').catch(() => false);
+      toast(ok ? '💡 Sent a pulse — did they flash?' : 'Set the device IP first');
+    });
   }
 }
 

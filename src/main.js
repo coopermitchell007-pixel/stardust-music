@@ -16,6 +16,7 @@ const transcribe = require('./transcribe');
 const songAudio = require('./audio');
 const ai = require('./ai');
 const community = require('./community');
+const lights = require('./lights');
 
 const YTM_URL = 'https://music.youtube.com/';
 const ICON_PNG = path.join(__dirname, '..', 'assets', 'icon.png');
@@ -345,6 +346,14 @@ function registerIpc() {
     } catch (err) { return { error: 'download' }; }
   });
   ipcMain.handle('stardust:community-info', () => community.info());
+  // Room lighting: fire-and-forget colour frames from the renderer's beat
+  // detector; the config lives in settings (panel → Lights).
+  const lightsCfg = () => ({
+    protocol: config.get('lightsProtocol'), host: config.get('lightsHost'),
+    token: config.get('lightsToken'), count: config.get('lightsCount')
+  });
+  ipcMain.on('stardust:lights-frame', (_e, f) => { try { lights.frame(lightsCfg(), f); } catch {} });
+  ipcMain.handle('stardust:lights-test', async () => { try { return await lights.test(lightsCfg()); } catch { return false; } });
   // AI helpers (Groq, same key as transcription): chat for DJ lines / intent /
   // stats Q&A, TTS for the DJ's voice, STT for voice commands.
   ipcMain.handle('stardust:ai-chat', async (_e, { messages, maxTokens, json } = {}) => {
