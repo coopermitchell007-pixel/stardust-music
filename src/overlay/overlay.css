@@ -793,6 +793,26 @@ input[type="color"]#stardust-accent {
   font-size: 11px; padding: 4px 10px;
 }
 
+/* ---- Voice control mic ---- */
+#stardust-voice-btn {
+  position: fixed; right: 18px; bottom: 200px; z-index: 2147483640;
+}
+#stardust-voice-btn.listening {
+  border-color: #f87171;
+  box-shadow: 0 0 14px rgba(248,113,113,0.6);
+  animation: sd-pulse 1.2s ease-in-out infinite;
+}
+@keyframes sd-pulse { 50% { transform: scale(1.12); } }
+
+/* ---- Ask-your-history box (stats modal) ---- */
+.stardust-ask-row { display: flex; gap: 8px; margin: 8px 0; }
+#stardust-ask-input {
+  flex: 1; padding: 8px 12px; border-radius: 8px; font-size: 12px;
+  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.14); color: #fff;
+}
+#stardust-ask-input:focus { outline: none; border-color: var(--stardust-accent); }
+#stardust-ask-out { font-size: 12.5px; line-height: 1.55; color: rgba(255,255,255,0.85); padding: 4px 2px 8px; white-space: pre-wrap; }
+
 /* ---- Personal Billboard chart movement badges ---- */
 .stardust-chart-head { margin-top: 18px; }
 .stardust-chart-move { font-size: 11px; font-weight: 700; min-width: 34px; text-align: center; border-radius: 6px; padding: 1px 4px; }

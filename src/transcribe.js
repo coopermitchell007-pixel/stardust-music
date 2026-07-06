@@ -200,6 +200,13 @@ async function transcribe({ title, artist, album, duration, audio, audioName } =
   return { error: 'empty' };
 }
 
+// Short spoken command → text (voice control). No caching, no lyric filters.
+async function speechToText(audio, apiKey) {
+  const w = await whisperVerbose(audio, apiKey, 'voice.webm');
+  if (w.error) return { error: w.error };
+  return { text: String(w.json.text || '').trim() };
+}
+
 // Forced alignment: keep the KNOWN lyrics text, take the audio's word clock.
 // Near-perfect word timing without trusting Whisper's (mishearable) words.
 async function alignToLyrics({ title, artist, album, duration, audio, audioName, lyrics, realStamps, force } = {}, apiKey, share) {
@@ -231,4 +238,4 @@ async function alignToLyrics({ title, artist, album, duration, audio, audioName,
   return { syncedLyrics: res.syncedLyrics, coverage: res.coverage, shared: shareIt };
 }
 
-module.exports = { transcribe, alignToLyrics, getCached, putCached, removeCached, getPref, setPref, CACHE_DIR };
+module.exports = { transcribe, alignToLyrics, speechToText, getCached, putCached, removeCached, getPref, setPref, CACHE_DIR };

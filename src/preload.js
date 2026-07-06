@@ -875,7 +875,9 @@ const BEHAVIORS = {
   'audio-vinyl':        { on: () => Visualizer.fx.vinyl(true),   off: () => Visualizer.fx.vinyl(false) },
   'feat-focus-instrumental': { on: () => FocusMode.enable(), off: () => FocusMode.disable() },
   'feat-practice-mode': { on: () => PracticeMode.show(), off: () => PracticeMode.hide() },
-  'feat-xray-seekbar':  { on: () => XraySeekbar.enable(), off: () => XraySeekbar.disable() }
+  'feat-xray-seekbar':  { on: () => XraySeekbar.enable(), off: () => XraySeekbar.disable() },
+  'feat-ai-dj':         { on: () => AIDJ.enable(), off: () => AIDJ.disable() },
+  'feat-voice-control': { on: () => VoiceControl.show(), off: () => VoiceControl.hide() }
 };
 
 // --- Vinyl Spin: find the actual artwork <img> at runtime (YTM class names are
@@ -1322,6 +1324,126 @@ const PracticeMode = (() => {
     if (a != null && b != null && (v.currentTime > b || v.currentTime < a - 0.5)) v.currentTime = a;
   }
   return { show, hide, onTrack };
+})();
+
+// --- AI DJ: a radio voice that breaks in between songs ----------------------
+// Every few tracks: one LLM-written DJ line (fed by LOCAL listening stats),
+// spoken via TTS while the music ducks underneath. Same Groq key as lyrics.
+const AIDJ = (() => {
+  let active = false, sinceAnnounce = 99, busy = false, voiceEl = null;
+  function enable() { active = true; sinceAnnounce = 99; }
+  function disable() { active = false; stopVoice(); }
+  function stopVoice() {
+    if (voiceEl) { try { voiceEl.pause(); } catch {} voiceEl = null; }
+    Visualizer.fx.fade(1, 0.5);
+  }
+  async function onTrack(np) {
+    if (!active || busy || !np || !np.isTrack) return;
+    if (!(settings && settings.transcribeKey)) return;
+    if (++sinceAnnounce < 3) return; // at most every 3rd track
+    busy = true; sinceAnnounce = 0;
+    const forTrack = np.title + '|' + np.artist;
+    try {
+      const s = await ipcRenderer.invoke('stardust:stats').catch(() => null);
+      const tr = s && s.topSongs && s.topSongs.find((t) => t.title === np.title && t.artist === np.artist);
+      const ai = s && s.topArtists ? s.topArtists.findIndex((a) => a.name === np.artist) : -1;
+      const facts = [
+        'Song starting now: "' + np.title + '" by ' + (np.artist || 'an unknown artist'),
+        tr && tr.count > 1 ? 'The listener has played it ' + tr.count + ' times' : 'It is new to their history',
+        ai >= 0 && ai < 10 ? np.artist + ' is their #' + (ai + 1) + ' artist' : null,
+        'Local hour: ' + new Date().getHours()
+      ].filter(Boolean).join('. ');
+      const r = await ipcRenderer.invoke('stardust:ai-chat', {
+        messages: [
+          { role: 'system', content: 'You are a warm, playful radio DJ between songs. Write ONE spoken line, under 26 words, introducing the song that is starting. Weave in at most one fact naturally. No emojis, no quotes, never mention being an AI.' },
+          { role: 'user', content: facts }
+        ], maxTokens: 70
+      }).catch(() => null);
+      const cur = readNowPlaying();
+      if (!active || !r || !r.text || !cur || (cur.title + '|' + cur.artist) !== forTrack) return;
+      const line = r.text.replace(/^["']|["']$/g, '');
+      const t = await ipcRenderer.invoke('stardust:ai-tts', { text: line }).catch(() => null);
+      if (!active) return;
+      toast('📻 ' + line);
+      if (t && t.buf) {
+        const blob = new Blob([t.buf], { type: t.mime || 'audio/wav' });
+        stopVoice();
+        voiceEl = new Audio(URL.createObjectURL(blob));
+        Visualizer.fx.fade(0.2, 0.5); // duck the music under the voice
+        voiceEl.onended = voiceEl.onerror = stopVoice;
+        try { await voiceEl.play(); } catch { stopVoice(); }
+      }
+    } finally { busy = false; }
+  }
+  return { enable, disable, onTrack };
+})();
+
+// --- Voice control: click the mic, say it, it happens ------------------------
+// Transport words act instantly; anything else goes speech → Whisper → LLM →
+// a YTM search that auto-plays the top result ("play something mellow").
+const VoiceControl = (() => {
+  let btn = null, rec = null, chunks = [], stream = null;
+  function show() {
+    if (btn) return;
+    btn = h('button', { id: 'stardust-voice-btn', class: 'stardust-qa', title: 'Voice control — click, speak, click again (or wait)', text: '🎤' });
+    btn.addEventListener('click', () => (rec ? stop() : start()));
+    document.body.appendChild(btn);
+  }
+  function hide() { stop(true); if (btn) { btn.remove(); btn = null; } }
+  async function start() {
+    if (!(settings && settings.transcribeKey)) { toast('Voice control needs a Groq key (Stardust panel → Settings)'); return; }
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+    catch { toast('Microphone access denied'); return; }
+    chunks = [];
+    rec = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+    rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+    rec.start(250);
+    btn.textContent = '🔴'; btn.classList.add('listening');
+    setTimeout(() => { if (rec) stop(); }, 8000);
+  }
+  function stop(discard) {
+    if (!rec) { if (discard && stream) { try { stream.getTracks().forEach((t) => t.stop()); } catch {} stream = null; } return; }
+    const r = rec; rec = null;
+    if (btn) { btn.textContent = '🎤'; btn.classList.remove('listening'); }
+    r.onstop = async () => {
+      try { stream && stream.getTracks().forEach((t) => t.stop()); } catch {}
+      stream = null;
+      if (discard) return;
+      const blob = new Blob(chunks, { type: 'audio/webm' });
+      if (blob.size < 1500) return;
+      const st = await ipcRenderer.invoke('stardust:voice-text', { audio: new Uint8Array(await blob.arrayBuffer()) }).catch(() => null);
+      const said = st && st.text;
+      if (!said) { toast("Didn't catch that"); return; }
+      run(said);
+    };
+    try { r.stop(); } catch {}
+  }
+  async function run(said) {
+    const s = said.toLowerCase();
+    if (/\b(pause|stop)\b/.test(s)) { doCommand('playpause'); toast('⏸ "' + said + '"'); return; }
+    if (/^(play|resume)[.!]?$/.test(s.trim())) { doCommand('playpause'); toast('▶ "' + said + '"'); return; }
+    if (/\b(next|skip)\b/.test(s)) { doCommand('next'); toast('⏭ "' + said + '"'); return; }
+    if (/\b(previous|go back)\b/.test(s)) { doCommand('previous'); toast('⏮ "' + said + '"'); return; }
+    if (/\bshuffle\b/.test(s)) { doCommand('shuffle'); return; }
+    if (/\blike this\b|\blike it\b/.test(s)) { doCommand('like'); return; }
+    toast('🎤 "' + said + '"');
+    const r = await ipcRenderer.invoke('stardust:ai-chat', {
+      messages: [
+        { role: 'system', content: 'Turn a spoken music request into JSON {"query":"<search terms for YouTube Music>"}. Build strong search terms from the mood, era, artist or song asked for. JSON only.' },
+        { role: 'user', content: said }
+      ], maxTokens: 80, json: true
+    }).catch(() => null);
+    let query = said;
+    try { const j = JSON.parse((r && r.text) || ''); if (j.query) query = j.query; } catch {}
+    location.href = 'https://music.youtube.com/search?q=' + encodeURIComponent(query);
+    let tries = 0;
+    const iv = setInterval(() => {
+      if (++tries > 24) return clearInterval(iv);
+      const play = document.querySelector('ytmusic-card-shelf-renderer ytmusic-play-button-renderer, ytmusic-shelf-renderer ytmusic-play-button-renderer, #contents ytmusic-responsive-list-item-renderer ytmusic-play-button-renderer');
+      if (play) { clearInterval(iv); try { play.click(); toast('▶ Playing the top result'); } catch {} }
+    }, 500);
+  }
+  return { show, hide };
 })();
 
 // --- Song X-ray: paint the track's anatomy onto the seekbar -----------------
@@ -2860,6 +2982,7 @@ function pollNowPlaying() {
     FocusMode.onTrack(np);
     PracticeMode.onTrack();
     XraySeekbar.onTrack(np);
+    AIDJ.onTrack(np);
   }
 
   const sig = `${track}|${np.playing}|${np.position}`;
@@ -3339,6 +3462,38 @@ function renderStats(s) {
       chart('Hot 15 songs', s.charts.songs),
       chart('Top artists this week', s.charts.artists)
     ]));
+  }
+  // Chat with your history — free-form questions over the LOCAL stats,
+  // answered by the same Groq key that powers lyrics.
+  if (settings && settings.transcribeKey) {
+    const input = h('input', { id: 'stardust-ask-input', placeholder: 'Ask about your listening — "what was my March obsession?"' });
+    const ask = h('button', { class: 'stardust-mini-btn', text: 'Ask' });
+    const out = h('div', { id: 'stardust-ask-out' });
+    const go = async () => {
+      const question = input.value.trim();
+      if (!question) return;
+      out.textContent = 'Thinking…';
+      const summary = {
+        totalMinutes: Math.round(s.totalMs / 60000),
+        daysTracked: s.days,
+        topSongs: s.topSongs.slice(0, 20).map((t) => ({ t: t.title, a: t.artist, plays: t.count, min: Math.round(t.ms / 60000) })),
+        topArtists: s.topArtists.slice(0, 15).map((a) => ({ a: a.name, plays: a.count, min: Math.round(a.ms / 60000) })),
+        thisWeek: s.charts,
+        recent: s.recent.slice(0, 30).map((r) => ({ t: r.title, a: r.artist, when: new Date(r.ts).toISOString().slice(0, 10) }))
+      };
+      const r = await ipcRenderer.invoke('stardust:ai-chat', {
+        messages: [
+          { role: 'system', content: 'You answer questions about the user\'s music listening from the JSON stats given. Be specific and brief (2-4 sentences), cite plays/minutes when relevant. If the data cannot answer, say what IS knowable instead. Today: ' + new Date().toDateString() },
+          { role: 'user', content: 'STATS: ' + JSON.stringify(summary) + '\n\nQUESTION: ' + question }
+        ], maxTokens: 260
+      }).catch(() => null);
+      out.textContent = (r && r.text) || 'Could not reach the AI — check the Groq key.';
+    };
+    ask.addEventListener('click', go);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+    body.appendChild(h('div', { class: 'stardust-label stardust-chart-head', text: '💬 Ask your history' }));
+    body.appendChild(h('div', { class: 'stardust-ask-row' }, [input, ask]));
+    body.appendChild(out);
   }
 }
 

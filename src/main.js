@@ -14,6 +14,7 @@ const updater = require('./updater');
 const stats = require('./stats');
 const transcribe = require('./transcribe');
 const songAudio = require('./audio');
+const ai = require('./ai');
 
 const YTM_URL = 'https://music.youtube.com/';
 const ICON_PNG = path.join(__dirname, '..', 'assets', 'icon.png');
@@ -341,6 +342,20 @@ function registerIpc() {
         ? await transcribe.alignToLyrics(payload, key, share)
         : await transcribe.transcribe(payload, key, share);
     } catch (err) { return { error: 'download' }; }
+  });
+  // AI helpers (Groq, same key as transcription): chat for DJ lines / intent /
+  // stats Q&A, TTS for the DJ's voice, STT for voice commands.
+  ipcMain.handle('stardust:ai-chat', async (_e, { messages, maxTokens, json } = {}) => {
+    try { return await ai.chat(config.get('transcribeKey'), messages || [], { maxTokens, json }); }
+    catch (err) { return { error: err.message || 'failed' }; }
+  });
+  ipcMain.handle('stardust:ai-tts', async (_e, { text, voice } = {}) => {
+    try { return await ai.tts(config.get('transcribeKey'), text, voice); }
+    catch (err) { return { error: err.message || 'failed' }; }
+  });
+  ipcMain.handle('stardust:voice-text', async (_e, { audio } = {}) => {
+    try { return await transcribe.speechToText(audio, config.get('transcribeKey')); }
+    catch (err) { return { error: err.message || 'failed' }; }
   });
   // Raw track audio for renderer-side analysis (X-ray seekbar). Same source
   // rules as word-sync: the sniffed stream only when its duration vouches.

@@ -688,5 +688,33 @@
       "chorus"
     ],
     "preview": "linear-gradient(135deg, #10263c, #0a0e1a)"
+  },
+  {
+    "id": "feat-ai-dj",
+    "type": "feature",
+    "name": "AI DJ",
+    "author": "Stardust",
+    "description": "A radio host between songs \u2014 one spoken line every few tracks, written from YOUR listening stats and voiced with TTS while the music ducks. Needs a Groq key.",
+    "tags": [
+      "ai",
+      "dj",
+      "radio",
+      "voice"
+    ],
+    "preview": "linear-gradient(135deg, #3a1c2e, #0a0e1a)"
+  },
+  {
+    "id": "feat-voice-control",
+    "type": "feature",
+    "name": "Voice Control",
+    "author": "Stardust",
+    "description": "Click the mic and say it: pause, skip, or \"play something mellow from the 80s\" \u2014 speech to intent to playback. Needs a Groq key.",
+    "tags": [
+      "ai",
+      "voice",
+      "mic",
+      "control"
+    ],
+    "preview": "linear-gradient(135deg, #1c2e3a, #0a0e1a)"
   }
 ]
