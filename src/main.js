@@ -361,6 +361,25 @@ function registerIpc() {
   ipcMain.handle('stardust:remote-start', () => { try { return remote.start((a) => sendCommand(a)); } catch { return null; } });
   ipcMain.handle('stardust:remote-stop', () => { remote.stop(); return true; });
   ipcMain.on('stardust:remote-state', (_e, s) => remote.setState(s));
+  // YTM's own "up next" suggestions for the current track — the discovery
+  // half of the DJ's Booth candidate pool. Duck-typed defensively.
+  ipcMain.handle('stardust:up-next', async (_e, { videoId } = {}) => {
+    try {
+      if (!/^[\w-]{6,20}$/.test(String(videoId || ''))) return [];
+      const yt = await songAudio.client();
+      const un = await yt.music.getUpNext(videoId);
+      const out = [];
+      for (const it of (un && un.contents) || []) {
+        const t = it.title && (it.title.text || (typeof it.title === 'string' ? it.title : ''));
+        const a = (it.author && (it.author.text || (typeof it.author === 'string' ? it.author : '')))
+          || (it.artists && it.artists[0] && it.artists[0].name) || '';
+        const v = it.video_id || it.videoId;
+        if (t && v && v !== videoId) out.push({ title: String(t).slice(0, 200), artist: String(a).slice(0, 200), videoId: String(v) });
+        if (out.length >= 12) break;
+      }
+      return out;
+    } catch (e) { console.log('[Stardust] up-next failed:', e && String(e.message).slice(0, 120)); return []; }
+  });
   // Release radar: check the top artists for fresh drops (seen-set persisted).
   ipcMain.handle('stardust:radar-check', async (_e, { artists, firstRun } = {}) => {
     try { return await radar.check(artists, firstRun); } catch { return []; }

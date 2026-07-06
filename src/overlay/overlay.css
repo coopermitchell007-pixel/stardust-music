@@ -895,6 +895,17 @@ input[type="color"]#stardust-accent {
   transition: opacity 0.6s;
 }
 
+/* ---- DJ's Booth up-next pill ---- */
+#stardust-djq {
+  position: fixed; left: 18px; bottom: 134px; z-index: 2147483639;
+  max-width: 44vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.88); padding: 6px 14px;
+  background: color-mix(in srgb, var(--stardust-accent) 16%, rgba(8,8,16,0.7));
+  border: 1px solid color-mix(in srgb, var(--stardust-accent) 45%, rgba(255,255,255,0.1));
+  border-radius: 999px; backdrop-filter: blur(10px); cursor: pointer;
+}
+#stardust-djq:hover { background: color-mix(in srgb, var(--stardust-accent) 28%, rgba(8,8,16,0.7)); }
+
 /* ---- World ticker live page ---- */
 #stardust-ticker { cursor: pointer; }
 .stardust-live-row {

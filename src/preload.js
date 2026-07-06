@@ -899,7 +899,8 @@ const BEHAVIORS = {
   'feat-skip-learning': { on: () => SkipLearn.enable(), off: () => SkipLearn.disable() },
   'feat-energy-dial':   { on: () => EnergyDial.show(), off: () => EnergyDial.hide() },
   'feat-ai-playlist':   { on: () => AIPlaylist.show(), off: () => AIPlaylist.hide() },
-  'feat-tv-mode':       { on: () => TVMode.show(), off: () => TVMode.hide() }
+  'feat-tv-mode':       { on: () => TVMode.show(), off: () => TVMode.hide() },
+  'feat-dj-queue':      { on: () => DJQueue.enable(), off: () => DJQueue.disable() }
 };
 
 // --- Vinyl Spin: find the actual artwork <img> at runtime (YTM class names are
@@ -1309,6 +1310,113 @@ const FocusMode = (() => {
     }
   }
   return { enable, disable, onTrack };
+})();
+
+// --- DJ's Booth: Stardust's own Up Next, replacing YTM autoplay --------------
+// While a song plays, the DJ builds a candidate pool from YOUR data —
+// favorites weighted by plays, loved-and-lost tracks, hour affinity, minus
+// serial skips and everything recent — mixes in InnerTube discoveries that
+// fit the current song, and hand-picks the next one (LLM when available,
+// taste heuristics when not). It preempts YTM's autoplay just before the
+// song ends, announces WHY it picked the song, and the pill lets you veto.
+const DJQueue = (() => {
+  let active = false, pill = null, pick = null, picking = false, lastKey = '';
+  const played = []; // session history, newest last
+  function enable() { active = true; ensurePill(); const np = readNowPlaying(); if (np && np.isTrack) { lastKey = np.title + '|' + np.artist; choose(np); } }
+  function disable() { active = false; pick = null; if (pill) { pill.remove(); pill = null; } }
+  function ensurePill() {
+    if (pill) return;
+    pill = h('div', { id: 'stardust-djq', title: 'The DJ\'s next pick — click to veto and pick again' });
+    pill.addEventListener('click', () => {
+      const np = readNowPlaying();
+      if (np && np.isTrack) { pick = null; renderPill('digging again…'); choose(np, pick && pick.title); }
+    });
+    document.body.appendChild(pill);
+    renderPill();
+  }
+  function renderPill(status) {
+    if (!pill) return;
+    pill.textContent = status ? '🎧 ' + status
+      : pick ? '🎧 Up next: ' + pick.title + (pick.artist ? ' — ' + pick.artist : '')
+        : '🎧 the DJ is digging…';
+  }
+  const skipCounts = () => { try { return JSON.parse(localStorage.getItem('sd-skips') || '{}'); } catch { return {}; } };
+  async function choose(np, vetoTitle) {
+    if (picking || !active) return;
+    picking = true;
+    try {
+      const s = await ipcRenderer.invoke('stardust:stats').catch(() => null);
+      const skips = skipCounts();
+      const nowKey = np.title + '|' + np.artist;
+      const avoid = new Set(played.slice(-40));
+      for (const r of ((s && s.recent) || []).slice(0, 20)) avoid.add(r.title + '|' + r.artist);
+      avoid.add(nowKey);
+      const cand = [];
+      const push = (title, artist, tag, videoId) => {
+        const k = title + '|' + (artist || '');
+        if (!title || avoid.has(k) || (skips[k] || 0) >= 3 || title === vetoTitle) return;
+        if (cand.some((c) => c.title === title)) return;
+        cand.push({ title, artist: artist || '', tag, videoId });
+      };
+      // Hour affinity: what the listener historically plays around this hour.
+      const hr = new Date().getHours();
+      for (const r of ((s && s.recent) || [])) {
+        const rh = new Date(r.ts).getHours();
+        if (Math.abs(rh - hr) <= 1 && cand.length < 4) push(r.title, r.artist, 'often played around this hour');
+      }
+      for (const t of ((s && s.topSongs) || []).slice(0, 25)) push(t.title, t.artist, 'favorite — ' + t.count + ' plays');
+      for (const t of ((s && s.lostTracks) || []).slice(0, 4)) push(t.title, t.artist, 'loved & lost — bring it back?');
+      // Discovery: YTM's related pool for THIS song (direct videoIds → instant play).
+      let vid = null;
+      try { vid = await ipcRenderer.invoke('stardust:current-videoid'); } catch {}
+      if (vid) {
+        const rel = await ipcRenderer.invoke('stardust:up-next', { videoId: vid }).catch(() => []);
+        for (const r of (rel || []).slice(0, 8)) push(r.title, r.artist, 'discovery — flows from the current song', r.videoId);
+      }
+      if (!cand.length || !active) return;
+      let chosen = null, reason = '';
+      if (await aiOK()) {
+        const list = cand.slice(0, 30).map((c, i) => i + '. ' + c.title + ' — ' + c.artist + '  [' + c.tag + ']').join('\n');
+        const r = await ipcRenderer.invoke('stardust:ai-chat', {
+          messages: [
+            { role: 'system', content: 'You are Stardust\'s radio DJ hand-picking the ONE next song. Think about flow from the current song, the hour, and variety — mostly favorites, an occasional discovery or lost track when it fits. Reply JSON only: {"pick": <candidate number>, "reason": "<spoken line, under 16 words, why this song right now>"}. The reason must not invent facts about the song.' },
+            { role: 'user', content: 'Now playing: "' + np.title + '" by ' + np.artist + '. Hour: ' + hr + '. Just played: ' + played.slice(-4).join('; ') + '\n\nCANDIDATES:\n' + list }
+          ], maxTokens: 90, json: true
+        }).catch(() => null);
+        try { const j = JSON.parse((r && r.text) || ''); if (cand[j.pick]) { chosen = cand[j.pick]; reason = String(j.reason || '').slice(0, 140); } } catch {}
+      }
+      if (!chosen) {
+        // Keyless taste heuristic: favorites first, ~1 in 4 a discovery.
+        const disc = cand.filter((c) => c.videoId);
+        const fam = cand.filter((c) => !c.videoId);
+        chosen = (Math.random() < 0.25 && disc.length) ? disc[Math.floor(Math.random() * disc.length)]
+          : (fam.length ? fam[Math.floor(Math.random() * Math.min(6, fam.length))] : cand[0]);
+      }
+      if (!active) return;
+      pick = chosen; pick.reason = reason;
+      renderPill();
+    } finally { picking = false; }
+  }
+  function onPoll(np) {
+    if (!active || !np || !np.isTrack) return;
+    const key = np.title + '|' + np.artist;
+    if (key !== lastKey) {
+      lastKey = key;
+      played.push(key); if (played.length > 60) played.shift();
+      pick = null; renderPill(); choose(np);
+    }
+    const v = q('video');
+    if (pick && v && isFinite(v.duration) && v.duration > 30 && v.currentTime > 0 && v.duration - v.currentTime < 2.2) {
+      const p = pick; pick = null;
+      AIDJ.suppressOnce(); // the pick line replaces the regular intro
+      const line = 'Next up: ' + p.title + (p.artist ? ' by ' + p.artist : '') + '.' + (p.reason ? ' ' + p.reason : '');
+      try { sessionStorage.setItem('sd-dj-say', JSON.stringify({ line, at: Date.now() })); } catch {}
+      toast('🎧 DJ pick: "' + p.title + '"' + (p.reason ? ' — ' + p.reason : ''));
+      if (p.videoId) location.href = 'https://music.youtube.com/watch?v=' + p.videoId;
+      else VoiceControl.playSearch(p.title + ' ' + (p.artist || ''));
+    }
+  }
+  return { enable, disable, onPoll };
 })();
 
 // --- Normalize: every song at the same perceived volume ----------------------
@@ -2393,7 +2501,9 @@ const AIDJ = (() => {
     toast('📻 ' + reply);
     await speak(reply);
   }
-  return { enable, disable, onTrack, speak, converse };
+  // The DJ's Booth speaks its own pick line — skip the next regular intro.
+  function suppressOnce() { sinceAnnounce = 0; }
+  return { enable, disable, onTrack, speak, converse, suppressOnce };
 })();
 
 // --- Voice control: click the mic, say it, it happens ------------------------
@@ -4144,6 +4254,7 @@ function pollNowPlaying() {
   PhoneRemote.onPoll(np);
   IntroSkip.onPoll(np);
   SkipLearn.onPoll(np);
+  DJQueue.onPoll(np);
 }
 let lastTrack = '';
 
@@ -5123,6 +5234,12 @@ async function boot() {
   // Together room the guest was in when the host changed tracks.
   VoiceControl.resumePendingPlay();
   ListenTogether.resumeRoom();
+  // The DJ's pick announcement rides across the navigation it causes.
+  try {
+    const say = JSON.parse(sessionStorage.getItem('sd-dj-say') || 'null');
+    sessionStorage.removeItem('sd-dj-say');
+    if (say && say.line && Date.now() - say.at < 25000) setTimeout(() => AIDJ.speak(say.line), 3000);
+  } catch {}
 }
 
 function safeBoot() {

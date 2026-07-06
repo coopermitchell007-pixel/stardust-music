@@ -909,5 +909,20 @@
       "party"
     ],
     "preview": "linear-gradient(135deg, #0a0e1a, #1b1340)"
+  },
+  {
+    "id": "feat-dj-queue",
+    "type": "feature",
+    "name": "DJ's Booth",
+    "author": "Stardust",
+    "description": "\ud83c\udfa7 replaces YTM's Up Next entirely \u2014 the DJ hand-picks every next song from your favorites, lost tracks and fitting discoveries, tells you why, and takes a veto (click the pill).",
+    "tags": [
+      "dj",
+      "upnext",
+      "algorithm",
+      "autoplay",
+      "smart"
+    ],
+    "preview": "radial-gradient(circle at 30% 20%, #8b5cff33, transparent 55%), linear-gradient(135deg, #241242, #0a0e1a)"
   }
 ]
