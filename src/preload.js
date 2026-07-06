@@ -1313,56 +1313,57 @@ const FocusMode = (() => {
   return { enable, disable, onTrack };
 })();
 
-// --- DJ's Booth: Stardust's own Up Next, replacing YTM autoplay --------------
-// While a song plays, the DJ builds a candidate pool from YOUR data —
-// favorites weighted by plays, loved-and-lost tracks, hour affinity, minus
-// serial skips and everything recent — mixes in InnerTube discoveries that
-// fit the current song, and hand-picks the next one (LLM when available,
-// taste heuristics when not). It preempts YTM's autoplay just before the
-// song ends, announces WHY it picked the song, and the pill lets you veto.
+// --- DJ's Booth: Stardust's own Up Next, replacing YTM autoplay AND its UI --
+// The DJ plans several songs ahead from YOUR data — favorites by play count,
+// loved-and-lost tracks, hour affinity, minus serial skips and recents —
+// mixed with InnerTube discoveries that flow from the current song. The plan
+// REPLACES YTM's "Up next" queue panel: your queue tab shows the DJ's picks
+// with his reasons, play-now and veto per row. Transitions preempt YTM's
+// autoplay just before each song ends.
 const DJQueue = (() => {
-  let active = false, pill = null, pick = null, picking = false, lastKey = '';
+  let active = false, pill = null, panel = null, plan = [], picking = false, lastKey = '';
   const played = []; // session history, newest last
-  function enable() { active = true; ensurePill(); const np = readNowPlaying(); if (np && np.isTrack) { lastKey = np.title + '|' + np.artist; choose(np); } }
-  function disable() { active = false; pick = null; if (pill) { pill.remove(); pill = null; } }
+  function enable() {
+    active = true;
+    ensurePill();
+    const np = readNowPlaying();
+    if (np && np.isTrack) { lastKey = np.title + '|' + np.artist; choose(np); }
+  }
+  function disable() {
+    active = false; plan = [];
+    if (pill) { pill.remove(); pill = null; }
+    if (panel) { panel.remove(); panel = null; }
+    for (const el of document.querySelectorAll('.stardust-djq-hidden')) el.classList.remove('stardust-djq-hidden');
+  }
   function ensurePill() {
     if (pill) return;
-    pill = h('div', { id: 'stardust-djq', title: 'The DJ\'s next pick — click to veto and pick again' });
-    pill.addEventListener('click', () => {
-      const np = readNowPlaying();
-      if (np && np.isTrack) { pick = null; renderPill('digging again…'); choose(np, pick && pick.title); }
-    });
+    pill = h('div', { id: 'stardust-djq', title: "The DJ's next pick — click to veto and pick again" });
+    pill.addEventListener('click', () => { if (plan.length) { plan.shift(); if (plan.length < 2) redig(); render(); } });
     document.body.appendChild(pill);
-    renderPill();
-  }
-  function renderPill(status) {
-    if (!pill) return;
-    pill.textContent = status ? '🎧 ' + status
-      : pick ? '🎧 Up next: ' + pick.title + (pick.artist ? ' — ' + pick.artist : '')
-        : '🎧 the DJ is digging…';
+    render();
   }
   const skipCounts = () => { try { return JSON.parse(localStorage.getItem('sd-skips') || '{}'); } catch { return {}; } };
-  async function choose(np, vetoTitle) {
+  function redig() { const np = readNowPlaying(); if (np && np.isTrack) choose(np, true); }
+
+  async function choose(np, extend) {
     if (picking || !active) return;
     picking = true;
     try {
       const s = await ipcRenderer.invoke('stardust:stats').catch(() => null);
       const skips = skipCounts();
       const nowKey = np.title + '|' + np.artist;
-      // "Recent" avoidance stays tight (this session + last 10 logged) — too
-      // wide and it starves the pool down to nothing on young libraries.
       const avoid = new Set(played.slice(-30));
       const recent = (s && s.recent) || [];
       for (const r of recent.slice(0, 10)) avoid.add(r.title + '|' + r.artist);
       avoid.add(nowKey);
+      for (const q2 of plan) avoid.add(q2.title + '|' + q2.artist);
       const cand = [];
       const push = (title, artist, tag, videoId) => {
         const k = title + '|' + (artist || '');
-        if (!title || avoid.has(k) || (skips[k] || 0) >= 3 || title === vetoTitle) return;
+        if (!title || avoid.has(k) || (skips[k] || 0) >= 3) return;
         if (cand.some((c) => c.title === title)) return;
         cand.push({ title, artist: artist || '', tag, videoId });
       };
-      // Hour affinity: OLDER history (past the avoid window) around this hour.
       const hr = new Date().getHours();
       for (const r of recent.slice(10)) {
         const rh = new Date(r.ts).getHours();
@@ -1370,7 +1371,6 @@ const DJQueue = (() => {
       }
       for (const t of ((s && s.topSongs) || []).slice(0, 25)) push(t.title, t.artist, 'favorite — ' + t.count + ' plays');
       for (const t of ((s && s.lostTracks) || []).slice(0, 4)) push(t.title, t.artist, 'loved & lost — bring it back?');
-      // Discovery: YTM's related pool for THIS song (direct videoIds → instant play).
       let vid = null;
       try { vid = await ipcRenderer.invoke('stardust:current-videoid'); } catch {}
       if (vid) {
@@ -1379,68 +1379,124 @@ const DJQueue = (() => {
       }
       console.log('[Stardust] DJ booth: ' + cand.length + ' candidates (vid=' + (vid || 'none') + ')');
       if (!cand.length || !active) return;
-      let chosen = null, reason = '';
+      let picks = [];
       if (await aiOK()) {
         const list = cand.slice(0, 30).map((c, i) => i + '. ' + c.title + ' — ' + c.artist + '  [' + c.tag + ']').join('\n');
         const r = await ipcRenderer.invoke('stardust:ai-chat', {
           messages: [
-            { role: 'system', content: 'You are Stardust\'s radio DJ hand-picking the ONE next song. Think about flow from the current song, the hour, and variety — mostly favorites, an occasional discovery or lost track when it fits. Reply JSON only: {"pick": <candidate number>, "reason": "<spoken line, under 16 words, why this song right now>"}. The reason must not invent facts about the song.' },
+            { role: 'system', content: 'You are Stardust\'s radio DJ planning the next FIVE songs, in play order. Think about flow from the current song, the hour, and variety — mostly favorites, an occasional discovery or lost track where it fits. Reply JSON only: {"picks":[{"pick":<candidate number>,"reason":"<spoken line, under 14 words, why this song here>"}, ...5 entries]}. Reasons must not invent facts about the songs.' },
             { role: 'user', content: 'Now playing: "' + np.title + '" by ' + np.artist + '. Hour: ' + hr + '. Just played: ' + played.slice(-4).join('; ') + '\n\nCANDIDATES:\n' + list }
-          ], maxTokens: 90, json: true
+          ], maxTokens: 300, json: true
         }).catch(() => null);
-        try { const j = JSON.parse((r && r.text) || ''); if (cand[j.pick]) { chosen = cand[j.pick]; reason = String(j.reason || '').slice(0, 140); } } catch {}
+        try {
+          const j = JSON.parse((r && r.text) || '');
+          for (const x of (j.picks || [])) if (cand[x.pick] && !picks.some((p2) => p2.title === cand[x.pick].title)) picks.push({ ...cand[x.pick], reason: String(x.reason || '').slice(0, 120) });
+        } catch {}
       }
-      if (!chosen) {
+      if (!picks.length) {
         // Keyless taste heuristic: favorites first, ~1 in 4 a discovery.
-        const disc = cand.filter((c) => c.videoId);
-        const fam = cand.filter((c) => !c.videoId);
-        chosen = (Math.random() < 0.25 && disc.length) ? disc[Math.floor(Math.random() * disc.length)]
-          : (fam.length ? fam[Math.floor(Math.random() * Math.min(6, fam.length))] : cand[0]);
+        const pool = [...cand];
+        while (picks.length < 5 && pool.length) {
+          const disc = pool.filter((c) => c.videoId);
+          const fam = pool.filter((c) => !c.videoId);
+          const c = (Math.random() < 0.25 && disc.length) ? disc[Math.floor(Math.random() * disc.length)]
+            : (fam.length ? fam[Math.floor(Math.random() * Math.min(6, fam.length))] : pool[0]);
+          picks.push({ ...c, reason: '' });
+          pool.splice(pool.indexOf(c), 1);
+        }
       }
       if (!active) return;
-      pick = chosen; pick.reason = reason;
-      console.log('[Stardust] DJ booth pick: "' + pick.title + '" [' + pick.tag + ']' + (reason ? ' — ' + reason : ''));
-      renderPill();
+      plan = extend ? plan.concat(picks.filter((p2) => !plan.some((q2) => q2.title === p2.title))).slice(0, 6) : picks.slice(0, 6);
+      console.log('[Stardust] DJ booth plan: ' + plan.map((p2) => p2.title).join(' → '));
+      render();
     } finally { picking = false; }
   }
+
+  // --- the queue-panel takeover: our list replaces YTM's "Up next" ----------
+  function queueHost() { return document.querySelector('ytmusic-player-queue'); }
+  function mountPanel() {
+    const hostQ = queueHost();
+    if (!hostQ) { if (panel) { panel.remove(); panel = null; } return; }
+    hostQ.classList.add('stardust-djq-hidden');
+    if (!panel || !panel.isConnected) {
+      panel = h('div', { id: 'stardust-djq-panel' });
+      hostQ.parentElement.insertBefore(panel, hostQ);
+      renderPanel();
+    }
+  }
+  function render() { renderPill(); renderPanel(); }
+  function renderPill() {
+    if (!pill) return;
+    pill.textContent = plan.length ? '🎧 Up next: ' + plan[0].title + (plan[0].artist ? ' — ' + plan[0].artist : '')
+      : '🎧 the DJ is digging…';
+  }
+  function renderPanel() {
+    if (!panel || !panel.isConnected) return;
+    while (panel.firstChild) panel.removeChild(panel.firstChild);
+    panel.appendChild(h('div', { class: 'stardust-djq-head', text: "🎧 DJ's Booth — hand-picked up next" }));
+    if (!plan.length) { panel.appendChild(h('div', { class: 'stardust-hint', text: 'Digging through your library…' })); return; }
+    plan.forEach((p2, i) => {
+      const row = h('div', { class: 'stardust-djq-row' }, [
+        h('span', { class: 'stardust-djq-n', text: String(i + 1) }),
+        h('div', { class: 'stardust-djq-meta' }, [
+          h('div', { class: 'stardust-djq-title', text: p2.title + (p2.artist ? ' — ' + p2.artist : '') }),
+          p2.reason ? h('div', { class: 'stardust-djq-why', text: p2.reason }) : null
+        ]),
+        h('button', { class: 'stardust-lyr-tool', title: 'Play now', text: '▶' }),
+        h('button', { class: 'stardust-lyr-tool', title: 'Veto — the DJ digs again', text: '✕' })
+      ]);
+      const [playB, vetoB] = row.querySelectorAll('button');
+      playB.addEventListener('click', () => { plan.splice(0, i + 1); fire(p2); });
+      vetoB.addEventListener('click', () => { plan.splice(i, 1); if (plan.length < 3) redig(); render(); });
+      panel.appendChild(row);
+    });
+    panel.appendChild(h('div', { class: 'stardust-hint', text: 'Picked from your plays, lost favorites and fitting discoveries — not YouTube\'s ads-driven queue.' }));
+  }
+
   function onPoll(np) {
     if (!active || !np || !np.isTrack) return;
+    mountPanel();
     const key = np.title + '|' + np.artist;
     if (key !== lastKey) {
       lastKey = key;
       played.push(key); if (played.length > 60) played.shift();
-      pick = null; renderPill(); choose(np);
+      if (plan.length && plan[0].title === np.title) plan.shift(); // our own transition
+      if (plan.length < 3) redig();
+      render();
     }
     const v = q('video');
     if (!v || !isFinite(v.duration) || v.duration <= 30 || !(v.currentTime > 0)) return;
     const left = v.duration - v.currentTime;
-    // Still empty-handed near the end (starved pool, failed fetch)? Dig again.
-    if (!pick && !picking && left < 30 && left > 8) choose(np);
-    if (pick && left < 2.2) { const p = pick; pick = null; fire(p); }
+    if (!plan.length && !picking && left < 30 && left > 8) redig();
+    if (plan.length && left < 2.2) fire(plan.shift());
   }
-  function fire(p) {
+  function fire(p2) {
     AIDJ.suppressOnce(); // no double-talking over the transition
-    // Speak only when there's something worth SAYING — discoveries and
-    // resurfaced tracks get the voice; regular favorites change silently.
-    const worthSaying = p.reason && /discovery|lost/.test(p.tag || '');
+    const worthSaying = p2.reason && /discovery|lost/.test(p2.tag || '');
     if (worthSaying) {
-      const line = 'Next up: ' + p.title + (p.artist ? ' by ' + p.artist : '') + '. ' + p.reason;
+      const line = 'Next up: ' + p2.title + (p2.artist ? ' by ' + p2.artist : '') + '. ' + p2.reason;
       try { sessionStorage.setItem('sd-dj-say', JSON.stringify({ line, at: Date.now() })); } catch {}
     }
-    console.log('[Stardust] DJ booth: playing pick "' + p.title + '"');
-    toast('🎧 DJ pick: "' + p.title + '"' + (p.reason ? ' — ' + p.reason : ''));
-    if (p.videoId) location.href = 'https://music.youtube.com/watch?v=' + p.videoId;
-    else VoiceControl.playSearch(p.title + ' ' + (p.artist || ''));
+    try { sessionStorage.setItem('sd-djq-plan', JSON.stringify({ plan, at: Date.now() })); } catch {}
+    console.log('[Stardust] DJ booth: playing pick "' + p2.title + '"');
+    toast('🎧 DJ pick: "' + p2.title + '"' + (p2.reason ? ' — ' + p2.reason : ''));
+    if (p2.videoId) location.href = 'https://music.youtube.com/watch?v=' + p2.videoId;
+    else VoiceControl.playSearch(p2.title + ' ' + (p2.artist || ''));
   }
-  // Other features (crossfade's outro-skip) hand their "next" to the booth
-  // so the DJ's pick wins even on early transitions.
+  // The plan survives the navigations its own picks cause.
+  function resumePlan() {
+    try {
+      const saved = JSON.parse(sessionStorage.getItem('sd-djq-plan') || 'null');
+      sessionStorage.removeItem('sd-djq-plan');
+      if (saved && Array.isArray(saved.plan) && Date.now() - saved.at < 30000) plan = saved.plan;
+    } catch {}
+  }
   function playNow() {
-    if (!active || !pick) return false;
-    const p = pick; pick = null;
-    fire(p);
+    if (!active || !plan.length) return false;
+    fire(plan.shift());
     return true;
   }
-  return { enable, disable, onPoll, playNow };
+  return { enable, disable, onPoll, playNow, resumePlan };
 })();
 
 // --- Normalize: every song at the same perceived volume ----------------------
@@ -2438,8 +2494,12 @@ const AIDJ = (() => {
   }
   function pickSystemVoice() {
     const vs = window.speechSynthesis.getVoices() || [];
-    // Premium/natural voices first — the compact defaults are the robotic ones.
-    for (const re of [/Ava.*Premium|Zoe.*Premium|Evan.*Premium/i, /Samantha|Allison|Ava|Nathan|Evan|Tom/i, /Google US English/i, /Daniel|Karen|Moira/i]) {
+    // Premium/natural voices first — the compact defaults are the robotic
+    // ones. Ordered by the DJ voice preference (male by default).
+    const male = [/Evan.*Premium|Nathan.*Premium|Tom.*Premium/i, /Alex\b|Evan|Nathan|Tom|Aaron/i, /Daniel|Oliver|Fred/i];
+    const female = [/Ava.*Premium|Zoe.*Premium|Allison.*Premium/i, /Samantha|Allison|Ava|Susan|Zoe/i, /Karen|Moira|Tessa/i];
+    const order = (settings && settings.djVoice) === 'female' ? [...female, ...male] : [...male, ...female];
+    for (const re of [...order, /Google US English/i]) {
       const hit = vs.find((v) => re.test(v.name) && (v.lang || '').startsWith('en'));
       if (hit) return hit;
     }
@@ -4589,6 +4649,12 @@ function buildUI() {
       h('div', { class: 'stardust-row' }, [
         miniBtn('toggle-lyrics', 'Lyrics: off')
       ]),
+      h('div', { class: 'stardust-row' }, [
+        h('select', { id: 'stardust-dj-voice', class: 'stardust-text-input' }, [
+          h('option', { value: 'male', text: 'DJ voice: Male' }),
+          h('option', { value: 'female', text: 'DJ voice: Female' })
+        ])
+      ]),
       h('input', { type: 'password', id: 'stardust-transcribe-key', class: 'stardust-text-input', placeholder: 'Groq API key — for song transcription' }),
       h('div', { class: 'stardust-hint', text: 'Free key at console.groq.com → enables "🎙 Transcribe from the song" when no lyrics are found (word-timed).' }),
       toggleRow('Auto word-sync', 'autoWordSync'),
@@ -4717,6 +4783,13 @@ function wirePanel(panel) {
   if (tk) {
     tk.value = settings.transcribeKey || '';
     tk.addEventListener('change', () => { setSetting('transcribeKey', tk.value.trim()); aiOKCache = null; });
+  }
+
+  // DJ voice preference.
+  const dv = panel.querySelector('#stardust-dj-voice');
+  if (dv) {
+    dv.value = settings.djVoice || 'male';
+    dv.addEventListener('change', () => setSetting('djVoice', dv.value));
   }
 
   // Room lights config.
@@ -5268,6 +5341,7 @@ async function boot() {
   // Together room the guest was in when the host changed tracks.
   VoiceControl.resumePendingPlay();
   ListenTogether.resumeRoom();
+  DJQueue.resumePlan();
   // The DJ's pick announcement rides across the navigation it causes.
   try {
     const say = JSON.parse(sessionStorage.getItem('sd-dj-say') || 'null');

@@ -895,6 +895,22 @@ input[type="color"]#stardust-accent {
   transition: opacity 0.6s;
 }
 
+/* ---- DJ's Booth queue-panel takeover ---- */
+.stardust-djq-hidden { display: none !important; }
+#stardust-djq-panel {
+  display: flex; flex-direction: column; gap: 4px; padding: 10px 8px;
+}
+.stardust-djq-head { font-size: 13px; font-weight: 800; color: var(--stardust-accent); padding: 4px 8px 8px; letter-spacing: 0.3px; }
+.stardust-djq-row {
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px;
+  background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);
+}
+.stardust-djq-row:hover { background: color-mix(in srgb, var(--stardust-accent) 10%, transparent); }
+.stardust-djq-n { font-size: 12px; font-weight: 700; color: rgba(255,255,255,0.4); min-width: 16px; text-align: center; }
+.stardust-djq-meta { flex: 1; min-width: 0; }
+.stardust-djq-title { font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.92); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stardust-djq-why { font-size: 11px; color: color-mix(in srgb, var(--stardust-accent) 80%, #fff); font-style: italic; margin-top: 2px; }
+
 /* ---- DJ's Booth up-next pill ---- */
 #stardust-djq {
   position: fixed; left: 18px; bottom: 134px; z-index: 2147483639;

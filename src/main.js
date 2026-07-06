@@ -390,8 +390,8 @@ function registerIpc() {
     try { return await ai.chat(config.get('transcribeKey'), messages || [], { maxTokens, json }); }
     catch (err) { return { error: err.message || 'failed' }; }
   });
-  ipcMain.handle('stardust:ai-tts', async (_e, { text, voice } = {}) => {
-    try { return await ai.tts(config.get('transcribeKey'), text, voice); }
+  ipcMain.handle('stardust:ai-tts', async (_e, { text } = {}) => {
+    try { return await ai.tts(config.get('transcribeKey'), text, config.get('djVoice')); }
     catch (err) { return { error: err.message || 'failed' }; }
   });
   ipcMain.handle('stardust:voice-text', async (_e, { audio } = {}) => {

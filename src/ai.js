@@ -109,15 +109,21 @@ async function googleTTS(text) {
   }
   return bufs.length ? Buffer.concat(bufs) : null;
 }
-async function tts(apiKey, text, voice) {
+async function tts(apiKey, text, pref) {
   if (!text) return { error: 'empty' };
-  const body = { model: TTS_MODEL, voice: voice || TTS_VOICE, input: String(text).slice(0, 600), response_format: 'wav' };
+  // pref 'male' (default) or 'female' picks the Orpheus voice; the Google
+  // fallback voice is female-only, so a male preference skips it and lets
+  // the renderer choose a male system voice instead.
+  const male = pref !== 'female';
+  const body = { model: TTS_MODEL, voice: male ? 'leo' : 'tara', input: String(text).slice(0, 600), response_format: 'wav' };
   let res = await viaProxy('tts', body, true);
   if ((!res || res.status !== 200) && apiKey) res = await post(TTS_URL, body, { Authorization: 'Bearer ' + apiKey }, true);
   if (res && res.status === 200 && res.buf && res.buf.length >= 200) return { buf: res.buf, mime: 'audio/wav' };
   if (res) console.log('[Stardust] groq tts unavailable:', res.status, (res.raw || '').slice(0, 160));
-  const g = await googleTTS(text);
-  if (g) return { buf: g, mime: 'audio/mpeg' };
+  if (!male) {
+    const g = await googleTTS(text);
+    if (g) return { buf: g, mime: 'audio/mpeg' };
+  }
   const terms = res && res.raw && /terms/i.test(res.raw);
   return { error: terms ? 'tts-terms' : 'tts-unavailable' };
 }

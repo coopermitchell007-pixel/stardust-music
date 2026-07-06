@@ -49,7 +49,8 @@ const DEFAULTS = {
   lightsToken: '',
   lightsCount: 120,         // WLED LED count
   lightsMode: 'pulse',      // 'pulse' | 'breathe' | 'strobe' | 'wash'
-  lightsSegments: false     // Govee: per-panel colours via razer streaming (Hexa etc.)
+  lightsSegments: false,    // Govee: per-panel colours via razer streaming (Hexa etc.)
+  djVoice: 'male'           // the DJ's voice: 'male' | 'female'
 };
 
 let cache = null;
