@@ -352,7 +352,8 @@ function registerIpc() {
   // detector; the config lives in settings (panel → Lights).
   const lightsCfg = () => ({
     protocol: config.get('lightsProtocol'), host: config.get('lightsHost'),
-    token: config.get('lightsToken'), count: config.get('lightsCount')
+    token: config.get('lightsToken'), count: config.get('lightsCount'),
+    segments: !!config.get('lightsSegments')
   });
   ipcMain.on('stardust:lights-frame', (_e, f) => { try { lights.frame(lightsCfg(), f); } catch {} });
   ipcMain.handle('stardust:lights-test', async () => { try { return await lights.test(lightsCfg()); } catch { return false; } });
@@ -375,8 +376,16 @@ function registerIpc() {
     catch (err) { return { error: err.message || 'failed' }; }
   });
   ipcMain.handle('stardust:voice-text', async (_e, { audio } = {}) => {
-    try { return await transcribe.speechToText(audio, config.get('transcribeKey')); }
-    catch (err) { return { error: err.message || 'failed' }; }
+    try {
+      const key = config.get('transcribeKey');
+      return key ? await transcribe.speechToText(audio, key) : await ai.stt(audio);
+    } catch (err) { return { error: err.message || 'failed' }; }
+  });
+  // Can the AI features run at all? True when the shared proxy is deployed
+  // OR the user set their own key — the renderer gates its UI on this.
+  ipcMain.handle('stardust:ai-available', async () => {
+    if (config.get('transcribeKey')) return true;
+    try { return await ai.proxyAvailable(); } catch { return false; }
   });
   // Raw track audio for renderer-side analysis (X-ray seekbar). Same source
   // rules as word-sync: the sniffed stream only when its duration vouches.

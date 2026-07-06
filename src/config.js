@@ -47,7 +47,9 @@ const DEFAULTS = {
   lightsProtocol: 'wled',   // 'wled' | 'govee' | 'hue' | 'nanoleaf'
   lightsHost: '',
   lightsToken: '',
-  lightsCount: 120          // WLED LED count
+  lightsCount: 120,         // WLED LED count
+  lightsMode: 'pulse',      // 'pulse' | 'breathe' | 'strobe' | 'wash'
+  lightsSegments: false     // Govee: per-panel colours via razer streaming (Hexa etc.)
 };
 
 let cache = null;

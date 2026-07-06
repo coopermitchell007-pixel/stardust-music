@@ -383,7 +383,7 @@ const Visualizer = (() => {
   //   source -> bass -> treble -> volume -> panner -> analyser -> destination
   //                                          panner -> reverb -> wet -> analyser
   let audioCtx = null, analyser = null, freq = null, attachedEl = null;
-  let bass = null, treble = null, volume = null, panner = null, reverb = null, wet = null, lfo = null, fade = null;
+  let bass = null, treble = null, volume = null, norm = null, panner = null, reverb = null, wet = null, lfo = null, fade = null;
   let karOn = false, karNodes = null; // karaoke (center-vocal cancel) rewiring
   let vinylSrc = null, vinylGain = null; // vinyl crackle bed + warmth EQ
   let useReal = false;       // true once we get non-zero spectrum data
@@ -443,6 +443,7 @@ const Visualizer = (() => {
         bass = audioCtx.createBiquadFilter(); bass.type = 'lowshelf'; bass.frequency.value = 220; bass.gain.value = 0;
         treble = audioCtx.createBiquadFilter(); treble.type = 'highshelf'; treble.frequency.value = 3200; treble.gain.value = 0;
         volume = audioCtx.createGain(); volume.gain.value = 1;
+        norm = audioCtx.createGain(); norm.gain.value = 1; // per-track loudness normalization
         panner = audioCtx.createStereoPanner ? audioCtx.createStereoPanner() : null;
         reverb = audioCtx.createConvolver(); reverb.buffer = makeImpulse(2.4, 3.0);
         wet = audioCtx.createGain(); wet.gain.value = 0;
@@ -451,8 +452,9 @@ const Visualizer = (() => {
       const src = audioCtx.createMediaElementSource(el);
       // dry chain
       src.connect(bass); bass.connect(treble); treble.connect(volume);
-      const tail = panner || volume;
-      if (panner) volume.connect(panner);
+      volume.connect(norm);
+      const tail = panner || norm;
+      if (panner) norm.connect(panner);
       tail.connect(analyser);
       // wet (reverb) send in parallel
       tail.connect(reverb); reverb.connect(wet); wet.connect(analyser);
@@ -636,6 +638,12 @@ const Visualizer = (() => {
         treble.connect(volume);
         karOn = false;
       }
+    },
+    // Per-track loudness correction (Normalize feature) — eased, not stepped.
+    normalize: (k) => {
+      ensureAudio();
+      if (!norm || !audioCtx) return;
+      try { norm.gain.setTargetAtTime(Math.max(0.4, Math.min(2, k || 1)), audioCtx.currentTime, 0.6); } catch {}
     },
     // Smoothly ramp the audible level (for crossfade/fade transitions).
     fade: (target, seconds) => {
@@ -874,7 +882,6 @@ const BEHAVIORS = {
   'audio-karaoke':      { on: () => Visualizer.fx.karaoke(true), off: () => Visualizer.fx.karaoke(false) },
   'audio-vinyl':        { on: () => Visualizer.fx.vinyl(true),   off: () => Visualizer.fx.vinyl(false) },
   'feat-focus-instrumental': { on: () => FocusMode.enable(), off: () => FocusMode.disable() },
-  'feat-practice-mode': { on: () => PracticeMode.show(), off: () => PracticeMode.hide() },
   'feat-xray-seekbar':  { on: () => XraySeekbar.enable(), off: () => XraySeekbar.disable() },
   'feat-ai-dj':         { on: () => AIDJ.enable(), off: () => AIDJ.disable() },
   'feat-voice-control': { on: () => VoiceControl.show(), off: () => VoiceControl.hide() },
@@ -886,7 +893,13 @@ const BEHAVIORS = {
   'feat-karaoke-night': { on: () => KaraokeNight.show(), off: () => KaraokeNight.hide() },
   'feat-phone-remote':  { on: () => PhoneRemote.enable(), off: () => PhoneRemote.disable() },
   'feat-lyric-learn':   { on: () => LyricLearn.enable(), off: () => LyricLearn.disable() },
-  'feat-release-radar': { on: () => ReleaseRadar.enable(), off: () => ReleaseRadar.disable() }
+  'feat-release-radar': { on: () => ReleaseRadar.enable(), off: () => ReleaseRadar.disable() },
+  'audio-normalize':    { on: () => Normalize.enable(), off: () => Normalize.disable() },
+  'feat-intro-skip':    { on: () => IntroSkip.enable(), off: () => IntroSkip.disable() },
+  'feat-skip-learning': { on: () => SkipLearn.enable(), off: () => SkipLearn.disable() },
+  'feat-energy-dial':   { on: () => EnergyDial.show(), off: () => EnergyDial.hide() },
+  'feat-ai-playlist':   { on: () => AIPlaylist.show(), off: () => AIPlaylist.hide() },
+  'feat-tv-mode':       { on: () => TVMode.show(), off: () => TVMode.hide() }
 };
 
 // --- Vinyl Spin: find the actual artwork <img> at runtime (YTM class names are
@@ -1298,87 +1311,254 @@ const FocusMode = (() => {
   return { enable, disable, onTrack };
 })();
 
-// --- Practice mode: A-B loop + pitch-preserved slowdown for learning songs --
-const PracticeMode = (() => {
-  let el = null, timer = null, a = null, b = null, si = 0;
-  const SPEEDS = [1, 0.75, 0.5];
-  const fmt = (s) => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
-  function refresh() {
-    if (!el) return;
-    el.querySelector('#sd-pr-a').textContent = a == null ? 'A' : 'A ' + fmt(a);
-    el.querySelector('#sd-pr-b').textContent = b == null ? 'B' : 'B ' + fmt(b);
-    el.querySelector('#sd-pr-s').textContent = SPEEDS[si] === 1 ? '1×' : SPEEDS[si] === 0.75 ? '¾×' : '½×';
-    el.classList.toggle('looping', a != null && b != null);
+// --- Normalize: every song at the same perceived volume ----------------------
+// The X-ray analysis carries each track's absolute loudness; a dedicated gain
+// node eases toward the correction so quiet masters come up and loud ones down.
+const Normalize = (() => {
+  let active = false;
+  const TARGET = 0.13; // typical mean RMS of a modern master
+  function enable() { active = true; onTrack(readNowPlaying()); }
+  function disable() { active = false; Visualizer.fx.normalize(1); }
+  async function onTrack(np) {
+    if (!active || !np || !np.isTrack) return;
+    const key = np.title + '|' + np.artist;
+    const entry = XraySeekbar.cached(key) || await (async () => { XraySeekbar.prefetch(np); return null; })();
+    // The profile may land a couple seconds in — poll briefly for it.
+    let tries = 0;
+    const iv = setInterval(() => {
+      const e = XraySeekbar.cached(key);
+      if (e || ++tries > 20) {
+        clearInterval(iv);
+        if (!active || !e || !(e.loud > 0.005)) return;
+        const cur = readNowPlaying();
+        if (!cur || cur.title + '|' + cur.artist !== key) return;
+        Visualizer.fx.normalize(TARGET / e.loud);
+      }
+    }, 700);
+    if (entry && entry.loud > 0.005) { clearInterval(iv); Visualizer.fx.normalize(TARGET / entry.loud); }
   }
-  function setA() { const v = q('video'); if (!v) return; a = v.currentTime; if (b != null && b <= a) b = null; toast('Loop start set — play to the end point and press B'); refresh(); }
-  function setB() {
-    const v = q('video'); if (!v) return;
-    if (a == null || v.currentTime <= a + 0.5) { toast('Press A first, then B a little later'); return; }
-    b = v.currentTime; v.currentTime = a; refresh();
-  }
-  function clearLoop() { a = b = null; refresh(); }
-  function cycleSpeed() { si = (si + 1) % SPEEDS.length; refresh(); }
-  function show() {
-    if (el) return;
-    el = h('div', { id: 'stardust-practice' }, [
-      h('button', { class: 'stardust-qa', id: 'sd-pr-a', title: 'Set loop start (at the playhead)', text: 'A' }),
-      h('button', { class: 'stardust-qa', id: 'sd-pr-b', title: 'Set loop end — starts looping', text: 'B' }),
-      h('button', { class: 'stardust-qa', id: 'sd-pr-s', title: 'Cycle speed 1× → ¾× → ½× (pitch preserved)', text: '1×' }),
-      h('button', { class: 'stardust-qa', id: 'sd-pr-x', title: 'Clear the loop', text: '✕' })
-    ]);
-    el.querySelector('#sd-pr-a').addEventListener('click', setA);
-    el.querySelector('#sd-pr-b').addEventListener('click', setB);
-    el.querySelector('#sd-pr-s').addEventListener('click', cycleSpeed);
-    el.querySelector('#sd-pr-x').addEventListener('click', clearLoop);
-    document.body.appendChild(el);
-    timer = setInterval(tick, 150);
-    refresh();
-  }
-  function hide() {
-    if (timer) { clearInterval(timer); timer = null; }
-    if (el) { el.remove(); el = null; }
-    a = b = null; si = 0;
-    const v = q('video');
-    if (v) { try { v.playbackRate = 1; } catch {} }
-    enforceRate(); // hand the rate back to nightcore/slowed if one is on
-  }
-  function onTrack() { if (el) clearLoop(); }
-  function tick() {
-    const v = q('video'); if (!v) return;
-    // Practice speed wins over rateMode while the bar is up; pitch stays true.
-    const target = SPEEDS[si];
-    if (target !== 1) {
-      try { v.preservesPitch = v.mozPreservesPitch = v.webkitPreservesPitch = true; } catch {}
-      if (Math.abs(v.playbackRate - target) > 0.001) { try { v.playbackRate = target; } catch {} }
-    } else if (Math.abs(v.playbackRate - 1) > 0.001 && !rateMode) {
-      enforceRate(); // back to 1× (or the nightcore/slowed rate if one is on)
+  return { enable, disable, onTrack };
+})();
+
+// --- Intro skip: get to the song ---------------------------------------------
+const IntroSkip = (() => {
+  let active = false, doneFor = '';
+  function enable() { active = true; }
+  function disable() { active = false; }
+  function onPoll(np) {
+    if (!active || !np || !np.isTrack || !np.playing) return;
+    const key = np.title + '|' + np.artist;
+    if (key === doneFor) return;
+    const v = q('video'); if (!v || v.currentTime > 20) { doneFor = key; return; }
+    const e = XraySeekbar.cached(key); if (!e) { XraySeekbar.prefetch(np); return; }
+    doneFor = key;
+    // First sustained energy = the song proper starting.
+    const N = e.profile.length;
+    let start = 0;
+    for (let i = 0; i < N - 3; i++) {
+      if (e.profile[i] > 0.3 && e.profile[i + 1] > 0.25 && e.profile[i + 2] > 0.25) { start = i / N * (e.dur || v.duration || 1); break; }
     }
-    if (a != null && b != null && (v.currentTime > b || v.currentTime < a - 0.5)) v.currentTime = a;
+    if (start > 14 && v.currentTime < start - 2) {
+      try { v.currentTime = Math.max(0, start - 1.5); toast('⏩ Skipped a ' + Math.round(start) + 's intro'); } catch {}
+    }
+  }
+  return { enable, disable, onPoll };
+})();
+
+// --- Skip learning: it notices what you always skip ---------------------------
+const SkipLearn = (() => {
+  let active = false, lastNp = null, lastPos = 0;
+  const counts = () => { try { return JSON.parse(localStorage.getItem('sd-skips') || '{}'); } catch { return {}; } };
+  const save = (c) => localStorage.setItem('sd-skips', JSON.stringify(c));
+  const allow = new Set();
+  function enable() { active = true; }
+  function disable() { active = false; }
+  function onPoll(np) {
+    if (!active || !np) return;
+    const key = np.title + '|' + np.artist;
+    const prevKey = lastNp ? lastNp.title + '|' + lastNp.artist : '';
+    if (lastNp && key !== prevKey && np.isTrack) {
+      // The previous song ended early → that was a skip; count it.
+      const dur = lastNp.duration || 0;
+      if (dur > 60 && lastPos < Math.min(60, dur * 0.4) && lastPos > 3) {
+        const c = counts();
+        c[prevKey] = (c[prevKey] || 0) + 1;
+        save(c);
+      }
+      // And if THIS song is a serial skip, spare the user the first bars.
+      const c = counts();
+      if ((c[key] || 0) >= 3 && !allow.has(key)) {
+        toast('⏭ You always skip "' + np.title + '" — skipping. Replay it to keep it.');
+        allow.add(key); // one auto-skip per session, replay = keep
+        setTimeout(() => doCommand('next'), 600);
+      }
+    }
+    if (np.isTrack) { lastNp = np; lastPos = np.position || 0; }
+  }
+  return { enable, disable, onPoll };
+})();
+
+// --- Energy dial: keep the vibe where you set it ------------------------------
+// Reactive autoplay filter: each new track's measured energy is compared to
+// the one before; tracks that fight the dial get skipped (with a toast).
+const EnergyDial = (() => {
+  let btn = null, mode = 0, lastLoud = 0; // 0 off, 1 keep, 2 chill, 3 rise
+  const LABEL = ['⚡ off', '⚡ keep', '⚡ chill', '⚡ rise'];
+  function show() {
+    if (btn) return;
+    btn = h('button', { id: 'stardust-ed-btn', class: 'stardust-qa', title: 'Energy dial — keep / chill / rise', text: LABEL[0] });
+    btn.addEventListener('click', () => { mode = (mode + 1) % 4; btn.textContent = LABEL[mode]; btn.classList.toggle('active', mode > 0); toast('Energy dial: ' + LABEL[mode].slice(2)); });
+    document.body.appendChild(btn);
+  }
+  function hide() { if (btn) { btn.remove(); btn = null; } mode = 0; }
+  function onTrack(np) {
+    if (!btn || !mode || !np || !np.isTrack) return;
+    const key = np.title + '|' + np.artist;
+    XraySeekbar.prefetch(np);
+    let tries = 0;
+    const iv = setInterval(() => {
+      const e = XraySeekbar.cached(key);
+      if (!e && ++tries < 14) return;
+      clearInterval(iv);
+      if (!e || !mode) return;
+      const cur = readNowPlaying();
+      if (!cur || cur.title + '|' + cur.artist !== key) return;
+      const loud = e.loud || 0;
+      if (lastLoud > 0) {
+        const ratio = loud / lastLoud;
+        const bad = (mode === 1 && (ratio > 1.6 || ratio < 0.6))
+          || (mode === 2 && ratio > 1.35)
+          || (mode === 3 && ratio < 0.8);
+        if (bad) { toast('⚡ "' + np.title + '" fights the dial — skipping'); doCommand('next'); return; }
+      }
+      lastLoud = loud || lastLoud;
+    }, 700);
   }
   return { show, hide, onTrack };
+})();
+
+// --- AI playlist: describe it, it plays it -------------------------------------
+const AIPlaylist = (() => {
+  let btn = null, queue = [], at = -1, watching = null;
+  function show() {
+    if (btn) return;
+    btn = h('button', { id: 'stardust-pl-btn', class: 'stardust-qa', title: 'AI playlist — describe what you want to hear', text: '📝' });
+    btn.addEventListener('click', ask);
+    document.body.appendChild(btn);
+  }
+  function hide() { stop(); if (btn) { btn.remove(); btn = null; } }
+  function stop() { queue = []; at = -1; if (watching) { clearInterval(watching); watching = null; } }
+  async function ask() {
+    if (!(await aiOK())) { toast('AI playlists need the shared proxy or a Groq key'); return; }
+    const want = prompt('Describe the playlist — "45 minutes for a night drive, heavier back half"');
+    if (!want) return;
+    toast('📝 Building it…');
+    const s = await ipcRenderer.invoke('stardust:stats').catch(() => null);
+    const lib = ((s && s.topSongs) || []).slice(0, 40).map((t) => t.title + ' — ' + t.artist).join('\n');
+    const r = await ipcRenderer.invoke('stardust:ai-chat', {
+      messages: [
+        { role: 'system', content: 'Build a playlist as JSON: {"songs":["<title> <artist>", ...]} with 8-12 entries. Prefer songs from the listener\'s library below when they fit the request; fill gaps with well-known songs that match. Order matters.\n\nLIBRARY:\n' + lib },
+        { role: 'user', content: want }
+      ], maxTokens: 500, json: true
+    }).catch(() => null);
+    let songs = [];
+    try { songs = JSON.parse((r && r.text) || '').songs || []; } catch {}
+    if (!songs.length) { toast('Could not build that — try rephrasing'); return; }
+    queue = songs; at = 0;
+    toast('📝 ' + songs.length + ' songs — starting with ' + songs[0]);
+    VoiceControl.playSearch(songs[0]);
+    watch();
+  }
+  // Drive the session: when the current song is nearly done, launch the next.
+  function watch() {
+    if (watching) clearInterval(watching);
+    watching = setInterval(() => {
+      if (at < 0 || at >= queue.length - 1) { stop(); return; }
+      const v = q('video');
+      if (v && isFinite(v.duration) && v.duration > 0 && v.duration - v.currentTime < 2.5) {
+        at++;
+        toast('📝 Next: ' + queue[at]);
+        VoiceControl.playSearch(queue[at]);
+      }
+    }, 1000);
+  }
+  return { show, hide };
+})();
+
+// --- TV mode: the jukebox idle screen ------------------------------------------
+const TVMode = (() => {
+  let btn = null, wrap = null, timer = null;
+  function show() {
+    if (btn) return;
+    btn = h('button', { id: 'stardust-tv-btn', class: 'stardust-qa', title: 'TV mode — fullscreen jukebox screen', text: '📺' });
+    btn.addEventListener('click', open);
+    document.body.appendChild(btn);
+  }
+  function hide() { close(); if (btn) { btn.remove(); btn = null; } }
+  function open() {
+    if (wrap) return;
+    wrap = h('div', { id: 'stardust-tv' }, [
+      h('div', { id: 'stardust-tv-clock' }),
+      h('img', { id: 'stardust-tv-art' }),
+      h('div', { id: 'stardust-tv-title' }),
+      h('div', { id: 'stardust-tv-artist' }),
+      h('div', { id: 'stardust-tv-line' })
+    ]);
+    wrap.addEventListener('click', close);
+    document.body.appendChild(wrap);
+    timer = setInterval(paint, 500);
+    paint();
+  }
+  function close() { if (timer) { clearInterval(timer); timer = null; } if (wrap) { wrap.remove(); wrap = null; } }
+  function paint() {
+    if (!wrap) return;
+    const np = readNowPlaying();
+    const st = Lyrics.state();
+    wrap.querySelector('#stardust-tv-clock').textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    if (np) {
+      const art = wrap.querySelector('#stardust-tv-art');
+      const big = (np.art || '').replace(/=w\d+-h\d+/, '=w544-h544');
+      if (art.src !== big && big) art.src = big;
+      wrap.querySelector('#stardust-tv-title').textContent = np.title || '';
+      wrap.querySelector('#stardust-tv-artist').textContent = np.artist || '';
+    }
+    let line = '';
+    if (st.synced && st.synced.length) {
+      const v = q('video');
+      const t = v ? (v.currentTime || 0) + 0.12 : 0;
+      for (const l of st.synced) { if (l.t <= t) line = l.s || ''; else break; }
+    }
+    wrap.querySelector('#stardust-tv-line').textContent = line;
+  }
+  return { show, hide };
 })();
 
 // --- Phone remote: your phone as controller + second-screen lyrics ----------
 const PhoneRemote = (() => {
   let active = false, btn = null, remoteUrl = null;
+  const address = () => remoteUrl;
+  const announce = () => { const p = document.getElementById('stardust-panel'); if (p) p.dispatchEvent(new Event('stardust-remote-changed')); };
   async function enable() {
     active = true;
     remoteUrl = await ipcRenderer.invoke('stardust:remote-start').catch(() => null);
     if (!remoteUrl) { toast('Could not start the remote server'); return; }
     if (!btn) {
-      btn = h('button', { id: 'stardust-pr-btn', class: 'stardust-qa', title: 'Phone remote — click to see the address', text: '📱' });
+      btn = h('button', { id: 'stardust-pr-btn', class: 'stardust-qa', title: 'Phone remote — click to copy the address', text: '📱' });
       btn.addEventListener('click', () => {
         try { navigator.clipboard.writeText(remoteUrl); } catch {}
         toast('📱 On your phone: ' + remoteUrl + ' (copied)');
       });
       document.body.appendChild(btn);
     }
-    toast('📱 Phone remote at ' + remoteUrl);
+    toast('📱 Phone remote at ' + remoteUrl + ' — address copied');
+    try { navigator.clipboard.writeText(remoteUrl); } catch {}
+    announce();
   }
   function disable() {
-    active = false;
+    active = false; remoteUrl = null;
     ipcRenderer.invoke('stardust:remote-stop').catch(() => {});
     if (btn) { btn.remove(); btn = null; }
+    announce();
   }
   // Ships now-playing + the live lyric lines to the phone every poll.
   function onPoll(np) {
@@ -1394,12 +1574,15 @@ const PhoneRemote = (() => {
       prevLine = idx > 0 ? (st.synced[idx - 1].s || '') : '';
       nextLine = st.synced[idx + 1] ? (st.synced[idx + 1].s || '') : '';
     }
+    const bars = Visualizer.getBars(4);
     ipcRenderer.send('stardust:remote-state', {
       title: np.title, artist: np.artist, art: np.art, playing: np.playing,
+      position: np.position, duration: np.duration,
+      accent: np.accent, beat: (bars[0] + bars[1]) / 2 > 0.72,
       line, prevLine, nextLine
     });
   }
-  return { enable, disable, onPoll };
+  return { enable, disable, onPoll, address };
 })();
 
 // --- Lyric learn: right-click a word, learn it -------------------------------
@@ -1433,7 +1616,7 @@ const LyricLearn = (() => {
   }
   async function lookup(word, context, x, y) {
     if (!word) return;
-    if (!(settings && settings.transcribeKey)) { toast('Lyric Learn needs a Groq key (panel → Settings)'); return; }
+    if (!(await aiOK())) { toast('Lyric Learn needs the shared AI proxy or a Groq key (panel → Settings)'); return; }
     if (pop) pop.remove();
     pop = h('div', { id: 'stardust-ll-pop', text: '📖 ' + word + ' …' });
     pop.style.left = Math.min(x, window.innerWidth - 320) + 'px';
@@ -1509,27 +1692,49 @@ const ReleaseRadar = (() => {
 })();
 
 // --- Room lights: beat energy + track colour → real lights on the LAN -------
-// Samples the visualizer's low end ~10x/s and streams colour frames to the
-// main process, which speaks WLED / Govee / Hue / Nanoleaf (panel → Lights).
+// Samples the spectrum ~10x/s and streams colour FRAMES (per-segment arrays)
+// to the main process, which speaks WLED / Govee / Hue / Nanoleaf.
+// Modes (panel → Lights): pulse (beat-driven), breathe (slow swell),
+// strobe (flash on vocal onsets), wash (energy-tinted slow hue drift).
 const RoomLights = (() => {
-  let timer = null;
+  let timer = null, phase = 0;
   const hexRgb = (hex) => {
     const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
-    if (!m) return { r: 139, g: 92, b: 255 };
+    if (!m) return [139, 92, 255];
     const v = parseInt(m[1], 16);
-    return { r: v >> 16, g: (v >> 8) & 255, b: v & 255 };
+    return [v >> 16, (v >> 8) & 255, v & 255];
   };
-  function enable() {
-    if (timer) return;
-    timer = setInterval(() => {
-      if (!(settings && settings.lightsHost)) return;
-      const bars = Visualizer.getBars(12);
-      // The bottom bars carry the kick/bass — that's the pulse.
-      const bass = (bars[0] + bars[1] + bars[2]) / 3;
-      const c = hexRgb(reactiveAccent || (settings && settings.accentOverride) || (activeTheme && activeTheme.accent) || '#8b5cff');
-      ipcRenderer.send('stardust:lights-frame', { r: c.r, g: c.g, b: c.b, intensity: 0.15 + bass * 0.85 });
-    }, 100);
+  const rotate = ([r, g, b], deg) => { // cheap hue rotation for the wash mode
+    const rad = deg * Math.PI / 180, cos = Math.cos(rad), sin = Math.sin(rad);
+    const mix = (a, b2, c) => Math.max(0, Math.min(255, Math.round(a * (cos + (1 - cos) / 3) + b2 * ((1 - cos) / 3 - sin / 1.732) + c * ((1 - cos) / 3 + sin / 1.732))));
+    return [mix(r, g, b), mix(g, b, r), mix(b, r, g)];
+  };
+  function frame() {
+    if (!(settings && settings.lightsHost)) return;
+    const accent = hexRgb(reactiveAccent || (settings && settings.accentOverride) || (activeTheme && activeTheme.accent) || '#8b5cff');
+    const bars = Visualizer.getBars(10);
+    const bass = (bars[0] + bars[1] + bars[2]) / 3;
+    const total = bars.reduce((a, b) => a + b, 0) / bars.length;
+    const mode = settings.lightsMode || 'pulse';
+    phase += 0.1;
+    let colors, intensity;
+    if (mode === 'breathe') {
+      intensity = 0.25 + 0.35 * (Math.sin(phase * 0.6) * 0.5 + 0.5) + total * 0.3;
+      colors = [accent];
+    } else if (mode === 'strobe') {
+      const hit = Visualizer.vocalOnset() > 0 || bass > 0.8;
+      intensity = hit ? 1 : 0.12;
+      colors = hit ? [[255, 255, 255]] : [accent];
+    } else if (mode === 'wash') {
+      intensity = 0.35 + total * 0.65;
+      colors = [0, 1, 2, 3, 4, 5].map((i) => rotate(accent, phase * 6 + i * 18));
+    } else { // pulse — per-segment spectrum in the accent's family
+      intensity = 0.15 + bass * 0.85;
+      colors = bars.map((b, i) => rotate(accent, i * 8).map((c) => Math.round(c * (0.25 + 0.75 * b))));
+    }
+    ipcRenderer.send('stardust:lights-frame', { colors, intensity });
   }
+  function enable() { if (!timer) timer = setInterval(frame, 100); }
   function disable() { if (timer) { clearInterval(timer); timer = null; } }
   return { enable, disable };
 })();
@@ -1629,6 +1834,7 @@ const RhythmGame = (() => {
 const KaraokeNight = (() => {
   let btn = null, wrap = null, timer = null, micCtx = null, micAn = null, micStream = null;
   let micPrev = null, micAvg = 0, sungHits = 0, sungChances = 0, lastLineEl = null, lastIdx = -1;
+  let duet = false, lastT = 0;
   function show() {
     if (btn) return;
     btn = h('button', { id: 'stardust-kn-btn', class: 'stardust-qa', title: 'Karaoke Night — fullscreen sing-along, vocals cancelled', text: '🎤✨' });
@@ -1648,12 +1854,18 @@ const KaraokeNight = (() => {
       h('div', { id: 'stardust-kn-next' }),
       h('div', { class: 'stardust-row', id: 'stardust-kn-controls' }, [
         h('button', { class: 'stardust-mini-btn', id: 'stardust-kn-mic', text: '🎙 Score my singing' }),
+        h('button', { class: 'stardust-mini-btn', id: 'stardust-kn-duet', text: '👥 Duet' }),
         h('button', { class: 'stardust-mini-btn', id: 'stardust-kn-close', text: 'Exit' })
       ])
     ]);
     document.body.appendChild(wrap);
     wrap.querySelector('#stardust-kn-close').addEventListener('click', close);
     wrap.querySelector('#stardust-kn-mic').addEventListener('click', micToggle);
+    wrap.querySelector('#stardust-kn-duet').addEventListener('click', () => {
+      duet = !duet;
+      wrap.querySelector('#stardust-kn-duet').textContent = duet ? '👥 Duet: on' : '👥 Duet';
+      wrap.classList.toggle('duet', duet);
+    });
     timer = setInterval(paint, 66);
   }
   function close() {
@@ -1694,6 +1906,12 @@ const KaraokeNight = (() => {
     const v = q('video');
     if (!wrap || !v || !st.synced.length) return;
     const t = (v.currentTime || 0) + 0.12;
+    // Restart/seek-back (replay, loop): fresh scoring run, words un-counted.
+    if (t < lastT - 5) {
+      sungHits = 0; sungChances = 0;
+      for (const l of st.synced) for (const w of (l.words || [])) delete w._counted;
+    }
+    lastT = t;
     let idx = -1;
     for (let i = 0; i < st.synced.length; i++) { if (st.synced[i].t <= t) idx = i; else break; }
     const put2 = (id, text) => { const el = wrap.querySelector(id); if (el.textContent !== text) el.textContent = text; };
@@ -1707,6 +1925,11 @@ const KaraokeNight = (() => {
       if (line) for (const w of (line.words && line.words.length ? line.words : [{ text: line.s || '♪' }])) {
         lineEl.appendChild(h('span', { class: 'kn-w', text: w.text + ' ' }));
       }
+      // Duet: alternate lines belong to alternate singers, colour-coded.
+      if (duet) {
+        lineEl.classList.toggle('singer-b', idx % 2 === 1);
+        put2('#stardust-kn-score', (idx % 2 === 0 ? '🟣 Singer 1' : '🩵 Singer 2') + ' — this line');
+      } else lineEl.classList.remove('singer-b');
     }
     if (line && line.words && line.words.length) {
       const spans = lineEl.children;
@@ -1727,7 +1950,7 @@ const KaraokeNight = (() => {
         }
         const pct = sungChances ? Math.round(100 * sungHits / sungChances) : 0;
         put2('#stardust-kn-score', sungChances > 4 ? '🎙 ' + pct + '% on the words' : '🎙 sing!');
-      } else put2('#stardust-kn-score', '');
+      } else if (!duet) put2('#stardust-kn-score', '');
     }
   }
   return { show, hide };
@@ -1828,9 +2051,10 @@ const ListenTogether = (() => {
           h('button', { class: 'stardust-mini-btn', id: 'stardust-lt-join', text: 'Join' })
         ]),
         h('button', { class: 'stardust-market-btn primary', id: 'stardust-lt-create', text: 'Create a room' }),
+        h('button', { class: 'stardust-mini-btn', id: 'stardust-lt-aux', text: '🎧 Take the aux' }),
         h('div', { id: 'stardust-lt-chatlog' }),
         h('div', { class: 'stardust-ask-row' }, [
-          h('input', { id: 'stardust-lt-msg', placeholder: 'Say something…' }),
+          h('input', { id: 'stardust-lt-msg', placeholder: 'Chat — or /play song name to request' }),
           h('button', { class: 'stardust-mini-btn', id: 'stardust-lt-send', text: '➤' })
         ])
       ]);
@@ -1845,11 +2069,26 @@ const ListenTogether = (() => {
         const code = panel.querySelector('#stardust-lt-code').value.trim().toUpperCase();
         if (code.length >= 4) enterRoom(code, false);
       });
+      panel.querySelector('#stardust-lt-aux').addEventListener('click', () => {
+        if (!room || isHost) return;
+        isHost = true;
+        try { sessionStorage.setItem('sd-room', JSON.stringify({ code: room, host: true })); } catch {}
+        Realtime.send(topicOf(room), 'aux', { to: me });
+        toast('🎧 You have the aux — the room follows you now');
+        renderState();
+      });
       const sendMsg = () => {
         const inp = panel.querySelector('#stardust-lt-msg');
         const text = inp.value.trim();
         if (!text || !room) return;
         inp.value = '';
+        // "/play query" = a song request, surfaced to whoever has the aux.
+        const req = text.match(/^\/play\s+(.+)/i);
+        if (req) {
+          Realtime.send(topicOf(room), 'request', { name: me, query: req[1].slice(0, 120) });
+          addChat(me + ' (you)', '🎵 requested "' + req[1] + '"');
+          return;
+        }
         Realtime.send(topicOf(room), 'chat', { name: me, text: text.slice(0, 200) });
         addChat(me + ' (you)', text);
       };
@@ -1863,9 +2102,11 @@ const ListenTogether = (() => {
     if (!panel) return;
     const st = panel.querySelector('#stardust-lt-state');
     st.textContent = room
-      ? (isHost ? 'Hosting room ' + room + ' — others follow your playback.' : 'In room ' + room + ' — following the host.')
+      ? (isHost ? 'Hosting room ' + room + ' — others follow your playback.' : 'In room ' + room + ' — following whoever has the aux.')
       : 'Create a room (you drive) or join with a code.';
     panel.querySelector('#stardust-lt-create').textContent = room ? 'Leave room ' + room : 'Create a room';
+    const aux = panel.querySelector('#stardust-lt-aux');
+    if (aux) aux.style.display = room && !isHost ? '' : 'none';
   }
   function addChat(name, text) {
     if (!panel) return;
@@ -1877,6 +2118,8 @@ const ListenTogether = (() => {
   function enterRoom(code, host) {
     if (room) { leaveRoom(); if (panel && panel.querySelector('#stardust-lt-create').textContent.startsWith('Leave')) { renderState(); return; } }
     room = code; isHost = host; lastAppliedTrack = '';
+    // Survive full-page navigations (following the host reloads the page).
+    try { sessionStorage.setItem('sd-room', JSON.stringify({ code, host })); } catch {}
     Realtime.join(topicOf(code), onEvent);
     renderState();
     if (btn) btn.classList.add('active');
@@ -1885,13 +2128,37 @@ const ListenTogether = (() => {
     if (!room) return;
     Realtime.leave(topicOf(room));
     room = null; isHost = false;
+    try { sessionStorage.removeItem('sd-room'); } catch {}
     if (btn) btn.classList.remove('active');
     renderState();
+  }
+  // Rejoin after a page reload — guests reload every time they follow the
+  // host to a new track, and losing the room on arrival broke following.
+  function resumeRoom() {
+    let saved = null;
+    try { saved = JSON.parse(sessionStorage.getItem('sd-room') || 'null'); } catch {}
+    if (!saved || !saved.code) return;
+    room = saved.code; isHost = !!saved.host; lastAppliedTrack = '';
+    Realtime.join(topicOf(room), onEvent);
+    if (btn) btn.classList.add('active');
   }
   function onEvent(event, p) {
     if (event === 'chat' && p) { addChat(p.name || 'someone', String(p.text || '')); toast('💬 ' + (p.name || 'someone') + ': ' + p.text); }
     if (event === 'sync' && p && !isHost) applySync(p);
     if (event === 'quiz' && p) toast('🎯 ' + (p.name || 'someone') + ' scored ' + p.score + '% on the lyric quiz');
+    // Pass the aux: the host hands the room to someone; whoever matches the
+    // named id becomes host, everyone else follows them.
+    if (event === 'aux' && p && p.to) {
+      const mine = p.to === me;
+      if (mine && !isHost) { isHost = true; toast('🎧 You have the aux — the room follows you now'); }
+      else if (!mine && isHost) { isHost = false; toast('🎧 ' + p.to + ' has the aux'); }
+      try { sessionStorage.setItem('sd-room', JSON.stringify({ code: room, host: isHost })); } catch {}
+      renderState();
+    }
+    if (event === 'request' && p && isHost) {
+      toast('🎵 ' + (p.name || 'someone') + ' requests: ' + p.query + ' — say yes?');
+      addChat(p.name || 'someone', '🎵 requested "' + p.query + '"');
+    }
   }
   async function applySync(p) {
     const v = q('video');
@@ -1924,7 +2191,7 @@ const ListenTogether = (() => {
     });
   }
   function shareQuizScore(score) { if (room) Realtime.send(topicOf(room), 'quiz', { name: me, score }); }
-  return { show, hide, onPoll, shareQuizScore };
+  return { show, hide, onPoll, shareQuizScore, resumeRoom };
 })();
 
 // --- World ticker: what Stardust listeners are playing right now -------------
@@ -1933,14 +2200,17 @@ const ListenTogether = (() => {
 const WorldTicker = (() => {
   const TOPIC = 'realtime:stardust:world';
   let el = null, lastSent = 0, feed = [], idx = 0, cycle = null, active = false;
+  let live = null;
   function enable() {
     if (active) return;
     active = true;
+    mount(); // visible immediately — "listening" until the world drifts in
     Realtime.join(TOPIC, (event, p) => {
       if (event !== 'np' || !p || !p.t) return;
-      feed.push({ t: String(p.t).slice(0, 80), a: String(p.a || '').slice(0, 80) });
-      if (feed.length > 30) feed.shift();
+      feed.push({ t: String(p.t).slice(0, 80), a: String(p.a || '').slice(0, 80), at: Date.now() });
+      if (feed.length > 60) feed.shift();
       if (!el) mount();
+      if (live) renderLive();
     });
     cycle = setInterval(step, 7000);
   }
@@ -1949,10 +2219,13 @@ const WorldTicker = (() => {
     Realtime.leave(TOPIC);
     if (cycle) { clearInterval(cycle); cycle = null; }
     if (el) { el.remove(); el = null; }
+    if (live) { live.remove(); live = null; }
     feed = [];
   }
   function mount() {
-    el = h('div', { id: 'stardust-ticker', title: 'What Stardust listeners are playing right now' });
+    if (el) return;
+    el = h('div', { id: 'stardust-ticker', title: 'What Stardust listeners are playing — click for the live page', text: '🌍 listening for the world…' });
+    el.addEventListener('click', openLive);
     document.body.appendChild(el);
     step();
   }
@@ -1961,6 +2234,43 @@ const WorldTicker = (() => {
     idx = (idx + 1) % feed.length;
     const x = feed[idx];
     el.textContent = '🌍 someone is playing “' + x.t + '”' + (x.a ? ' — ' + x.a : '');
+  }
+  // 🌍 Live page: the whole drifting feed, newest first — click a song to
+  // play it yourself.
+  function openLive() {
+    if (live) { live.classList.add('open'); renderLive(); return; }
+    live = h('div', { id: 'stardust-live', class: 'stardust-modal open' }, [
+      h('div', { class: 'stardust-modal-card' }, [
+        h('div', { class: 'stardust-head' }, [
+          h('span', { class: 'stardust-logo', text: '🌍 Live around the world' }),
+          h('button', { class: 'stardust-x', id: 'stardust-live-x', text: '✕' })
+        ]),
+        h('div', { class: 'stardust-hint', id: 'stardust-live-count' }),
+        h('div', { id: 'stardust-live-feed' })
+      ])
+    ]);
+    document.body.appendChild(live);
+    live.querySelector('#stardust-live-x').addEventListener('click', () => live.classList.remove('open'));
+    live.addEventListener('click', (e) => { if (e.target === live) live.classList.remove('open'); });
+    renderLive();
+  }
+  function renderLive() {
+    if (!live) return;
+    const box = live.querySelector('#stardust-live-feed');
+    const count = live.querySelector('#stardust-live-count');
+    const cutoff = Date.now() - 10 * 60000;
+    count.textContent = feed.filter((x) => x.at > cutoff).length + ' songs heard in the last 10 minutes — anonymous, titles only. Click one to play it.';
+    while (box.firstChild) box.removeChild(box.firstChild);
+    if (!feed.length) { box.appendChild(h('div', { class: 'stardust-hint', text: 'Quiet out there right now — this fills in as other Stardust listeners play.' })); return; }
+    const ago = (ms) => { const s = Math.round((Date.now() - ms) / 1000); return s < 60 ? s + 's ago' : Math.round(s / 60) + 'm ago'; };
+    for (const x of [...feed].reverse().slice(0, 40)) {
+      const row = h('div', { class: 'stardust-live-row', title: 'Play this' }, [
+        h('span', { class: 'stardust-live-song', text: '“' + x.t + '”' + (x.a ? ' — ' + x.a : '') }),
+        h('span', { class: 'stardust-live-when', text: ago(x.at) })
+      ]);
+      row.addEventListener('click', () => { live.classList.remove('open'); VoiceControl.playSearch(x.t + ' ' + (x.a || '')); });
+      box.appendChild(row);
+    }
   }
   function onPoll(np) {
     if (!active || !np || !np.isTrack || !np.playing) return;
@@ -1972,56 +2282,118 @@ const WorldTicker = (() => {
   return { enable, disable, onPoll };
 })();
 
+// Is ANY AI path usable (shared proxy or own key)? Cached per session.
+let aiOKCache = null;
+async function aiOK() {
+  if (aiOKCache == null) aiOKCache = await ipcRenderer.invoke('stardust:ai-available').catch(() => false);
+  return aiOKCache;
+}
+
 // --- AI DJ: a radio voice that breaks in between songs ----------------------
-// Every few tracks: one LLM-written DJ line (fed by LOCAL listening stats),
-// spoken via TTS while the music ducks underneath. Same Groq key as lyrics.
+// LLM-written lines when an AI path exists; template lines otherwise — the DJ
+// works out of the box. Voice: Groq TTS when available, the system's built-in
+// speechSynthesis when not. Talk BACK to it through the Voice Control mic.
 const AIDJ = (() => {
-  let active = false, sinceAnnounce = 99, busy = false, voiceEl = null;
+  let active = false, sinceAnnounce = 99, busy = false, voiceEl = null, speaking = false;
+  const convo = []; // rolling chat history with the listener
   function enable() { active = true; sinceAnnounce = 99; }
   function disable() { active = false; stopVoice(); }
   function stopVoice() {
     if (voiceEl) { try { voiceEl.pause(); } catch {} voiceEl = null; }
+    try { window.speechSynthesis.cancel(); } catch {}
+    speaking = false;
     Visualizer.fx.fade(1, 0.5);
   }
+  function pickSystemVoice() {
+    const vs = window.speechSynthesis.getVoices() || [];
+    return vs.find((v) => /Samantha|Daniel|Ava|Google (US|UK) English/i.test(v.name) && v.lang.startsWith('en'))
+      || vs.find((v) => v.lang && v.lang.startsWith('en')) || null;
+  }
+  // Speak a line no matter what's configured: Groq TTS → system voice.
+  async function speak(line) {
+    stopVoice();
+    speaking = true;
+    Visualizer.fx.fade(0.2, 0.5);
+    const un_duck = () => { speaking = false; Visualizer.fx.fade(1, 0.6); };
+    const t = await ipcRenderer.invoke('stardust:ai-tts', { text: line }).catch(() => null);
+    if (t && t.buf) {
+      const blob = new Blob([t.buf], { type: t.mime || 'audio/wav' });
+      voiceEl = new Audio(URL.createObjectURL(blob));
+      voiceEl.onended = voiceEl.onerror = () => { voiceEl = null; un_duck(); };
+      try { await voiceEl.play(); return; } catch { voiceEl = null; }
+    }
+    if (t && t.error === 'tts-terms') console.log('[Stardust] Groq TTS needs a one-time terms click: console.groq.com/playground?model=canopylabs%2Forpheus-v1-english');
+    // Built-in voice — free, offline, always there.
+    try {
+      const u = new SpeechSynthesisUtterance(line);
+      const v = pickSystemVoice(); if (v) u.voice = v;
+      u.rate = 1.04; u.pitch = 1.0;
+      u.onend = u.onerror = un_duck;
+      window.speechSynthesis.speak(u);
+    } catch { un_duck(); }
+  }
+  // Template lines: the keyless fallback DJ. Facts only, no LLM.
+  function templateLine(np, tr, artistRank) {
+    const hour = new Date().getHours();
+    const opts = [
+      tr && tr.count > 3 ? 'Back again — play number ' + (tr.count + 1) + ' of ' + np.title + ' by ' + np.artist + '.' : null,
+      artistRank >= 0 && artistRank < 5 ? 'From your number ' + (artistRank + 1) + ' artist — this is ' + np.title + ' by ' + np.artist + '.' : null,
+      hour >= 22 || hour < 5 ? 'Late night vibes. Here is ' + np.title + ' by ' + (np.artist || 'the artist') + '.' : null,
+      'Up next: ' + np.title + (np.artist ? ' by ' + np.artist : '') + '.'
+    ].filter(Boolean);
+    return opts[Math.floor(Math.random() * Math.min(2, opts.length))];
+  }
   async function onTrack(np) {
-    if (!active || busy || !np || !np.isTrack) return;
-    if (!(settings && settings.transcribeKey)) return;
+    if (!active || busy || speaking || !np || !np.isTrack) return;
     if (++sinceAnnounce < 3) return; // at most every 3rd track
     busy = true; sinceAnnounce = 0;
     const forTrack = np.title + '|' + np.artist;
     try {
       const s = await ipcRenderer.invoke('stardust:stats').catch(() => null);
-      const tr = s && s.topSongs && s.topSongs.find((t) => t.title === np.title && t.artist === np.artist);
-      const ai = s && s.topArtists ? s.topArtists.findIndex((a) => a.name === np.artist) : -1;
-      const facts = [
-        'Song starting now: "' + np.title + '" by ' + (np.artist || 'an unknown artist'),
-        tr && tr.count > 1 ? 'The listener has played it ' + tr.count + ' times' : 'It is new to their history',
-        ai >= 0 && ai < 10 ? np.artist + ' is their #' + (ai + 1) + ' artist' : null,
-        'Local hour: ' + new Date().getHours()
-      ].filter(Boolean).join('. ');
-      const r = await ipcRenderer.invoke('stardust:ai-chat', {
-        messages: [
-          { role: 'system', content: 'You are a warm, playful radio DJ between songs. Write ONE spoken line, under 26 words, introducing the song that is starting. Weave in at most one fact naturally. No emojis, no quotes, never mention being an AI.' },
-          { role: 'user', content: facts }
-        ], maxTokens: 70
-      }).catch(() => null);
-      const cur = readNowPlaying();
-      if (!active || !r || !r.text || !cur || (cur.title + '|' + cur.artist) !== forTrack) return;
-      const line = r.text.replace(/^["']|["']$/g, '');
-      const t = await ipcRenderer.invoke('stardust:ai-tts', { text: line }).catch(() => null);
-      if (!active) return;
-      toast('📻 ' + line);
-      if (t && t.buf) {
-        const blob = new Blob([t.buf], { type: t.mime || 'audio/wav' });
-        stopVoice();
-        voiceEl = new Audio(URL.createObjectURL(blob));
-        Visualizer.fx.fade(0.2, 0.5); // duck the music under the voice
-        voiceEl.onended = voiceEl.onerror = stopVoice;
-        try { await voiceEl.play(); } catch { stopVoice(); }
+      const tr = s && s.topSongs && s.topSongs.find((t2) => t2.title === np.title && t2.artist === np.artist);
+      const rank = s && s.topArtists ? s.topArtists.findIndex((a) => a.name === np.artist) : -1;
+      let line = null;
+      if (await aiOK()) {
+        const facts = [
+          'Song starting now: "' + np.title + '" by ' + (np.artist || 'an unknown artist'),
+          tr && tr.count > 1 ? 'The listener has played it ' + tr.count + ' times' : 'It is new to their history',
+          rank >= 0 && rank < 10 ? np.artist + ' is their #' + (rank + 1) + ' artist' : null,
+          'Local hour: ' + new Date().getHours()
+        ].filter(Boolean).join('. ');
+        const r = await ipcRenderer.invoke('stardust:ai-chat', {
+          messages: [
+            { role: 'system', content: 'You are a warm, playful radio DJ between songs. Write ONE spoken line, under 26 words, introducing the song that is starting. Weave in at most one fact naturally. No emojis, no quotes, never mention being an AI.' },
+            { role: 'user', content: facts }
+          ], maxTokens: 70
+        }).catch(() => null);
+        if (r && r.text) line = r.text.replace(/^["']|["']$/g, '');
       }
+      if (!line) line = templateLine(np, tr, rank);
+      const cur = readNowPlaying();
+      if (!active || !cur || (cur.title + '|' + cur.artist) !== forTrack) return;
+      toast('📻 ' + line);
+      await speak(line);
     } finally { busy = false; }
   }
-  return { enable, disable, onTrack };
+  // Talk to the DJ (routed here by Voice Control): converse in persona,
+  // remember the exchange, answer out loud.
+  async function converse(said) {
+    if (!(await aiOK())) { speak('I can chat once the AI is set up. For now, tell me play, pause, or next.'); return; }
+    const np = readNowPlaying();
+    convo.push({ role: 'user', content: said });
+    while (convo.length > 8) convo.shift();
+    const r = await ipcRenderer.invoke('stardust:ai-chat', {
+      messages: [
+        { role: 'system', content: 'You are Stardust, a warm, quick-witted radio DJ chatting with your one listener between songs. Reply in at most 2 short spoken sentences. No emojis. Now playing: ' + (np ? '"' + np.title + '" by ' + np.artist : 'nothing') + '.' },
+        ...convo
+      ], maxTokens: 110
+    }).catch(() => null);
+    const reply = (r && r.text) ? r.text.replace(/^["']|["']$/g, '') : 'Say that again? The booth got loud.';
+    convo.push({ role: 'assistant', content: reply });
+    toast('📻 ' + reply);
+    await speak(reply);
+  }
+  return { enable, disable, onTrack, speak, converse };
 })();
 
 // --- Voice control: click the mic, say it, it happens ------------------------
@@ -2037,7 +2409,7 @@ const VoiceControl = (() => {
   }
   function hide() { stop(true); if (btn) { btn.remove(); btn = null; } }
   async function start() {
-    if (!(settings && settings.transcribeKey)) { toast('Voice control needs a Groq key (Stardust panel → Settings)'); return; }
+    if (!(await aiOK())) { toast('Voice needs the shared AI proxy or a Groq key (panel → Settings)'); return; }
     try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
     catch { toast('Microphone access denied'); return; }
     chunks = [];
@@ -2073,23 +2445,38 @@ const VoiceControl = (() => {
     if (/\bshuffle\b/.test(s)) { doCommand('shuffle'); return; }
     if (/\blike this\b|\blike it\b/.test(s)) { doCommand('like'); return; }
     toast('🎤 "' + said + '"');
+    // One LLM decision: is this a request to PLAY something, or talk to the DJ?
     const r = await ipcRenderer.invoke('stardust:ai-chat', {
       messages: [
-        { role: 'system', content: 'Turn a spoken music request into JSON {"query":"<search terms for YouTube Music>"}. Build strong search terms from the mood, era, artist or song asked for. JSON only.' },
+        { role: 'system', content: 'The user spoke to a music app. Reply as JSON only. If they want music played/queued/searched: {"action":"search","query":"<strong YouTube Music search terms>"}. Anything else (questions, chat, opinions): {"action":"chat"}.' },
         { role: 'user', content: said }
       ], maxTokens: 80, json: true
     }).catch(() => null);
-    let query = said;
-    try { const j = JSON.parse((r && r.text) || ''); if (j.query) query = j.query; } catch {}
+    let intent = null;
+    try { intent = JSON.parse((r && r.text) || ''); } catch {}
+    if (intent && intent.action === 'chat') { AIDJ.converse(said); return; }
+    const query = (intent && intent.query) || said.replace(/^(play|put on|queue)\s+/i, '');
+    playSearch(query);
+  }
+  // Navigating to /search reloads the page (killing this script's timers), so
+  // the "click the top result" step is persisted and resumed after reload.
+  function playSearch(query) {
+    try { sessionStorage.setItem('sd-pending-play', JSON.stringify({ q: query, at: Date.now() })) } catch {}
     location.href = 'https://music.youtube.com/search?q=' + encodeURIComponent(query);
+  }
+  function resumePendingPlay() {
+    let p = null;
+    try { p = JSON.parse(sessionStorage.getItem('sd-pending-play') || 'null'); } catch {}
+    if (!p || Date.now() - p.at > 30000) return;
+    sessionStorage.removeItem('sd-pending-play');
     let tries = 0;
     const iv = setInterval(() => {
-      if (++tries > 24) return clearInterval(iv);
+      if (++tries > 30) return clearInterval(iv);
       const play = document.querySelector('ytmusic-card-shelf-renderer ytmusic-play-button-renderer, ytmusic-shelf-renderer ytmusic-play-button-renderer, #contents ytmusic-responsive-list-item-renderer ytmusic-play-button-renderer');
       if (play) { clearInterval(iv); try { play.click(); toast('▶ Playing the top result'); } catch {} }
     }, 500);
   }
-  return { show, hide };
+  return { show, hide, playSearch, resumePendingPlay };
 })();
 
 // --- Song X-ray: paint the track's anatomy onto the seekbar -----------------
@@ -2141,6 +2528,10 @@ const XraySeekbar = (() => {
         for (let j = s0; j < s1; j += 8) sum += ch[j] * ch[j]; // stride-sampled RMS
         prof[i] = Math.sqrt(sum / Math.max(1, (s1 - s0) / 8));
       }
+      // Absolute loudness (mean raw RMS of the non-silent stretches) BEFORE
+      // per-track normalization — this is what Normalize levels against.
+      const loudParts = prof.filter((x) => x > 0.02);
+      const loud = loudParts.length ? loudParts.reduce((a, b) => a + b, 0) / loudParts.length : 0;
       const mx = Math.max(...prof) || 1;
       for (let i = 0; i < N; i++) prof[i] = prof[i] / mx;
       // Chorus: max mean over a ~12s window, searched past the intro.
@@ -2152,7 +2543,7 @@ const XraySeekbar = (() => {
         if (m > bestV) { bestV = m; bestI = i; }
       }
       try { ac.close(); } catch {}
-      const entry = { profile: prof, chorusAt: bestI >= 0 ? bestI / N * dur : null, dur };
+      const entry = { profile: prof, chorusAt: bestI >= 0 ? bestI / N * dur : null, dur, loud };
       cache.set(key, entry);
       if (cache.size > 40) cache.delete(cache.keys().next().value);
       return entry;
@@ -2388,6 +2779,7 @@ const Lyrics = (() => {
     alignBtn = h('button', { class: 'stardust-lyr-tool', title: 'Word-sync: listens to the song once and aligns these exact lyrics to the audio — near-perfect per-word timing (needs a Groq key)', text: '⚡' });
     mineBtn = h('button', { class: 'stardust-lyr-tool', title: 'Use MY transcription instead — lyric databases sometimes carry the wrong words. Sticky for this song; 🔎 switches back.', text: '🎙★' });
     const clip = h('button', { class: 'stardust-lyr-tool', title: 'Export a 15s lyric clip — the words lighting up over the album art, with audio (.webm)', text: '🎬' });
+    const poster = h('button', { class: 'stardust-lyr-tool', title: 'Export a lyric poster — the whole song as a print-quality PNG in the album\'s palette', text: '🖼' });
     srcEl = h('span', { class: 'stardust-lyr-src', text: '' });
     minus.addEventListener('click', () => nudge(-0.5));
     plus.addEventListener('click', () => nudge(0.5));
@@ -2398,7 +2790,8 @@ const Lyrics = (() => {
     alignBtn.addEventListener('click', startAlign);
     mineBtn.addEventListener('click', useMyTranscript);
     clip.addEventListener('click', () => exportClip(clip));
-    barEl = h('div', { class: 'stardust-lyr-tools' }, [minus, offEl, plus, copy, re, again, alignBtn, mineBtn, clip, srcEl]);
+    poster.addEventListener('click', exportPoster);
+    barEl = h('div', { class: 'stardust-lyr-tools' }, [minus, offEl, plus, copy, re, again, alignBtn, mineBtn, clip, poster, srcEl]);
     return barEl;
   }
   const SRC_LABEL = { musixmatch: 'Musixmatch', lrclib: 'LRCLIB', netease: 'NetEase', kugou: 'KuGou', genius: 'Genius', transcript: 'transcribed', community: 'community', aligned: 'word-synced ⚡' };
@@ -2509,6 +2902,41 @@ const Lyrics = (() => {
       input.addEventListener('keydown', (e) => { if (e.key === 'Enter') finish(input.value); });
       setTimeout(() => { if (modal.isConnected) finish(input.value); }, 14000);
     }, wait);
+  }
+
+  // 🖼 Print-quality lyric poster: the whole song's words in the album's
+  // palette, saved as a big PNG.
+  async function exportPoster() {
+    const lines = synced.length ? synced.map((l) => l.s).filter(Boolean) : (plain || '').split('\n').filter(Boolean);
+    if (!lines.length) { toast('No lyrics to poster yet'); return; }
+    const pal = await new Promise((res) => extractColor((np && np.art) || '', (hex, p) => res(p || { vibrant: '#8b5cff', deep: '#0a0716' })));
+    const W = 1200, H = 1800;
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    const c2 = cv.getContext('2d');
+    const g = c2.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, pal.deep || '#0a0716'); g.addColorStop(1, '#05060f');
+    c2.fillStyle = g; c2.fillRect(0, 0, W, H);
+    c2.textAlign = 'center';
+    c2.fillStyle = pal.vibrant || '#8b5cff';
+    c2.font = '800 56px system-ui';
+    c2.fillText(((np && np.title) || 'Untitled').slice(0, 40), W / 2, 120);
+    c2.font = '500 30px system-ui'; c2.fillStyle = 'rgba(255,255,255,0.55)';
+    c2.fillText(((np && np.artist) || '').slice(0, 50), W / 2, 170);
+    // Lay the lines out to fill the middle: font scales with line count.
+    const body2 = lines.slice(0, 60);
+    const px = Math.max(18, Math.min(34, Math.floor(1400 / body2.length)));
+    c2.font = '600 ' + px + 'px Georgia, serif';
+    c2.fillStyle = 'rgba(255,255,255,0.88)';
+    const y0 = 260, span = H - 380;
+    body2.forEach((ln, i) => c2.fillText(ln.slice(0, 60), W / 2, y0 + span * (i / Math.max(1, body2.length - 1))));
+    c2.font = '600 26px system-ui'; c2.fillStyle = pal.vibrant || '#8b5cff';
+    c2.fillText('✦', W / 2, H - 60);
+    const blob = await new Promise((res) => cv.toBlob(res, 'image/png'));
+    const ok = await ipcRenderer.invoke('stardust:save-clip', {
+      name: (((np && np.title) || 'lyrics') + ' poster.png'),
+      buf: new Uint8Array(await blob.arrayBuffer())
+    }).catch(() => false);
+    toast(ok ? '🖼 Poster saved' : 'Save canceled');
   }
 
   // 🎬 Export a 15-second kinetic lyric clip: album art backdrop + the words
@@ -3699,9 +4127,10 @@ function pollNowPlaying() {
     Crossfade.onTrack(np);
     Lyrics.onTrack(np);
     FocusMode.onTrack(np);
-    PracticeMode.onTrack();
     XraySeekbar.onTrack(np);
     AIDJ.onTrack(np);
+    Normalize.onTrack(np);
+    EnergyDial.onTrack(np);
   }
 
   const sig = `${track}|${np.playing}|${np.position}`;
@@ -3709,10 +4138,12 @@ function pollNowPlaying() {
     lastSig = sig;
     ipcRenderer.send('stardust:nowplaying', np);
   }
-  // Social features watch every poll (they gate themselves internally).
+  // Features that watch every poll (each gates itself internally).
   ListenTogether.onPoll(np);
   WorldTicker.onPoll(np);
   PhoneRemote.onPoll(np);
+  IntroSkip.onPoll(np);
+  SkipLearn.onPoll(np);
 }
 let lastTrack = '';
 
@@ -3821,7 +4252,16 @@ function randomLibrary() {
   else toast('Could not start a random item');
 }
 
-ipcRenderer.on('stardust:command', (_e, { action }) => doCommand(action));
+ipcRenderer.on('stardust:command', (_e, { action }) => {
+  // Parameterized commands from the phone remote: "seek:<0..1 fraction>".
+  const seek = /^seek:([\d.]+)$/.exec(action || '');
+  if (seek) {
+    const v = q('video');
+    if (v && isFinite(v.duration)) { try { v.currentTime = Math.max(0, Math.min(1, parseFloat(seek[1]))) * v.duration; } catch {} }
+    return;
+  }
+  doCommand(action);
+});
 
 // Stream a small spectrum to the mini player only while it's open.
 let miniSpectrumTimer = null;
@@ -4025,9 +4465,22 @@ function buildUI() {
       h('input', { id: 'stardust-lights-host', class: 'stardust-text-input', placeholder: 'Device / bridge IP (e.g. 192.168.1.50)' }),
       h('input', { id: 'stardust-lights-token', class: 'stardust-text-input', placeholder: 'Token (Hue username / Nanoleaf token — not needed for WLED & Govee)' }),
       h('div', { class: 'stardust-row' }, [
+        h('select', { id: 'stardust-lights-mode', class: 'stardust-text-input' }, [
+          h('option', { value: 'pulse', text: 'Mode: Pulse (beat)' }),
+          h('option', { value: 'breathe', text: 'Mode: Breathe (slow swell)' }),
+          h('option', { value: 'strobe', text: 'Mode: Strobe (flash on vocals)' }),
+          h('option', { value: 'wash', text: 'Mode: Wash (drifting colour)' })
+        ])
+      ]),
+      toggleRow('Per-panel colours (Govee Hexa)', 'lightsSegments'),
+      h('div', { class: 'stardust-row' }, [
         miniBtn('lights-test', '💡 Test the lights')
       ]),
-      h('div', { class: 'stardust-hint', text: 'Enable the Room Lights marketplace feature and your lights pulse with the beat in the track\'s colour.' })
+      h('div', { class: 'stardust-hint', text: 'Enable the Room Lights marketplace feature and your lights follow the music in the track\'s colour. Per-panel colours use Govee\'s streaming protocol — Hexa panels and DreamView strips each render their own band of the spectrum.' }),
+      h('div', { class: 'stardust-row' }, [
+        h('span', { id: 'stardust-remote-url', class: 'stardust-hint', text: '📱 Phone remote: enable it in the Marketplace' }),
+        miniBtn('copy-remote', '⧉')
+      ])
     ]),
     section([
       toggleRow('Ad blocker', 'adBlock'),
@@ -4118,7 +4571,7 @@ function wirePanel(panel) {
   const tk = panel.querySelector('#stardust-transcribe-key');
   if (tk) {
     tk.value = settings.transcribeKey || '';
-    tk.addEventListener('change', () => setSetting('transcribeKey', tk.value.trim()));
+    tk.addEventListener('change', () => { setSetting('transcribeKey', tk.value.trim()); aiOKCache = null; });
   }
 
   // Room lights config.
@@ -4132,11 +4585,27 @@ function wirePanel(panel) {
     lp.addEventListener('change', () => setSetting('lightsProtocol', lp.value));
     lh.addEventListener('change', () => setSetting('lightsHost', lh.value.trim()));
     ltk.addEventListener('change', () => setSetting('lightsToken', ltk.value.trim()));
+    const lm = panel.querySelector('#stardust-lights-mode');
+    if (lm) { lm.value = settings.lightsMode || 'pulse'; lm.addEventListener('change', () => setSetting('lightsMode', lm.value)); }
     const testBtn = panel.querySelector('[data-act="lights-test"]');
     if (testBtn) testBtn.addEventListener('click', async () => {
       const ok = await ipcRenderer.invoke('stardust:lights-test').catch(() => false);
       toast(ok ? '💡 Sent a pulse — did they flash?' : 'Set the device IP first');
     });
+    // Phone remote address — visible and copyable right from the panel.
+    const ru = panel.querySelector('#stardust-remote-url');
+    const rc = panel.querySelector('[data-act="copy-remote"]');
+    const refreshRemote = () => {
+      const u = PhoneRemote.address();
+      ru.textContent = u ? '📱 Phone remote: ' + u : '📱 Phone remote: enable it in the Marketplace';
+      rc.style.display = u ? '' : 'none';
+    };
+    refreshRemote();
+    if (rc) rc.addEventListener('click', () => {
+      const u = PhoneRemote.address();
+      if (u) { try { navigator.clipboard.writeText(u); } catch {} toast('📱 Address copied: ' + u); }
+    });
+    panel.addEventListener('stardust-remote-changed', refreshRemote);
   }
 }
 
@@ -4152,6 +4621,7 @@ async function openStats() {
         h('div', { class: 'stardust-head' }, [
           h('span', { class: 'stardust-logo', text: '✦ Listening Stats' }),
           h('div', { class: 'stardust-row' }, [
+            h('button', { class: 'stardust-mini-btn', dataset: { sact: 'wrapped' }, text: '✨ Wrapped' }),
             h('button', { class: 'stardust-mini-btn', dataset: { sact: 'reset' }, text: 'Reset' }),
             h('button', { class: 'stardust-x', dataset: { sact: 'close' }, text: '✕' })
           ])
@@ -4165,6 +4635,7 @@ async function openStats() {
       const act = a && a.dataset.sact;
       if (!a || act === 'close') { statsModal.classList.remove('open'); return; }
       if (act === 'reset') { await ipcRenderer.invoke('stardust:stats-reset'); openStats(); }
+      if (act === 'wrapped') { const s2 = await ipcRenderer.invoke('stardust:stats'); openWrapped(s2); }
     });
   }
   renderStats(s);
@@ -4221,9 +4692,21 @@ function renderStats(s) {
       chart('Top artists this week', s.charts.artists)
     ]));
   }
-  // Chat with your history — free-form questions over the LOCAL stats,
-  // answered by the same Groq key that powers lyrics.
-  if (settings && settings.transcribeKey) {
+  // Time capsule: loved-and-lost songs, one click brings them back.
+  if (s.lostTracks && s.lostTracks.length) {
+    body.appendChild(h('div', { class: 'stardust-label stardust-chart-head', text: '⏳ Lost tracks — you loved these, then stopped' }));
+    for (const t of s.lostTracks.slice(0, 8)) {
+      const row = h('div', { class: 'stardust-live-row', title: 'Play it again' }, [
+        h('span', { class: 'stardust-live-song', text: t.title + (t.artist ? ' — ' + t.artist : '') }),
+        h('span', { class: 'stardust-live-when', text: t.count + ' plays' })
+      ]);
+      row.addEventListener('click', () => { statsModal.classList.remove('open'); VoiceControl.playSearch(t.title + ' ' + (t.artist || '')); });
+      body.appendChild(row);
+    }
+  }
+  // Chat with your history — free-form questions over the LOCAL stats.
+  // Shown optimistically; the first question reports if no AI path exists.
+  {
     const input = h('input', { id: 'stardust-ask-input', placeholder: 'Ask about your listening — "what was my March obsession?"' });
     const ask = h('button', { class: 'stardust-mini-btn', text: 'Ask' });
     const out = h('div', { id: 'stardust-ask-out' });
@@ -4253,6 +4736,70 @@ function renderStats(s) {
     body.appendChild(h('div', { class: 'stardust-ask-row' }, [input, ask]));
     body.appendChild(out);
   }
+}
+
+// ✨ Stardust Wrapped — a little cinematic recap of the listening stats, with
+// an exportable share card at the end. Click advances, ✕ exits.
+function openWrapped(s) {
+  const peakHour = Object.entries(s.byHour || {}).sort((a, b) => b[1] - a[1])[0];
+  const hourName = (hr) => { hr = parseInt(hr, 10); return hr === 0 ? 'midnight' : hr === 12 ? 'noon' : hr < 12 ? hr + ' AM' : (hr - 12) + ' PM'; };
+  const top = s.topSongs[0], topA = s.topArtists[0];
+  const slides = [
+    ['You listened to', fmtDur(s.totalMs), 'across ' + s.days + ' days'],
+    topA ? ['Your artist was', topA.name, fmtDur(topA.ms) + ' together'] : null,
+    top ? ['On repeat', '“' + top.title + '”', top.count + ' plays · ' + (top.artist || '')] : null,
+    peakHour ? ['Your hour is', hourName(peakHour[0]), 'that\'s when the music happens'] : null,
+    ['Top five', s.topSongs.slice(0, 5).map((t, i) => (i + 1) + '. ' + t.title).join('\n'), ''],
+    ['✦ Stardust Wrapped', s.distinctSongs + ' songs · ' + s.distinctArtists + ' artists', 'click 💾 to save a share card']
+  ].filter(Boolean);
+  let i = 0;
+  const wrap = h('div', { id: 'stardust-wrapped' }, [
+    h('div', { id: 'sd-wr-kicker' }), h('div', { id: 'sd-wr-big' }), h('div', { id: 'sd-wr-sub' }),
+    h('div', { class: 'stardust-row', id: 'sd-wr-nav' }, [
+      h('button', { class: 'stardust-mini-btn', id: 'sd-wr-save', text: '💾 Share card' }),
+      h('button', { class: 'stardust-mini-btn', id: 'sd-wr-x', text: 'Close' })
+    ])
+  ]);
+  document.body.appendChild(wrap);
+  const paint = () => {
+    const [k, b, sub] = slides[i];
+    wrap.querySelector('#sd-wr-kicker').textContent = k;
+    wrap.querySelector('#sd-wr-big').textContent = b;
+    wrap.querySelector('#sd-wr-sub').textContent = sub;
+    wrap.classList.remove('pop'); void wrap.offsetWidth; wrap.classList.add('pop');
+  };
+  const advance = () => { i = (i + 1) % slides.length; paint(); };
+  let auto = setInterval(advance, 3400);
+  wrap.addEventListener('click', (e) => { if (e.target.tagName !== 'BUTTON') { clearInterval(auto); auto = setInterval(advance, 5000); advance(); } });
+  wrap.querySelector('#sd-wr-x').addEventListener('click', () => { clearInterval(auto); wrap.remove(); });
+  wrap.querySelector('#sd-wr-save').addEventListener('click', async () => {
+    const cv = document.createElement('canvas'); cv.width = 1080; cv.height = 1350;
+    const c2 = cv.getContext('2d');
+    const accent = (settings && settings.accentOverride) || (activeTheme && activeTheme.accent) || '#8b5cff';
+    const g = c2.createLinearGradient(0, 0, 0, 1350);
+    g.addColorStop(0, '#1b1340'); g.addColorStop(1, '#05060f');
+    c2.fillStyle = g; c2.fillRect(0, 0, 1080, 1350);
+    c2.textAlign = 'center'; c2.fillStyle = accent;
+    c2.font = '800 64px system-ui'; c2.fillText('✦ Stardust Wrapped', 540, 150);
+    c2.fillStyle = '#fff'; c2.font = '700 88px system-ui';
+    c2.fillText(fmtDur(s.totalMs), 540, 320);
+    c2.font = '500 36px system-ui'; c2.fillStyle = 'rgba(255,255,255,0.65)';
+    c2.fillText('of music across ' + s.days + ' days', 540, 380);
+    c2.font = '700 44px system-ui'; c2.fillStyle = accent;
+    c2.fillText('Top songs', 540, 500);
+    c2.font = '600 40px system-ui'; c2.fillStyle = '#fff';
+    s.topSongs.slice(0, 5).forEach((t, j) => c2.fillText((j + 1) + '.  ' + t.title.slice(0, 34), 540, 580 + j * 66));
+    c2.font = '700 44px system-ui'; c2.fillStyle = accent;
+    c2.fillText('Top artists', 540, 990);
+    c2.font = '600 40px system-ui'; c2.fillStyle = '#fff';
+    s.topArtists.slice(0, 3).forEach((a2, j) => c2.fillText((j + 1) + '.  ' + a2.name.slice(0, 34), 540, 1064 + j * 64));
+    c2.font = '500 30px system-ui'; c2.fillStyle = 'rgba(255,255,255,0.5)';
+    c2.fillText(s.distinctSongs + ' songs · ' + s.distinctArtists + ' artists', 540, 1300);
+    const blob = await new Promise((res) => cv.toBlob(res, 'image/png'));
+    const ok = await ipcRenderer.invoke('stardust:save-clip', { name: 'stardust-wrapped.png', buf: new Uint8Array(await blob.arrayBuffer()) }).catch(() => false);
+    toast(ok ? '💾 Wrapped card saved' : 'Save canceled');
+  });
+  paint();
 }
 
 async function onSetting(key, value) {
@@ -4570,6 +5117,12 @@ async function boot() {
   setInterval(skipAds, 500);
   watchAds();
   skipAds();
+
+  // Search navigation reloads the page — pick up anything that was mid-flight:
+  // a voice-command "play X" waiting to click the top result, or a Listen
+  // Together room the guest was in when the host changed tracks.
+  VoiceControl.resumePendingPlay();
+  ListenTogether.resumeRoom();
 }
 
 function safeBoot() {

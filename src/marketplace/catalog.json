@@ -664,19 +664,6 @@
     "preview": "linear-gradient(135deg, #16302b, #0a0e1a)"
   },
   {
-    "id": "feat-practice-mode",
-    "type": "feature",
-    "name": "Practice Mode",
-    "author": "Stardust",
-    "description": "For musicians: A-B loop any section and slow it to \u00be\u00d7 or \u00bd\u00d7 with the pitch preserved.",
-    "tags": [
-      "practice",
-      "loop",
-      "musician"
-    ],
-    "preview": "linear-gradient(135deg, #2b1c38, #0a0e1a)"
-  },
-  {
     "id": "feat-xray-seekbar",
     "type": "feature",
     "name": "Song X-Ray",
@@ -843,5 +830,84 @@
       "radar"
     ],
     "preview": "linear-gradient(135deg, #3a2a0a, #0a0e1a)"
+  },
+  {
+    "id": "audio-normalize",
+    "type": "audio",
+    "name": "Normalize",
+    "author": "Stardust",
+    "description": "Every song at the same perceived volume \u2014 quiet 70s masters come up, loud modern ones come down. Measured from the track's own audio.",
+    "tags": [
+      "volume",
+      "loudness",
+      "normalize"
+    ],
+    "preview": "linear-gradient(135deg, #12303a, #0a0e1a)"
+  },
+  {
+    "id": "feat-intro-skip",
+    "type": "feature",
+    "name": "Intro Skip",
+    "author": "Stardust",
+    "description": "Long ambient intro? It finds where the song actually starts and jumps you there.",
+    "tags": [
+      "smart",
+      "skip",
+      "intro"
+    ],
+    "preview": "linear-gradient(135deg, #303a12, #0a0e1a)"
+  },
+  {
+    "id": "feat-skip-learning",
+    "type": "feature",
+    "name": "Skip Learning",
+    "author": "Stardust",
+    "description": "Notices the songs you always skip and starts skipping them for you. Replay one to un-teach it.",
+    "tags": [
+      "smart",
+      "skip",
+      "learning"
+    ],
+    "preview": "linear-gradient(135deg, #3a1212, #0a0e1a)"
+  },
+  {
+    "id": "feat-energy-dial",
+    "type": "feature",
+    "name": "Energy Dial",
+    "author": "Stardust",
+    "description": "\u26a1 keep / chill / rise \u2014 autoplay tracks that fight the vibe you set get skipped, measured from the actual audio.",
+    "tags": [
+      "smart",
+      "energy",
+      "mood",
+      "autoplay"
+    ],
+    "preview": "linear-gradient(135deg, #3a2a12, #12303a)"
+  },
+  {
+    "id": "feat-ai-playlist",
+    "type": "feature",
+    "name": "AI Playlist",
+    "author": "Stardust",
+    "description": "\ud83d\udcdd describe it \u2014 \"45 minutes for a night drive, heavier back half\" \u2014 and it builds and drives the whole session from your library.",
+    "tags": [
+      "ai",
+      "playlist",
+      "curator"
+    ],
+    "preview": "linear-gradient(135deg, #2a123a, #0a0e1a)"
+  },
+  {
+    "id": "feat-tv-mode",
+    "type": "feature",
+    "name": "TV Mode",
+    "author": "Stardust",
+    "description": "\ud83d\udcfa the jukebox idle screen \u2014 big art, clock, live lyric line. For when the laptop is plugged into the TV.",
+    "tags": [
+      "tv",
+      "fullscreen",
+      "party"
+    ],
+    "preview": "linear-gradient(135deg, #0a0e1a, #1b1340)"
   }
 ]

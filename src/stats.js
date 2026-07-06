@@ -28,7 +28,8 @@ function load() {
       tracks: d.tracks || {},
       artists: d.artists || {},
       recent: d.recent || [],
-      weeks: d.weeks || {}
+      weeks: d.weeks || {},
+      byHour: d.byHour || {}
     };
     // Scrub any junk (ads/placeholders) recorded before filtering existed.
     for (const [k, t] of Object.entries(out.tracks)) if (isJunkTrack(t)) delete out.tracks[k];
@@ -73,6 +74,8 @@ function record(np) {
       if (delta > 0 && delta <= MAX_GAP_MS) {
         data.totalMs += delta;
         data.byDay[dayKey()] = (data.byDay[dayKey()] || 0) + delta;
+        const hr = new Date().getHours();
+        data.byHour[hr] = (data.byHour[hr] || 0) + delta;
         last.ms += delta;
         const tr = data.tracks[key];
         if (tr) tr.ms += delta;
@@ -137,12 +140,17 @@ function get() {
       week: weekKey(),
       songs: chartOf('tracks', (k) => { const t = data.tracks[k] || {}; return { title: t.title || k, artist: t.artist || '' }; }),
       artists: chartOf('artists', (k) => ({ title: k, artist: '' }))
-    }
+    },
+    byHour: data.byHour,
+    // Time capsule: songs you clearly loved (5+ plays) and quietly dropped.
+    lostTracks: Object.values(data.tracks)
+      .filter((t) => t.count >= 5 && t.last && Date.now() - t.last > 45 * 86400000)
+      .sort((a, b) => b.count - a.count).slice(0, 12)
   };
 }
 
 function reset() {
-  data = { totalMs: 0, byDay: {}, tracks: {}, artists: {}, recent: [], weeks: {} };
+  data = { totalMs: 0, byDay: {}, tracks: {}, artists: {}, recent: [], weeks: {}, byHour: {} };
   last = { key: '', ts: 0, ms: 0, counted: false, np: null };
   try { fs.writeFileSync(FILE, JSON.stringify(data)); } catch {}
 }
