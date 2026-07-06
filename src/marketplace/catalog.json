@@ -716,5 +716,46 @@
       "control"
     ],
     "preview": "linear-gradient(135deg, #1c2e3a, #0a0e1a)"
+  },
+  {
+    "id": "feat-listen-together",
+    "type": "feature",
+    "name": "Listen Together",
+    "author": "Stardust",
+    "description": "Synced listening rooms \u2014 share a code, playback follows the host to the second, everyone's word-synced lyrics light up together. With chat.",
+    "tags": [
+      "social",
+      "rooms",
+      "sync",
+      "friends"
+    ],
+    "preview": "linear-gradient(135deg, #1e2a4a, #0a0e1a)"
+  },
+  {
+    "id": "feat-world-ticker",
+    "type": "feature",
+    "name": "World Ticker",
+    "author": "Stardust",
+    "description": "A soft pill that cycles what other Stardust listeners are playing right now. Fully anonymous \u2014 titles only, nothing stored.",
+    "tags": [
+      "social",
+      "discover",
+      "ambient"
+    ],
+    "preview": "linear-gradient(135deg, #14323a, #0a0e1a)"
+  },
+  {
+    "id": "feat-lyric-quiz",
+    "type": "feature",
+    "name": "Lyric Quiz",
+    "author": "Stardust",
+    "description": "\ud83c\udfaf mutes the next line \u2014 type it from memory and get graded. Scores share to your Listen Together room.",
+    "tags": [
+      "game",
+      "lyrics",
+      "quiz",
+      "party"
+    ],
+    "preview": "linear-gradient(135deg, #3a2a14, #0a0e1a)"
   }
 ]

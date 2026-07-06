@@ -877,7 +877,10 @@ const BEHAVIORS = {
   'feat-practice-mode': { on: () => PracticeMode.show(), off: () => PracticeMode.hide() },
   'feat-xray-seekbar':  { on: () => XraySeekbar.enable(), off: () => XraySeekbar.disable() },
   'feat-ai-dj':         { on: () => AIDJ.enable(), off: () => AIDJ.disable() },
-  'feat-voice-control': { on: () => VoiceControl.show(), off: () => VoiceControl.hide() }
+  'feat-voice-control': { on: () => VoiceControl.show(), off: () => VoiceControl.hide() },
+  'feat-listen-together': { on: () => ListenTogether.show(), off: () => ListenTogether.hide() },
+  'feat-world-ticker':  { on: () => WorldTicker.enable(), off: () => WorldTicker.disable() },
+  'feat-lyric-quiz':    { on: () => QuizBtn.show(), off: () => QuizBtn.hide() }
 };
 
 // --- Vinyl Spin: find the actual artwork <img> at runtime (YTM class names are
@@ -1324,6 +1327,245 @@ const PracticeMode = (() => {
     if (a != null && b != null && (v.currentTime > b || v.currentTime < a - 0.5)) v.currentTime = a;
   }
   return { show, hide, onTrack };
+})();
+
+// --- Realtime: a minimal Phoenix-protocol client for Supabase broadcast -----
+// Powers Listen Together rooms and the world ticker. No table writes, no
+// accounts — ephemeral broadcast channels only.
+const Realtime = (() => {
+  let ws = null, refN = 0, hb = null, info = null, opening = null, backoff = 1000;
+  const topics = new Map(); // topic -> { joined, handler }
+  const ref = () => String(++refN);
+  async function ensure() {
+    if (ws && ws.readyState === WebSocket.OPEN) return true;
+    if (opening) return opening;
+    opening = (async () => {
+      if (!info) { try { info = await ipcRenderer.invoke('stardust:community-info'); } catch {} }
+      if (!info) return false;
+      const url = info.url.replace(/^http/, 'ws') + '/realtime/v1/websocket?apikey=' + encodeURIComponent(info.anon) + '&vsn=1.0.0';
+      await new Promise((res) => {
+        ws = new WebSocket(url);
+        ws.onopen = () => { backoff = 1000; res(); };
+        ws.onerror = () => res();
+        ws.onclose = () => {
+          if (hb) { clearInterval(hb); hb = null; }
+          for (const t of topics.values()) t.joined = false;
+          ws = null;
+          // Reconnect (with backoff) only while something still wants a topic.
+          if (topics.size) setTimeout(() => { ensure(); }, backoff = Math.min(backoff * 2, 30000));
+        };
+        ws.onmessage = (e) => {
+          let m; try { m = JSON.parse(e.data); } catch { return; }
+          const t = topics.get(m.topic);
+          if (t && m.event === 'broadcast' && m.payload && t.handler) t.handler(m.payload.event, m.payload.payload);
+        };
+      });
+      if (!ws || ws.readyState !== WebSocket.OPEN) { ws = null; return false; }
+      hb = setInterval(() => { try { ws && ws.send(JSON.stringify({ topic: 'phoenix', event: 'heartbeat', payload: {}, ref: ref() })); } catch {} }, 25000);
+      // (Re)join everything that wants to be joined.
+      for (const [topic] of topics) joinNow(topic);
+      return true;
+    })();
+    const r = await opening; opening = null; return r;
+  }
+  function joinNow(topic) {
+    const t = topics.get(topic);
+    if (!t || !ws || ws.readyState !== WebSocket.OPEN || t.joined) return;
+    ws.send(JSON.stringify({
+      topic, event: 'phx_join', ref: ref(),
+      payload: { config: { broadcast: { self: false }, presence: { key: '' } }, access_token: info && info.anon }
+    }));
+    t.joined = true;
+  }
+  async function join(topic, handler) {
+    topics.set(topic, { joined: false, handler });
+    if (await ensure()) joinNow(topic);
+  }
+  function leave(topic) {
+    const t = topics.get(topic);
+    if (t && t.joined && ws && ws.readyState === WebSocket.OPEN) {
+      try { ws.send(JSON.stringify({ topic, event: 'phx_leave', payload: {}, ref: ref() })); } catch {}
+    }
+    topics.delete(topic);
+    if (!topics.size && ws) { try { ws.close(); } catch {} ws = null; if (hb) { clearInterval(hb); hb = null; } }
+  }
+  function send(topic, event, payload) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) { ensure(); return false; }
+    try {
+      ws.send(JSON.stringify({ topic, event: 'broadcast', payload: { type: 'broadcast', event, payload }, ref: ref() }));
+      return true;
+    } catch { return false; }
+  }
+  return { join, leave, send };
+})();
+
+// --- Listen Together: synced listening rooms over broadcast ------------------
+// Host streams {videoId, position, playing}; guests follow — same song, same
+// second, everyone's word-synced lyrics lighting up together. Plus a tiny chat.
+const ListenTogether = (() => {
+  let btn = null, panel = null, room = null, isHost = false, lastSync = 0, lastAppliedTrack = '';
+  const me = 'listener-' + Math.random().toString(36).slice(2, 6);
+  const topicOf = (code) => 'realtime:stardust:room:' + code;
+  function show() {
+    if (btn) return;
+    btn = h('button', { id: 'stardust-lt-btn', class: 'stardust-qa', title: 'Listen Together — synced rooms', text: '👥' });
+    btn.addEventListener('click', () => (panel && panel.classList.contains('open') ? hidePanel() : showPanel()));
+    document.body.appendChild(btn);
+  }
+  function hide() { leaveRoom(); hidePanel(); if (panel) { panel.remove(); panel = null; } if (btn) { btn.remove(); btn = null; } }
+  function hidePanel() { if (panel) panel.classList.remove('open'); }
+  function showPanel() {
+    if (!panel) {
+      panel = h('div', { id: 'stardust-lt' }, [
+        h('div', { class: 'stardust-label', text: '👥 Listen Together' }),
+        h('div', { id: 'stardust-lt-state' }),
+        h('div', { class: 'stardust-ask-row' }, [
+          h('input', { id: 'stardust-lt-code', placeholder: 'Room code', maxlength: '8' }),
+          h('button', { class: 'stardust-mini-btn', id: 'stardust-lt-join', text: 'Join' })
+        ]),
+        h('button', { class: 'stardust-market-btn primary', id: 'stardust-lt-create', text: 'Create a room' }),
+        h('div', { id: 'stardust-lt-chatlog' }),
+        h('div', { class: 'stardust-ask-row' }, [
+          h('input', { id: 'stardust-lt-msg', placeholder: 'Say something…' }),
+          h('button', { class: 'stardust-mini-btn', id: 'stardust-lt-send', text: '➤' })
+        ])
+      ]);
+      document.body.appendChild(panel);
+      panel.querySelector('#stardust-lt-create').addEventListener('click', () => {
+        const code = Math.random().toString(36).slice(2, 8).toUpperCase();
+        enterRoom(code, true);
+        try { navigator.clipboard.writeText(code); } catch {}
+        toast('Room ' + code + ' — code copied, share it!');
+      });
+      panel.querySelector('#stardust-lt-join').addEventListener('click', () => {
+        const code = panel.querySelector('#stardust-lt-code').value.trim().toUpperCase();
+        if (code.length >= 4) enterRoom(code, false);
+      });
+      const sendMsg = () => {
+        const inp = panel.querySelector('#stardust-lt-msg');
+        const text = inp.value.trim();
+        if (!text || !room) return;
+        inp.value = '';
+        Realtime.send(topicOf(room), 'chat', { name: me, text: text.slice(0, 200) });
+        addChat(me + ' (you)', text);
+      };
+      panel.querySelector('#stardust-lt-send').addEventListener('click', sendMsg);
+      panel.querySelector('#stardust-lt-msg').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendMsg(); });
+    }
+    renderState();
+    panel.classList.add('open');
+  }
+  function renderState() {
+    if (!panel) return;
+    const st = panel.querySelector('#stardust-lt-state');
+    st.textContent = room
+      ? (isHost ? 'Hosting room ' + room + ' — others follow your playback.' : 'In room ' + room + ' — following the host.')
+      : 'Create a room (you drive) or join with a code.';
+    panel.querySelector('#stardust-lt-create').textContent = room ? 'Leave room ' + room : 'Create a room';
+  }
+  function addChat(name, text) {
+    if (!panel) return;
+    const log = panel.querySelector('#stardust-lt-chatlog');
+    log.appendChild(h('div', { class: 'stardust-lt-line', text: name + ': ' + text }));
+    while (log.children.length > 24) log.removeChild(log.firstChild);
+    log.scrollTop = log.scrollHeight;
+  }
+  function enterRoom(code, host) {
+    if (room) { leaveRoom(); if (panel && panel.querySelector('#stardust-lt-create').textContent.startsWith('Leave')) { renderState(); return; } }
+    room = code; isHost = host; lastAppliedTrack = '';
+    Realtime.join(topicOf(code), onEvent);
+    renderState();
+    if (btn) btn.classList.add('active');
+  }
+  function leaveRoom() {
+    if (!room) return;
+    Realtime.leave(topicOf(room));
+    room = null; isHost = false;
+    if (btn) btn.classList.remove('active');
+    renderState();
+  }
+  function onEvent(event, p) {
+    if (event === 'chat' && p) { addChat(p.name || 'someone', String(p.text || '')); toast('💬 ' + (p.name || 'someone') + ': ' + p.text); }
+    if (event === 'sync' && p && !isHost) applySync(p);
+    if (event === 'quiz' && p) toast('🎯 ' + (p.name || 'someone') + ' scored ' + p.score + '% on the lyric quiz');
+  }
+  async function applySync(p) {
+    const v = q('video');
+    const np = readNowPlaying();
+    const want = (p.title || '') + '|' + (p.artist || '');
+    const have = np ? np.title + '|' + np.artist : '';
+    if (want !== have && p.videoId && want !== lastAppliedTrack) {
+      lastAppliedTrack = want;
+      toast('👥 Host is playing "' + p.title + '" — following');
+      location.href = 'https://music.youtube.com/watch?v=' + p.videoId;
+      return;
+    }
+    if (!v || want !== have) return;
+    const target = (p.position || 0) + (p.playing ? (Date.now() - (p.at || Date.now())) / 1000 : 0);
+    if (Math.abs((v.currentTime || 0) - target) > 2.5) { try { v.currentTime = target; } catch {} }
+    if (p.playing && v.paused) { try { v.play(); } catch {} }
+    if (!p.playing && !v.paused) { try { v.pause(); } catch {} }
+  }
+  async function onPoll(np) {
+    if (!room || !isHost || !np || !np.isTrack) return;
+    const now = Date.now();
+    if (now - lastSync < 2000) return;
+    lastSync = now;
+    let vid = null;
+    try { vid = await ipcRenderer.invoke('stardust:current-videoid'); } catch {}
+    const v = q('video');
+    Realtime.send(topicOf(room), 'sync', {
+      title: np.title, artist: np.artist, videoId: vid,
+      position: v ? v.currentTime || 0 : 0, playing: np.playing, at: Date.now()
+    });
+  }
+  function shareQuizScore(score) { if (room) Realtime.send(topicOf(room), 'quiz', { name: me, score }); }
+  return { show, hide, onPoll, shareQuizScore };
+})();
+
+// --- World ticker: what Stardust listeners are playing right now -------------
+// Fully anonymous (title/artist only), ephemeral broadcast; a soft pill cycles
+// through what drifts in.
+const WorldTicker = (() => {
+  const TOPIC = 'realtime:stardust:world';
+  let el = null, lastSent = 0, feed = [], idx = 0, cycle = null, active = false;
+  function enable() {
+    if (active) return;
+    active = true;
+    Realtime.join(TOPIC, (event, p) => {
+      if (event !== 'np' || !p || !p.t) return;
+      feed.push({ t: String(p.t).slice(0, 80), a: String(p.a || '').slice(0, 80) });
+      if (feed.length > 30) feed.shift();
+      if (!el) mount();
+    });
+    cycle = setInterval(step, 7000);
+  }
+  function disable() {
+    active = false;
+    Realtime.leave(TOPIC);
+    if (cycle) { clearInterval(cycle); cycle = null; }
+    if (el) { el.remove(); el = null; }
+    feed = [];
+  }
+  function mount() {
+    el = h('div', { id: 'stardust-ticker', title: 'What Stardust listeners are playing right now' });
+    document.body.appendChild(el);
+    step();
+  }
+  function step() {
+    if (!el || !feed.length) return;
+    idx = (idx + 1) % feed.length;
+    const x = feed[idx];
+    el.textContent = '🌍 someone is playing “' + x.t + '”' + (x.a ? ' — ' + x.a : '');
+  }
+  function onPoll(np) {
+    if (!active || !np || !np.isTrack || !np.playing) return;
+    const now = Date.now();
+    if (now - lastSent < 45000) return;
+    lastSent = now;
+    Realtime.send(TOPIC, 'np', { t: np.title, a: np.artist });
+  }
+  return { enable, disable, onPoll };
 })();
 
 // --- AI DJ: a radio voice that breaks in between songs ----------------------
@@ -1807,6 +2049,50 @@ const Lyrics = (() => {
       offEl.classList.toggle('nonzero', offset !== 0);
     }
   }
+  // 🎯 Lyric quiz: the next line gets muted — type it, get graded on word
+  // overlap. Scores share to the Listen Together room when you're in one.
+  let quizBusy = false;
+  function quiz() {
+    if (quizBusy) return;
+    const v = playingVideo();
+    if (!v || !synced.length) { toast('Play a song with synced lyrics first'); return; }
+    const t = v.currentTime || 0;
+    const i = synced.findIndex((l) => l.t > t + 3 && l.t < t + 30 && (l.s || '').split(/\s+/).length >= 4);
+    if (i < 0) { toast('No good upcoming line to quiz on — try mid-song'); return; }
+    const target = synced[i];
+    quizBusy = true;
+    toast('🎯 Get ready — the next line is yours…');
+    const wait = Math.max(0, (target.t - 0.2 - (v.currentTime || 0)) * 1000 / (v.playbackRate || 1));
+    setTimeout(() => {
+      const vv = playingVideo();
+      if (!vv) { quizBusy = false; return; }
+      vv.muted = true;
+      const input = h('input', { id: 'stardust-quiz-input', placeholder: 'Type the line you can’t hear…' });
+      const modal = h('div', { id: 'stardust-quiz' }, [
+        h('div', { class: 'stardust-label', text: '🎯 What comes next?' }),
+        h('div', { class: 'stardust-quiz-prev', text: '…' + ((synced[i - 1] && synced[i - 1].s) || '') }),
+        input
+      ]);
+      document.body.appendChild(modal);
+      input.focus();
+      let done = false;
+      const finish = (answer) => {
+        if (done) return; done = true;
+        modal.remove();
+        vv.muted = false;
+        const normQ = (x) => (x || '').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, '').split(/\s+/).filter(Boolean);
+        const real = normQ(target.s), got = normQ(answer);
+        const hit = got.filter((w) => real.includes(w)).length;
+        const score = real.length ? Math.min(100, Math.round(100 * hit / real.length)) : 0;
+        toast(score >= 80 ? '🎯 ' + score + '% — nailed it!' : '🎯 ' + score + '% — it was: “' + target.s + '”');
+        try { ListenTogether.shareQuizScore(score); } catch {}
+        quizBusy = false;
+      };
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') finish(input.value); });
+      setTimeout(() => { if (modal.isConnected) finish(input.value); }, 14000);
+    }, wait);
+  }
+
   // 🎬 Export a 15-second kinetic lyric clip: album art backdrop + the words
   // lighting up word-by-word, with the song's own audio — saved as .webm.
   let clipRec = null;
@@ -2926,7 +3212,20 @@ const Lyrics = (() => {
   }
 
   function onTrack(track) { if (active) fetchFor(track); }
-  return { enable, disable, onTrack };
+  return { enable, disable, onTrack, quiz };
+})();
+
+// --- Lyric quiz launcher (floating 🎯) ---------------------------------------
+const QuizBtn = (() => {
+  let btn = null;
+  function show() {
+    if (btn) return;
+    btn = h('button', { id: 'stardust-quiz-btn', class: 'stardust-qa', title: 'Lyric quiz — the next line goes silent, you type it', text: '🎯' });
+    btn.addEventListener('click', () => Lyrics.quiz());
+    document.body.appendChild(btn);
+  }
+  function hide() { if (btn) { btn.remove(); btn = null; } }
+  return { show, hide };
 })();
 
 // ---------------------------------------------------------------------------
@@ -2990,6 +3289,9 @@ function pollNowPlaying() {
     lastSig = sig;
     ipcRenderer.send('stardust:nowplaying', np);
   }
+  // Social features watch every poll (they gate themselves internally).
+  ListenTogether.onPoll(np);
+  WorldTicker.onPoll(np);
 }
 let lastTrack = '';
 

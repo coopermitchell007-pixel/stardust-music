@@ -15,6 +15,7 @@ const stats = require('./stats');
 const transcribe = require('./transcribe');
 const songAudio = require('./audio');
 const ai = require('./ai');
+const community = require('./community');
 
 const YTM_URL = 'https://music.youtube.com/';
 const ICON_PNG = path.join(__dirname, '..', 'assets', 'icon.png');
@@ -343,6 +344,7 @@ function registerIpc() {
         : await transcribe.transcribe(payload, key, share);
     } catch (err) { return { error: 'download' }; }
   });
+  ipcMain.handle('stardust:community-info', () => community.info());
   // AI helpers (Groq, same key as transcription): chat for DJ lines / intent /
   // stats Q&A, TTS for the DJ's voice, STT for voice commands.
   ipcMain.handle('stardust:ai-chat', async (_e, { messages, maxTokens, json } = {}) => {

@@ -84,4 +84,8 @@ async function putTranscript({ title, artist, album, duration, lrc } = {}) {
   return ok;
 }
 
-module.exports = { getTranscript, putTranscript, enabled };
+// Connection info for the renderer's realtime (broadcast) client — rooms,
+// world ticker. Same shared project, same ship-safe anon key.
+function info() { return enabled() ? { url: SUPABASE_URL, anon: SUPABASE_ANON } : null; }
+
+module.exports = { getTranscript, putTranscript, enabled, info };

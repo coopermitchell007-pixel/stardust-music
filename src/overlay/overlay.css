@@ -793,6 +793,51 @@ input[type="color"]#stardust-accent {
   font-size: 11px; padding: 4px 10px;
 }
 
+/* ---- Listen Together ---- */
+#stardust-lt-btn { position: fixed; right: 18px; bottom: 252px; z-index: 2147483640; }
+#stardust-lt-btn.active { border-color: var(--stardust-accent); box-shadow: 0 0 12px color-mix(in srgb, var(--stardust-accent) 45%, transparent); }
+#stardust-lt {
+  position: fixed; right: 70px; bottom: 200px; width: 280px; z-index: 2147483641;
+  display: none; flex-direction: column; gap: 8px; padding: 14px;
+  background: color-mix(in srgb, var(--stardust-accent) 8%, rgba(8,8,16,0.88));
+  border: 1px solid color-mix(in srgb, var(--stardust-accent) 30%, rgba(255,255,255,0.08));
+  border-radius: 14px; backdrop-filter: blur(14px);
+}
+#stardust-lt.open { display: flex; }
+#stardust-lt-state { font-size: 11.5px; color: rgba(255,255,255,0.7); line-height: 1.4; }
+#stardust-lt-code, #stardust-lt-msg {
+  flex: 1; padding: 7px 10px; border-radius: 8px; font-size: 12px;
+  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.14); color: #fff;
+}
+#stardust-lt-chatlog { max-height: 140px; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; }
+.stardust-lt-line { font-size: 11.5px; color: rgba(255,255,255,0.85); }
+
+/* ---- World ticker ---- */
+#stardust-ticker {
+  position: fixed; left: 18px; bottom: 96px; z-index: 2147483638;
+  max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11.5px; color: rgba(255,255,255,0.55); padding: 5px 12px;
+  background: rgba(8,8,16,0.55); border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 999px; backdrop-filter: blur(8px);
+  transition: opacity 0.6s;
+}
+
+/* ---- Lyric quiz ---- */
+#stardust-quiz-btn { position: fixed; right: 18px; bottom: 304px; z-index: 2147483640; }
+#stardust-quiz {
+  position: fixed; left: 50%; top: 38%; transform: translate(-50%, -50%); width: min(460px, 80vw);
+  z-index: 2147483645; display: flex; flex-direction: column; gap: 10px; padding: 20px;
+  background: color-mix(in srgb, var(--stardust-accent) 10%, rgba(8,8,16,0.92));
+  border: 1px solid color-mix(in srgb, var(--stardust-accent) 40%, rgba(255,255,255,0.1));
+  border-radius: 16px; backdrop-filter: blur(18px); box-shadow: 0 24px 80px rgba(0,0,0,0.6);
+}
+.stardust-quiz-prev { font-size: 13px; color: rgba(255,255,255,0.55); font-style: italic; }
+#stardust-quiz-input {
+  padding: 10px 14px; border-radius: 10px; font-size: 14px;
+  background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.16); color: #fff;
+}
+#stardust-quiz-input:focus { outline: none; border-color: var(--stardust-accent); }
+
 /* ---- Voice control mic ---- */
 #stardust-voice-btn {
   position: fixed; right: 18px; bottom: 200px; z-index: 2147483640;
