@@ -88,4 +88,4 @@ async function fetchStreamUrl(url) {
   }
 }
 
-module.exports = { fetchSongAudio, fetchStreamUrl };
+module.exports = { fetchSongAudio, fetchStreamUrl, client };

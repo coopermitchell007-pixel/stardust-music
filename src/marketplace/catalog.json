@@ -536,7 +536,7 @@
     "type": "feature",
     "name": "Crossfade",
     "author": "Stardust",
-    "description": "Smoothly fades tracks out and in as they change, instead of hard cuts.",
+    "description": "Fades tracks in and out like a DJ \u2014 and with the energy profile analysed, it detects dead outros and mixes straight into the next song.",
     "tags": [
       "smart",
       "audio"
@@ -801,5 +801,47 @@
       "mic"
     ],
     "preview": "radial-gradient(circle at 50% 20%, #ffd23f22, transparent 50%), linear-gradient(135deg, #2e1436, #0a0e1a)"
+  },
+  {
+    "id": "feat-phone-remote",
+    "type": "feature",
+    "name": "Phone Remote",
+    "author": "Stardust",
+    "description": "\ud83d\udcf1 your phone becomes a remote AND a second-screen lyrics display \u2014 open one LAN address, no app. Party mode: laptop on the TV, words on every phone.",
+    "tags": [
+      "remote",
+      "phone",
+      "party",
+      "lyrics"
+    ],
+    "preview": "linear-gradient(135deg, #0f2a3a, #0a0e1a)"
+  },
+  {
+    "id": "feat-lyric-learn",
+    "type": "feature",
+    "name": "Lyric Learn",
+    "author": "Stardust",
+    "description": "Right-click any word as it's sung \u2192 translation, reading and its meaning in the line. Every lookup joins your \ud83d\udcda flashcard deck. Needs a Groq key.",
+    "tags": [
+      "language",
+      "learn",
+      "translate",
+      "flashcards"
+    ],
+    "preview": "linear-gradient(135deg, #2a3a14, #0a0e1a)"
+  },
+  {
+    "id": "feat-release-radar",
+    "type": "feature",
+    "name": "Release Radar",
+    "author": "Stardust",
+    "description": "Watches your top artists for fresh albums and singles and announces each drop once. Quietly checks every 6 hours.",
+    "tags": [
+      "releases",
+      "new",
+      "artists",
+      "radar"
+    ],
+    "preview": "linear-gradient(135deg, #3a2a0a, #0a0e1a)"
   }
 ]

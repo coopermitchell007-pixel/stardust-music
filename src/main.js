@@ -17,6 +17,8 @@ const songAudio = require('./audio');
 const ai = require('./ai');
 const community = require('./community');
 const lights = require('./lights');
+const remote = require('./remote');
+const radar = require('./radar');
 
 const YTM_URL = 'https://music.youtube.com/';
 const ICON_PNG = path.join(__dirname, '..', 'assets', 'icon.png');
@@ -354,6 +356,14 @@ function registerIpc() {
   });
   ipcMain.on('stardust:lights-frame', (_e, f) => { try { lights.frame(lightsCfg(), f); } catch {} });
   ipcMain.handle('stardust:lights-test', async () => { try { return await lights.test(lightsCfg()); } catch { return false; } });
+  // Phone remote: LAN server; commands come back through sendCommand.
+  ipcMain.handle('stardust:remote-start', () => { try { return remote.start((a) => sendCommand(a)); } catch { return null; } });
+  ipcMain.handle('stardust:remote-stop', () => { remote.stop(); return true; });
+  ipcMain.on('stardust:remote-state', (_e, s) => remote.setState(s));
+  // Release radar: check the top artists for fresh drops (seen-set persisted).
+  ipcMain.handle('stardust:radar-check', async (_e, { artists, firstRun } = {}) => {
+    try { return await radar.check(artists, firstRun); } catch { return []; }
+  });
   // AI helpers (Groq, same key as transcription): chat for DJ lines / intent /
   // stats Q&A, TTS for the DJ's voice, STT for voice commands.
   ipcMain.handle('stardust:ai-chat', async (_e, { messages, maxTokens, json } = {}) => {

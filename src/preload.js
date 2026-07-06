@@ -883,7 +883,10 @@ const BEHAVIORS = {
   'feat-lyric-quiz':    { on: () => QuizBtn.show(), off: () => QuizBtn.hide() },
   'feat-room-lights':   { on: () => RoomLights.enable(), off: () => RoomLights.disable() },
   'feat-rhythm-game':   { on: () => RhythmGame.show(), off: () => RhythmGame.hide() },
-  'feat-karaoke-night': { on: () => KaraokeNight.show(), off: () => KaraokeNight.hide() }
+  'feat-karaoke-night': { on: () => KaraokeNight.show(), off: () => KaraokeNight.hide() },
+  'feat-phone-remote':  { on: () => PhoneRemote.enable(), off: () => PhoneRemote.disable() },
+  'feat-lyric-learn':   { on: () => LyricLearn.enable(), off: () => LyricLearn.disable() },
+  'feat-release-radar': { on: () => ReleaseRadar.enable(), off: () => ReleaseRadar.disable() }
 };
 
 // --- Vinyl Spin: find the actual artwork <img> at runtime (YTM class names are
@@ -1208,22 +1211,45 @@ const ReactiveTheme = (() => {
 
 // --- Crossfade: fade transitions between tracks (single-element approximation)
 const Crossfade = (() => {
-  let timer = null, active = false, faded = false;
+  let timer = null, active = false, faded = false, outroSkipped = false;
   const OUT = 3, IN = 1.4;
   function enable() { if (active) return; active = true; faded = false; Visualizer.fx.fade(1, 0.2); timer = setInterval(tick, 300); }
   function disable() { active = false; if (timer) { clearInterval(timer); timer = null; } Visualizer.fx.fade(1, 0.3); }
   // Fade IN the moment a real track change is detected (driven by pollNowPlaying,
   // so there's no silent gap while a poll catches up). Guarded by `active`.
-  function onTrack() { if (!active) return; faded = false; Visualizer.fx.fade(0.0001, 0.01); Visualizer.fx.fade(1, IN); }
+  function onTrack(np) {
+    if (!active) return;
+    faded = false; outroSkipped = false;
+    Visualizer.fx.fade(0.0001, 0.01); Visualizer.fx.fade(1, IN);
+    // DJ mode: analyse this track's energy in the background so the outro
+    // check below has a profile by the time the song ends.
+    if (np) XraySeekbar.prefetch(np);
+  }
   // Fade OUT over the last few seconds of the current track.
   function tick() {
     if (!active) return;
     const v = q('video'); if (!v) return;
     const np = readNowPlaying();
     if (!np || np.isAd || !np.isTrack) return;   // never fade on ad interstitials
-    if (isFinite(v.duration) && v.duration > 0) {
-      const left = v.duration - v.currentTime;
-      if (!faded && left > 0 && left <= OUT) { faded = true; Visualizer.fx.fade(0.0001, left); }
+    if (!isFinite(v.duration) || v.duration <= 0) return;
+    const left = v.duration - v.currentTime;
+    if (!faded && left > 0 && left <= OUT) { faded = true; Visualizer.fx.fade(0.0001, left); }
+    // DJ outro-skip: when the energy profile shows a long dead tail, fade
+    // now and jump — the mix never sits through 20s of near-silence.
+    if (!outroSkipped && v.duration > 60 && v.currentTime > v.duration * 0.5) {
+      const entry = XraySeekbar.cached(np.title + '|' + np.artist);
+      if (entry && entry.profile) {
+        const prof = entry.profile;
+        let lastLoud = prof.length - 1;
+        while (lastLoud > 0 && prof[lastLoud] < 0.07) lastLoud--;
+        const loudEnd = (lastLoud + 1) / prof.length * v.duration;
+        if (v.duration - loudEnd > 8 && v.currentTime > loudEnd + 1.5) {
+          outroSkipped = true;
+          Visualizer.fx.fade(0.0001, 0.8);
+          setTimeout(() => { doCommand('next'); }, 850);
+          toast('🎧 Dead outro — mixing into the next track');
+        }
+      }
     }
   }
   return { enable, disable, onTrack };
@@ -1330,6 +1356,156 @@ const PracticeMode = (() => {
     if (a != null && b != null && (v.currentTime > b || v.currentTime < a - 0.5)) v.currentTime = a;
   }
   return { show, hide, onTrack };
+})();
+
+// --- Phone remote: your phone as controller + second-screen lyrics ----------
+const PhoneRemote = (() => {
+  let active = false, btn = null, remoteUrl = null;
+  async function enable() {
+    active = true;
+    remoteUrl = await ipcRenderer.invoke('stardust:remote-start').catch(() => null);
+    if (!remoteUrl) { toast('Could not start the remote server'); return; }
+    if (!btn) {
+      btn = h('button', { id: 'stardust-pr-btn', class: 'stardust-qa', title: 'Phone remote — click to see the address', text: '📱' });
+      btn.addEventListener('click', () => {
+        try { navigator.clipboard.writeText(remoteUrl); } catch {}
+        toast('📱 On your phone: ' + remoteUrl + ' (copied)');
+      });
+      document.body.appendChild(btn);
+    }
+    toast('📱 Phone remote at ' + remoteUrl);
+  }
+  function disable() {
+    active = false;
+    ipcRenderer.invoke('stardust:remote-stop').catch(() => {});
+    if (btn) { btn.remove(); btn = null; }
+  }
+  // Ships now-playing + the live lyric lines to the phone every poll.
+  function onPoll(np) {
+    if (!active || !np) return;
+    const st = Lyrics.state();
+    let line = '', prevLine = '', nextLine = '';
+    if (st.synced && st.synced.length) {
+      const v = q('video');
+      const t = v ? (v.currentTime || 0) + 0.12 : 0;
+      let idx = -1;
+      for (let i = 0; i < st.synced.length; i++) { if (st.synced[i].t <= t) idx = i; else break; }
+      line = idx >= 0 ? (st.synced[idx].s || '') : '';
+      prevLine = idx > 0 ? (st.synced[idx - 1].s || '') : '';
+      nextLine = st.synced[idx + 1] ? (st.synced[idx + 1].s || '') : '';
+    }
+    ipcRenderer.send('stardust:remote-state', {
+      title: np.title, artist: np.artist, art: np.art, playing: np.playing,
+      line, prevLine, nextLine
+    });
+  }
+  return { enable, disable, onPoll };
+})();
+
+// --- Lyric learn: right-click a word, learn it -------------------------------
+// Translation + reading via the LLM, and every looked-up word joins a local
+// flashcard deck (📚) you can flip through between songs.
+const LyricLearn = (() => {
+  let active = false, btn = null, pop = null;
+  const deck = () => { try { return JSON.parse(localStorage.getItem('sd-vocab') || '[]'); } catch { return []; } };
+  const saveDeck = (d) => localStorage.setItem('sd-vocab', JSON.stringify(d.slice(-400)));
+  function enable() {
+    active = true;
+    document.addEventListener('contextmenu', onCtx, true);
+    if (!btn) {
+      btn = h('button', { id: 'stardust-ll-btn', class: 'stardust-qa', title: 'Vocabulary deck — words you looked up in lyrics', text: '📚' });
+      btn.addEventListener('click', review);
+      document.body.appendChild(btn);
+    }
+  }
+  function disable() {
+    active = false;
+    document.removeEventListener('contextmenu', onCtx, true);
+    if (btn) { btn.remove(); btn = null; }
+    if (pop) { pop.remove(); pop = null; }
+  }
+  function onCtx(e) {
+    if (!active) return;
+    const w = e.target.closest('#stardust-lyrics .w');
+    if (!w) return;
+    e.preventDefault(); e.stopPropagation();
+    lookup(w.textContent.trim(), (w.closest('.stardust-lyric-line') || {}).textContent || '', e.clientX, e.clientY);
+  }
+  async function lookup(word, context, x, y) {
+    if (!word) return;
+    if (!(settings && settings.transcribeKey)) { toast('Lyric Learn needs a Groq key (panel → Settings)'); return; }
+    if (pop) pop.remove();
+    pop = h('div', { id: 'stardust-ll-pop', text: '📖 ' + word + ' …' });
+    pop.style.left = Math.min(x, window.innerWidth - 320) + 'px';
+    pop.style.top = Math.max(60, y - 30) + 'px';
+    document.body.appendChild(pop);
+    const lang = (navigator.language || 'en').slice(0, 2);
+    const r = await ipcRenderer.invoke('stardust:ai-chat', {
+      messages: [
+        { role: 'system', content: 'Explain one song-lyric word for a language learner, in ' + lang + '. Format exactly: the word — reading/romanization if non-Latin — meaning (max 10 words) — meaning IN THIS LYRIC (max 10 words). One line, using — separators.' },
+        { role: 'user', content: 'Word: ' + word + '\nLyric line: ' + context.trim().slice(0, 160) }
+      ], maxTokens: 90
+    }).catch(() => null);
+    if (!pop) return;
+    const answer = (r && r.text) || 'Lookup failed';
+    pop.textContent = '📖 ' + answer;
+    const close = h('span', { class: 'stardust-ll-x', text: ' ✕' });
+    close.addEventListener('click', () => { pop && pop.remove(); pop = null; });
+    pop.appendChild(close);
+    if (r && r.text) {
+      const d = deck();
+      if (!d.some((c) => c.w === word)) { d.push({ w: word, a: answer, at: Date.now() }); saveDeck(d); }
+    }
+    setTimeout(() => { if (pop && pop.isConnected) { pop.remove(); pop = null; } }, 12000);
+  }
+  function review() {
+    const d = deck();
+    if (!d.length) { toast('No words yet — right-click any lyric word to learn it'); return; }
+    let i = Math.max(0, d.length - 1);
+    const card = h('div', { id: 'stardust-ll-card' });
+    const front = h('div', { class: 'stardust-ll-front' });
+    const back = h('div', { class: 'stardust-ll-back' });
+    const modal = h('div', { id: 'stardust-quiz' }, [
+      h('div', { class: 'stardust-label', text: '📚 Your lyric vocabulary (' + d.length + ')' }),
+      card,
+      h('div', { class: 'stardust-row' }, [
+        h('button', { class: 'stardust-mini-btn', id: 'll-flip', text: 'Flip' }),
+        h('button', { class: 'stardust-mini-btn', id: 'll-next', text: 'Next' }),
+        h('button', { class: 'stardust-mini-btn', id: 'll-close', text: 'Close' })
+      ])
+    ]);
+    card.appendChild(front); card.appendChild(back);
+    const paint = () => { front.textContent = d[i].w; back.textContent = d[i].a; back.style.display = 'none'; };
+    modal.querySelector('#ll-flip').addEventListener('click', () => { back.style.display = back.style.display === 'none' ? 'block' : 'none'; });
+    modal.querySelector('#ll-next').addEventListener('click', () => { i = (i + 1) % d.length; paint(); });
+    modal.querySelector('#ll-close').addEventListener('click', () => modal.remove());
+    paint();
+    document.body.appendChild(modal);
+  }
+  return { enable, disable };
+})();
+
+// --- Release radar: fresh drops from your top artists -------------------------
+const ReleaseRadar = (() => {
+  let active = false, timer = null;
+  async function run() {
+    if (!active) return;
+    const firstRun = !localStorage.getItem('sd-radar-seeded');
+    const s = await ipcRenderer.invoke('stardust:stats').catch(() => null);
+    const artists = ((s && s.topArtists) || []).slice(0, 6).map((a) => a.name).filter(Boolean);
+    if (!artists.length) return;
+    const news = await ipcRenderer.invoke('stardust:radar-check', { artists, firstRun }).catch(() => []);
+    localStorage.setItem('sd-radar-seeded', '1');
+    for (const n of (news || []).slice(0, 4)) toast('🆕 New from ' + n.artist + ': "' + n.title + '"');
+  }
+  function enable() {
+    if (active) return;
+    active = true;
+    setTimeout(run, 20000);              // after startup settles
+    timer = setInterval(run, 21600000);  // and every 6 hours
+  }
+  function disable() { active = false; if (timer) { clearInterval(timer); timer = null; } }
+  return { enable, disable };
 })();
 
 // --- Room lights: beat energy + track colour → real lights on the LAN -------
@@ -1939,19 +2115,20 @@ const XraySeekbar = (() => {
     if (btn) { btn.remove(); btn = null; }
     profile = null; chorusAt = null; forKey = '';
   }
-  async function onTrack(np) {
-    if (!active || !np || !np.isTrack) return;
+  // Analyse a track into { profile, chorusAt } — shared by the seekbar
+  // overlay AND the DJ crossfade's outro-skip (which prefetches it).
+  const analyzing = new Set();
+  async function analyze(np) {
     const key = np.title + '|' + np.artist;
-    if (key === forKey) return;
-    forKey = key; profile = null; chorusAt = null; draw();
-    const hit = cache.get(key);
-    if (hit) { profile = hit.profile; chorusAt = hit.chorusAt; draw(); return; }
-    let vid = null;
-    try { vid = await ipcRenderer.invoke('stardust:current-videoid'); } catch {}
-    let raw = null;
-    try { raw = await ipcRenderer.invoke('stardust:track-audio', { videoId: vid, duration: np.duration }); } catch {}
-    if (!active || forKey !== key || !raw) return;
+    if (cache.has(key)) return cache.get(key);
+    if (analyzing.has(key)) return null;
+    analyzing.add(key);
     try {
+      let vid = null;
+      try { vid = await ipcRenderer.invoke('stardust:current-videoid'); } catch {}
+      let raw = null;
+      try { raw = await ipcRenderer.invoke('stardust:track-audio', { videoId: vid, duration: np.duration }); } catch {}
+      if (!raw) return null;
       const ab = raw.buffer ? raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength) : raw;
       const ac = new (window.AudioContext || window.webkitAudioContext)();
       const audio = await ac.decodeAudioData(ab);
@@ -1974,14 +2151,26 @@ const XraySeekbar = (() => {
         let m = 0; for (let j = i; j < i + w; j++) m += prof[j];
         if (m > bestV) { bestV = m; bestI = i; }
       }
-      profile = prof;
-      chorusAt = bestI >= 0 ? bestI / N * dur : null;
-      cache.set(key, { profile, chorusAt });
-      if (cache.size > 40) cache.delete(cache.keys().next().value);
       try { ac.close(); } catch {}
-      draw();
-    } catch (e) { console.log('[Stardust] x-ray analysis failed:', e && e.message); }
+      const entry = { profile: prof, chorusAt: bestI >= 0 ? bestI / N * dur : null, dur };
+      cache.set(key, entry);
+      if (cache.size > 40) cache.delete(cache.keys().next().value);
+      return entry;
+    } catch (e) { console.log('[Stardust] x-ray analysis failed:', e && e.message); return null; }
+    finally { analyzing.delete(key); }
   }
+  async function onTrack(np) {
+    if (!active || !np || !np.isTrack) return;
+    const key = np.title + '|' + np.artist;
+    if (key === forKey) return;
+    forKey = key; profile = null; chorusAt = null; draw();
+    const entry = await analyze(np);
+    if (!active || forKey !== key || !entry) return;
+    profile = entry.profile; chorusAt = entry.chorusAt;
+    draw();
+  }
+  const cached = (key) => cache.get(key) || null;
+  const prefetch = (np) => { if (np && np.isTrack) analyze(np).catch(() => {}); };
   function slider() { return q('ytmusic-player-bar #progress-bar'); }
   function place() {
     if (!active) return;
@@ -2014,6 +2203,7 @@ const XraySeekbar = (() => {
     btn.style.display = chorusAt != null ? 'block' : 'none';
     if (canvas.width !== Math.floor(r.width)) { canvas.width = Math.floor(r.width); canvas.height = 14; draw(); }
   }
+  /* exported below: cached(key) + prefetch(np) feed the DJ crossfade */
   function draw() {
     if (!cx || !canvas) return;
     cx.clearRect(0, 0, canvas.width, canvas.height);
@@ -2032,7 +2222,7 @@ const XraySeekbar = (() => {
     }
     cx.globalAlpha = 1;
   }
-  return { enable, disable, onTrack };
+  return { enable, disable, onTrack, cached, prefetch };
 })();
 
 // --- Smart playlist tools: a floating bar of queue/playlist shortcuts -------
@@ -3522,6 +3712,7 @@ function pollNowPlaying() {
   // Social features watch every poll (they gate themselves internally).
   ListenTogether.onPoll(np);
   WorldTicker.onPoll(np);
+  PhoneRemote.onPoll(np);
 }
 let lastTrack = '';
 
