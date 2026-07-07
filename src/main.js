@@ -348,6 +348,16 @@ function registerIpc() {
     } catch (err) { return { error: 'download' }; }
   });
   ipcMain.handle('stardust:community-info', () => community.info());
+  // Booth diagnostics: the renderer logs every skip/click/navigation step to
+  // disk so field reports are debuggable from the actual machine.
+  const BOOTH_LOG = path.join(app.getPath('userData'), 'booth.log');
+  ipcMain.on('stardust:booth-log', (_e, line) => {
+    try {
+      fs.appendFileSync(BOOTH_LOG, new Date().toISOString().slice(11, 19) + ' ' + String(line).slice(0, 300) + '\n');
+      const st = fs.statSync(BOOTH_LOG);
+      if (st.size > 300000) fs.writeFileSync(BOOTH_LOG, ''); // cap
+    } catch {}
+  });
   // Lyric index: every lyric the user has SEEN becomes searchable by words —
   // "which song says …". Plain lowercase text, capped, local only.
   const LYRIC_INDEX = path.join(app.getPath('userData'), 'lyric-index.json');

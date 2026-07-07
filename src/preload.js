@@ -796,6 +796,7 @@ window.addEventListener('pointerdown', () => Visualizer.resumeAudio(), { capture
 window.addEventListener('click', (e) => {
   const btn = e.target && e.target.closest && e.target.closest('ytmusic-player-bar .next-button');
   if (!btn) return;
+  blog('next-button click intercepted');
   if (DJQueue.playNow()) { e.preventDefault(); e.stopPropagation(); }
 }, { capture: true });
 
@@ -1630,7 +1631,8 @@ const DJQueue = (() => {
       lastKey = key;
       Visualizer.fx.fade(1, 0.5); // restore the handoff fade on arrival
       played.push(key); if (played.length > 60) played.shift();
-      if (plan.length && plan[0].title === np.title) plan.shift(); // our own transition
+      const fz = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+      if (plan.length && (fz(plan[0].title) === fz(np.title) || fz(np.title).includes(fz(plan[0].title)) || fz(plan[0].title).includes(fz(np.title)))) plan.shift(); // our own transition (fuzzy — display titles differ from resolved ones)
       if (plan.length < 3) redig();
       render();
       // The pick's announcement waits for its track to actually start.
@@ -1652,7 +1654,8 @@ const DJQueue = (() => {
       fire(plan.shift()).finally(() => { firing = false; });
     }
   }
-  async function fire(p2) {
+  async function fire(p2, hard) {
+    blog('fire "' + p2.title + '" vid=' + (p2.videoId || 'none') + (hard ? ' (hard)' : ''));
     AIDJ.suppressOnce(); // no double-talking over the transition
     const worthSaying = p2.reason && /discovery|lost/.test(p2.tag || '');
     if (worthSaying) {
@@ -1668,9 +1671,10 @@ const DJQueue = (() => {
     // through to the flaky search-page path when resolution hadn't finished).
     if (!p2.videoId) {
       p2.videoId = await ipcRenderer.invoke('stardust:resolve-song', { query: p2.title + ' ' + (p2.artist || '') }).catch(() => null);
+      blog('resolved late → ' + (p2.videoId || 'FAILED'));
     }
-    if (p2.videoId) spaNavigate('/watch?v=' + p2.videoId);
-    else VoiceControl.playSearch(p2.title + ' ' + (p2.artist || ''));
+    if (p2.videoId) spaNavigate('/watch?v=' + p2.videoId, hard);
+    else { blog('falling back to search-page flow'); VoiceControl.playSearch(p2.title + ' ' + (p2.artist || '')); }
   }
   // The plan survives the navigations its own picks cause.
   function resumePlan() {
@@ -1681,6 +1685,7 @@ const DJQueue = (() => {
     } catch {}
   }
   function playNow() {
+    blog('playNow: active=' + active + ' plan=' + plan.length);
     if (!active) return false;
     if (!plan.length) {
       // Be loud about WHY a skip fell through — silence read as "broken".
@@ -1688,7 +1693,7 @@ const DJQueue = (() => {
       redig();
       return false;
     }
-    fire(plan.shift());
+    fire(plan.shift(), true); // user asked NOW — guaranteed path
     return true;
   }
   // Queue-row clicks land here in CAPTURE phase — YTM's queue container was
@@ -1716,7 +1721,7 @@ const DJQueue = (() => {
     const p2 = plan[i];
     plan.splice(0, i + 1);
     toast('🎧 Jumping to "' + p2.title + '"');
-    fire(p2);
+    fire(p2, true); // explicit click — guaranteed path
   }, true);
   return { enable, disable, onPoll, playNow, resumePlan, direct, request };
 })();
@@ -4667,8 +4672,17 @@ function q(sel) { return document.querySelector(sel); }
 // Navigate INSIDE the YTM app: a synthetic anchor click lets YTM's own router
 // take it (no page reload, near-gapless). If the router ignores it, a hard
 // navigation follows — the old behavior, as the safety net.
-function spaNavigate(path) {
+function blog(line) {
+  console.log('[Stardust booth] ' + line);
+  try { ipcRenderer.send('stardust:booth-log', line); } catch {}
+}
+
+function spaNavigate(path, hard) {
   const href = path.startsWith('http') ? path : 'https://music.youtube.com' + path;
+  // Explicit user actions (skip, queue click) take the GUARANTEED path:
+  // an immediate hard navigation. Gapless anchor-clicks are only for
+  // automatic end-of-song transitions where a reload gap would be heard.
+  if (hard) { blog('nav HARD ' + href); location.href = href; return; }
   try {
     const a = document.createElement('a');
     a.href = href;
@@ -4677,11 +4691,9 @@ function spaNavigate(path) {
     a.click();
     a.remove();
     const vid = (href.match(/[?&]v=([\w-]+)/) || [])[1];
-    // Desktop YTM often ignores synthetic anchor clicks entirely — verify
-    // FAST and hard-navigate unconditionally if the URL didn't take. (The
-    // old 3s conditional fallback silently ate skips.)
+    blog('nav spa ' + href);
     setTimeout(() => {
-      if (vid && !location.href.includes(vid)) location.href = href;
+      if (vid && !location.href.includes(vid)) { blog('nav spa MISSED → hard'); location.href = href; }
     }, 800);
   } catch { location.href = href; }
 }
