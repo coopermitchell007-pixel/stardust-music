@@ -4645,7 +4645,9 @@ function toast(msg) {
   let t = document.getElementById('stardust-toast');
   if (!t) { t = h('div', { id: 'stardust-toast' }); document.body.appendChild(t); }
   t.textContent = msg; t.classList.add('show');
-  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('show'), 1800);
+  // Long lines (the DJ talks in sentences now) get time to be read.
+  const ms = Math.min(6000, Math.max(1800, String(msg).length * 55));
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('show'), ms);
 }
 
 function doCommand(action) {
