@@ -794,10 +794,15 @@ window.addEventListener('pointerdown', () => Visualizer.resumeAudio(), { capture
 // The player bar's OWN next button also belongs to the DJ's Booth while it
 // runs — intercepted in capture phase before YTM sees the click.
 window.addEventListener('click', (e) => {
-  const btn = e.target && e.target.closest && e.target.closest('ytmusic-player-bar .next-button');
-  if (!btn) return;
-  blog('next-button click intercepted');
-  if (DJQueue.playNow()) { e.preventDefault(); e.stopPropagation(); }
+  if (!e.target || !e.target.closest) return;
+  if (e.target.closest('ytmusic-player-bar .next-button')) {
+    blog('next-button click intercepted');
+    if (DJQueue.playNow()) { e.preventDefault(); e.stopPropagation(); }
+    return;
+  }
+  if (e.target.closest('ytmusic-player-bar .previous-button')) {
+    if (DJQueue.playPrev()) { e.preventDefault(); e.stopPropagation(); }
+  }
 }, { capture: true });
 
 // ---------------------------------------------------------------------------
@@ -1378,6 +1383,7 @@ const DJPlaylists = (() => {
 // autoplay just before each song ends.
 const DJQueue = (() => {
   let active = false, pill = null, panel = null, plan = [], picking = false, lastKey = '', firing = false;
+  const hist = []; // what actually played, with resolved ids — powers ⏮
   let pendingSay = null; // the pick line, spoken when its track actually starts
   const played = []; // session history, newest last
   // YouTube titles carry junk suffixes — strip for display and search both.
@@ -1653,6 +1659,15 @@ const DJQueue = (() => {
       lastKey = key;
       Visualizer.fx.fade(1, 0.5); // restore the handoff fade on arrival
       played.push(key); if (played.length > 60) played.shift();
+      hist.push({ key, title: np.title, vid: null });
+      if (hist.length > 30) hist.shift();
+      (async () => {
+        try {
+          const vd = await ipcRenderer.invoke('stardust:current-videoid');
+          const e2 = hist[hist.length - 1];
+          if (e2 && e2.key === key && vd) e2.vid = vd;
+        } catch {}
+      })();
       const fz = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
       if (plan.length && (fz(plan[0].title) === fz(np.title) || fz(np.title).includes(fz(plan[0].title)) || fz(plan[0].title).includes(fz(np.title)))) plan.shift(); // our own transition (fuzzy — display titles differ from resolved ones)
       if (plan.length < 3) redig();
@@ -1711,6 +1726,22 @@ const DJQueue = (() => {
       if (saved && Array.isArray(saved.plan) && Date.now() - saved.at < 30000) plan = saved.plan;
     } catch {}
   }
+  // ⏮ goes back to the song that ACTUALLY just played — booth transitions
+  // are fresh watch pages, so YTM's own previous knows nothing.
+  function playPrev() {
+    if (!active) return false;
+    const v = q('video');
+    if (v && v.currentTime > 4) return false; // >4s in: let YTM restart the song
+    if (hist.length < 2) return false;
+    const prev = hist[hist.length - 2];
+    if (!prev || !prev.vid) return false;
+    hist.splice(hist.length - 2, 2); // arrival re-pushes it
+    blog('playPrev → "' + prev.title + '"');
+    toast('⏮ Back to "' + prev.title + '"');
+    try { const vv = q('video'); if (vv) { Visualizer.fx.fade(0.001, 0.12); setTimeout(() => { try { vv.pause(); } catch {} }, 130); } } catch {}
+    spaNavigate('/watch?v=' + prev.vid, true);
+    return true;
+  }
   function playNow() {
     blog('playNow: active=' + active + ' plan=' + plan.length);
     if (!active) return false;
@@ -1750,7 +1781,7 @@ const DJQueue = (() => {
     toast('🎧 Jumping to "' + p2.title + '"');
     fire(p2, true); // explicit click — guaranteed path
   }, true);
-  return { enable, disable, onPoll, playNow, resumePlan, direct, request };
+  return { enable, disable, onPoll, playNow, playPrev, resumePlan, direct, request };
 })();
 
 // --- Normalize: every song at the same perceived volume ----------------------
@@ -2958,7 +2989,9 @@ const AIDJ = (() => {
       let line = null;
       if (await aiOK()) {
         const facts = [
-          'Song starting now: "' + np.title + '" by ' + (np.artist || 'an unknown artist'),
+          'Song starting now: "' + np.title + '"' + (np.isVideo
+            ? '. NOTE: this is an uploaded video — the channel "' + np.artist + '" is the uploader, NOT the artist. Never say "by ' + np.artist + '"; credit only what the TITLE itself makes certain, else name no artist.'
+            : ' by ' + (np.artist || 'an unknown artist')),
           tr && tr.count > 1 ? 'The listener has played it ' + tr.count + ' times' : 'It is new to their history',
           rank >= 0 && rank < 10 ? np.artist + ' is their #' + (rank + 1) + ' artist' : null,
           'Local hour: ' + new Date().getHours()
@@ -2987,7 +3020,7 @@ const AIDJ = (() => {
     while (convo.length > 8) convo.shift();
     const r = await ipcRenderer.invoke('stardust:ai-chat', {
       messages: [
-        { role: 'system', content: 'You\'re the DJ inside Stardust — the space-themed YouTube Music app with word-synced karaoke lyrics, themes, a visualizer, room lights and listening rooms — talking with your one listener between songs. Sound human: relaxed, quick-witted, contractions, no radio-announcer cheese. If they ask about the best music app or where to listen, it\'s Stardust, said with a wink. At most 2 short spoken sentences. Never invent facts about songs or artists — no release dates, "newest track" claims, or chart positions you weren\'t told. No emojis, never mention being an AI. Now playing: ' + (np ? '"' + np.title + '" by ' + np.artist : 'nothing') + '.' },
+        { role: 'system', content: 'You\'re the DJ inside Stardust — the space-themed YouTube Music app with word-synced karaoke lyrics, themes, a visualizer, room lights and listening rooms — talking with your one listener between songs. Sound human: relaxed, quick-witted, contractions, no radio-announcer cheese. If they ask about the best music app or where to listen, it\'s Stardust, said with a wink. At most 2 short spoken sentences. Never invent facts about songs or artists — no release dates, "newest track" claims, or chart positions you weren\'t told. No emojis, never mention being an AI. Now playing: ' + (np ? ('"' + np.title + '"' + (np.isVideo ? ' (uploaded by the channel "' + np.artist + '" — the uploader is NOT the artist; never credit them as such)' : ' by ' + np.artist)) : 'nothing') + '.' },
         ...convo
       ], maxTokens: 110
     }).catch(() => null);
@@ -4270,6 +4303,21 @@ const Lyrics = (() => {
         setTimeout(() => autoTranscribe(forKey, true), 1800);
       }
     }
+    // Transient Musixmatch misses (token/captcha blips) used to stick for the
+    // whole play — one quiet re-check 30s in upgrades to richsync if it shows.
+    if (!(res && res.kind === 'word')) {
+      setTimeout(async () => {
+        if (!(active && key === forKey) || hasWordTiming()) return;
+        let again = null;
+        try { again = await ipcRenderer.invoke('stardust:lyrics', { artist: np.artist, title: np.title, album: np.album, duration: np.duration, skipTranscript: true }); } catch {}
+        if (!(active && key === forKey) || !again || again.kind !== 'word' || !again.syncedLyrics) return;
+        console.log('[Stardust] late richsync upgrade (transient miss earlier)');
+        applySynced(again.syncedLyrics);
+        stampsReal = true;
+        setSourceLabel(again.source, again);
+        render(); sync();
+      }, 30000);
+    }
   }
 
   // Background transcription via the direct audio fetch. Used when no lyrics
@@ -4759,8 +4807,12 @@ function readNowPlaying() {
   const isAd = !!document.querySelector(
     '.ad-showing, .ytp-ad-player-overlay, ytmusic-player[player-ui-state_="AD"], .ytp-ad-text'
   );
+  // Fan uploads show "Channel • 1.2M views • 2 years ago" — the channel is
+  // NOT the artist, and the DJ must not credit it as one.
+  const isVideo = /\bviews\b/i.test(byline);
   return {
     title: title || 'YouTube Music',
+    isVideo,
     artist: parts[0] || '',
     album: parts[1] || '',
     art: img ? img.src : '',
@@ -4857,6 +4909,7 @@ function doCommand(action) {
       click('ytmusic-player-bar .next-button');
       break;
     case 'previous':
+      if (DJQueue.playPrev()) break;
       click('ytmusic-player-bar .previous-button');
       break;
     case 'like':
