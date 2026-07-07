@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		3F4AE441C2C28D8F478B6D18 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 5CE27F8D6A1C78E0B97E05B2 /* Assets.xcassets */; };
 		598217385A0C94888363A00A /* theme.css in Resources */ = {isa = PBXBuildFile; fileRef = CD38464544F9CD36A4754C8C /* theme.css */; };
+		A9A94CCE4815B3F3B4FFBF3B /* overlay.css in Resources */ = {isa = PBXBuildFile; fileRef = 207F1565799242A89366C230 /* overlay.css */; };
 		AB18C5E271A3BDAC93AE0044 /* WebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E1F987DA1D56702C1E8E219 /* WebView.swift */; };
 		B3D540E63F479F43EC2A4D1F /* StardustApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00DC864C90987631749A1052 /* StardustApp.swift */; };
 		DADFE010B0228EC74060403E /* blockrules.json in Resources */ = {isa = PBXBuildFile; fileRef = 51BF35BDA03957C2D1F31BC9 /* blockrules.json */; };
@@ -16,6 +17,7 @@
 
 /* Begin PBXFileReference section */
 		00DC864C90987631749A1052 /* StardustApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StardustApp.swift; sourceTree = "<group>"; };
+		207F1565799242A89366C230 /* overlay.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = overlay.css; sourceTree = "<group>"; };
 		51BF35BDA03957C2D1F31BC9 /* blockrules.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = blockrules.json; sourceTree = "<group>"; };
 		5CE27F8D6A1C78E0B97E05B2 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		7E1F987DA1D56702C1E8E219 /* WebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebView.swift; sourceTree = "<group>"; };
@@ -47,6 +49,7 @@
 				5CE27F8D6A1C78E0B97E05B2 /* Assets.xcassets */,
 				51BF35BDA03957C2D1F31BC9 /* blockrules.json */,
 				99B19B696354D0E647F8E4C2 /* Info.plist */,
+				207F1565799242A89366C230 /* overlay.css */,
 				00DC864C90987631749A1052 /* StardustApp.swift */,
 				CD38464544F9CD36A4754C8C /* theme.css */,
 				7E1F987DA1D56702C1E8E219 /* WebView.swift */,
@@ -115,6 +118,7 @@
 			files = (
 				3F4AE441C2C28D8F478B6D18 /* Assets.xcassets in Resources */,
 				DADFE010B0228EC74060403E /* blockrules.json in Resources */,
+				A9A94CCE4815B3F3B4FFBF3B /* overlay.css in Resources */,
 				598217385A0C94888363A00A /* theme.css in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

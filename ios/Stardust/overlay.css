@@ -1,0 +1,1164 @@
+/* =========================================================================
+   Stardust base layer — applied under every theme.
+   Themes mostly vary via JSON (background, accent, starfield, visualizer);
+   this file does the shared structural work of making YouTube Music
+   transparent so the starfield shows, plus glass + accent recoloring.
+   CSS variables (--stardust-accent / --stardust-bg / --stardust-glass-*) are
+   injected separately by the preload.
+   ========================================================================= */
+
+/* --- background + canvases ------------------------------------------------ */
+/* Paint the gradient ONCE on the root (no `background-attachment: fixed`).
+   A fixed background is re-rasterised per composited layer, and YTM stacks a
+   layer per content shelf — the seams between those repaints showed up as faint
+   horizontal "lines between segments". A single non-fixed root paint has none. */
+html {
+  background: var(--stardust-bg) !important;
+  background-attachment: scroll !important;
+}
+body { background: transparent !important; }
+
+/* Glowing nebula bloom behind everything. These are LOCALISED radial blooms
+   that fade to transparent over the theme's near-black base — not a full-height
+   linear gradient. A localised bloom over a solid base bands far less than a
+   tall multi-stop gradient (the transition is short and steep), and the
+   starfield breaks up whatever little remains, so no grain dither is needed. */
+html::before {
+  content: '';
+  position: fixed;
+  inset: -10%;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(900px 760px at 24% 6%, color-mix(in srgb, var(--stardust-accent) 42%, transparent), transparent 66%),
+    radial-gradient(1000px 820px at 84% 92%, color-mix(in srgb, var(--stardust-accent) 26%, transparent), transparent 70%);
+  animation: stardust-nebula 22s ease-in-out infinite alternate;
+}
+@keyframes stardust-nebula {
+  from { transform: translate(0, 0) scale(1); opacity: 0.7; }
+  to   { transform: translate(2%, -1.5%) scale(1.08); opacity: 1; }
+}
+
+/* (No dither overlay — it read as grain. Banding handled by keeping blooms
+   soft over near-black bases.) */
+
+/* Canvas background texture — sits behind everything (incl. starfield). */
+#stardust-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+
+#stardust-starfield {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+#stardust-blackhole {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+#stardust-visualizer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 72px; /* JS re-docks this to the real player-bar height */
+  /* Above the page content (z-index:2) so album-art cards no longer cover the
+     bars, but below the panel/launcher (2147483646). */
+  z-index: 2147483640;
+  pointer-events: none;
+  opacity: 0.92;
+}
+
+/* --- make YouTube Music layers see-through -------------------------------- */
+/* The reliable way (à la Spicetify): neutralise YTM's own background custom
+   properties so every surface that derives from them goes transparent at once,
+   rather than chasing individual elements. */
+html, ytmusic-app, ytmusic-app-layout {
+  --ytmusic-general-background: transparent !important;
+  --ytmusic-general-background-a: transparent !important;
+  --ytmusic-general-background-b: transparent !important;
+  --ytmusic-general-background-c: transparent !important;
+  --ytmusic-brand-background-solid: transparent !important;
+  --ytmusic-color-black1: transparent !important;
+  --ytmusic-color-black2: transparent !important;
+  --ytmusic-color-black3: transparent !important;
+  --ytmusic-color-black4: transparent !important;
+  --yt-spec-base-background: transparent !important;
+  --yt-spec-general-background-a: transparent !important;
+  --yt-spec-general-background-b: transparent !important;
+  --yt-spec-general-background-c: transparent !important;
+}
+
+/* and the structural containers / hero gradients directly */
+ytmusic-app,
+ytmusic-app-layout,
+#layout.ytmusic-app-layout,
+#content.ytmusic-app-layout,
+#background.ytmusic-app-layout,
+#background-gradient,
+#background-gradient.ytmusic-app-layout,
+tp-yt-app-header-layout,
+tp-yt-app-drawer,
+ytmusic-browse-response,
+#contents.ytmusic-section-list-renderer,
+ytmusic-tabbed-search-results-renderer,
+ytmusic-search-page,
+ytmusic-immersive-header-renderer,
+.content.ytmusic-app-layout,
+#header.ytmusic-immersive-header-renderer,
+#nav-bar-background.ytmusic-nav-bar {
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+}
+
+/* CRITICAL: every content ROW/SHELF/SECTION renderer must be transparent too.
+   When some of these stay opaque while others go clear, the opaque ones cover
+   the nebula and the clear ones reveal it — producing alternating bright/dark
+   horizontal "section lines" exactly at row boundaries. Forcing them all
+   transparent makes the background read as one continuous field. */
+ytmusic-section-list-renderer,
+ytmusic-item-section-renderer,
+ytmusic-shelf-renderer,
+ytmusic-carousel-shelf-renderer,
+ytmusic-carousel,
+ytmusic-carousel-renderer,
+ytmusic-grid-renderer,
+ytmusic-two-row-item-renderer,
+ytmusic-responsive-list-item-renderer,
+ytmusic-responsive-header-renderer,
+ytmusic-carousel-shelf-basic-header-renderer,
+ytmusic-immersive-carousel-shelf-renderer,
+ytmusic-tastebuilder-renderer,
+ytmusic-description-shelf-renderer,
+ytmusic-playlist-shelf-renderer,
+ytmusic-message-renderer,
+ytmusic-guide-section-renderer,
+ytmusic-chip-cloud-renderer,
+ytmusic-chip-cloud-chip-renderer,
+ytmusic-multi-row-list-item-renderer,
+ytmusic-detail-header-renderer,
+ytmusic-tabs,
+tp-yt-paper-card,
+tp-yt-paper-tabs,
+.ytmusic-carousel-shelf-renderer,
+.ytmusic-section-list-renderer,
+.ytmusic-shelf-renderer,
+.ytmusic-carousel-shelf-renderer,
+.ytmusic-carousel,
+ytmusic-immersive-header-renderer,
+ytmusic-carousel-shelf-basic-header-renderer,
+ytmusic-visual-header-renderer,
+ytmusic-feed-nudge-renderer,
+ytmusic-notification-action-renderer,
+ytmusic-guide-renderer,
+ytmusic-guide-section-renderer,
+#contents,
+#items,
+#contents.ytmusic-shelf-renderer,
+#contents.ytmusic-carousel-shelf-renderer,
+#items.ytmusic-carousel,
+.ytmusic-tab-renderer,
+ytmusic-tab-renderer {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+/* A few of these row containers also paint a faint top/bottom border or
+   box-shadow that reads as a hairline "section line" — strip those too. */
+ytmusic-section-list-renderer,
+ytmusic-shelf-renderer,
+ytmusic-carousel-shelf-renderer,
+ytmusic-item-section-renderer,
+ytmusic-grid-renderer,
+ytmusic-carousel,
+ytmusic-immersive-header-renderer,
+.ytmusic-shelf-renderer,
+.ytmusic-carousel-shelf-renderer {
+  border: none !important;
+  box-shadow: none !important;
+}
+
+ytmusic-app { position: relative; z-index: 2; }
+
+/* The home page lays a big opaque "fullbleed" hero thumbnail + dark gradient over
+   the top of the feed (this made the upper area solid-coloured with a hard seam).
+   Hide ONLY the hero photo (visibility:hidden, it's a leaf <img>) and strip the
+   overlay's gradient image (background-image:none) — neither display:none nor
+   opacity:0, both of which collapse/hide the feed that lives in the same tree. */
+img.ytmusic-fullbleed-thumbnail-renderer,
+ytmusic-fullbleed-thumbnail-renderer > #thumbnail img {
+  visibility: hidden !important;
+}
+div.background-gradient.ytmusic-browse-response,
+#background-gradient.ytmusic-browse-response {
+  background: transparent !important;
+  background-image: none !important;
+}
+ytmusic-browse-response,
+#content-wrapper.ytmusic-browse-response {
+  background: transparent !important;
+}
+
+/* --- glassmorphism on nav + player bars ----------------------------------- */
+ytmusic-nav-bar.ytmusic-app-layout,
+ytmusic-player-bar.ytmusic-app-layout {
+  background: rgba(10, 11, 24, var(--stardust-glass-opacity)) !important;
+  backdrop-filter: blur(var(--stardust-glass-blur)) saturate(140%);
+  -webkit-backdrop-filter: blur(var(--stardust-glass-blur)) saturate(140%);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+ytmusic-nav-bar.ytmusic-app-layout {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: none;
+}
+
+/* sidebar / guide */
+#guide-wrapper.ytmusic-app-layout,
+ytmusic-guide-renderer,
+#mini-guide.ytmusic-app-layout {
+  background: rgba(10, 11, 24, calc(var(--stardust-glass-opacity) * 0.7)) !important;
+  backdrop-filter: blur(var(--stardust-glass-blur));
+  -webkit-backdrop-filter: blur(var(--stardust-glass-blur));
+}
+
+/* --- accent recoloring ---------------------------------------------------- */
+#progress-bar.ytmusic-player-bar,
+tp-yt-paper-slider {
+  --paper-slider-active-color: var(--stardust-accent) !important;
+  --paper-slider-knob-color: var(--stardust-accent) !important;
+  --paper-slider-pin-color: var(--stardust-accent) !important;
+}
+
+ytmusic-play-button-renderer,
+.play-button,
+yt-button-shape.style-scope[aria-pressed="true"] {
+  color: var(--stardust-accent) !important;
+}
+
+a:hover, .yt-simple-endpoint:hover { color: var(--stardust-accent) !important; }
+
+::selection { background: var(--stardust-accent); color: #fff; }
+
+/* scrollbar */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--stardust-accent) 55%, transparent);
+  border-radius: 8px;
+}
+::-webkit-scrollbar-track { background: transparent; }
+
+/* cards get a subtle glass too */
+ytmusic-responsive-list-item-renderer:hover,
+ytmusic-two-row-item-renderer:hover {
+  background: rgba(255, 255, 255, 0.04) !important;
+  border-radius: 10px;
+}
+
+/* =========================================================================
+   Launcher button — glowing orb with a pulsing halo
+   ========================================================================= */
+#stardust-launcher {
+  position: fixed;
+  right: 24px;
+  bottom: 100px;
+  z-index: 2147483646;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background:
+    radial-gradient(circle at 32% 28%, #fff2, transparent 40%),
+    radial-gradient(circle at 50% 50%, color-mix(in srgb, var(--stardust-accent) 85%, #000), #0c0b22 78%);
+  color: #fff;
+  font-size: 24px;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 0 28px color-mix(in srgb, var(--stardust-accent) 60%, transparent),
+              inset 0 0 14px rgba(255,255,255,0.22);
+  transition: transform 0.25s cubic-bezier(.2,.9,.3,1.4), box-shadow 0.25s ease;
+}
+#stardust-launcher::after {
+  content: ''; position: absolute; inset: -6px; border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--stardust-accent) 70%, transparent);
+  opacity: 0.6; animation: stardust-pulse 2.6s ease-out infinite;
+}
+@keyframes stardust-pulse {
+  0% { transform: scale(0.9); opacity: 0.7; }
+  70% { transform: scale(1.35); opacity: 0; }
+  100% { opacity: 0; }
+}
+#stardust-launcher:hover {
+  transform: scale(1.1);
+  box-shadow: 0 0 44px color-mix(in srgb, var(--stardust-accent) 90%, transparent),
+              inset 0 0 16px rgba(255,255,255,0.3);
+}
+#stardust-launcher .stardust-orbit {
+  display: inline-block;
+  text-shadow: 0 0 10px #fff, 0 0 18px var(--stardust-accent);
+  animation: stardust-spin 9s linear infinite;
+}
+@keyframes stardust-spin { to { transform: rotate(360deg); } }
+
+/* =========================================================================
+   Control panel
+   ========================================================================= */
+#stardust-panel {
+  position: fixed;
+  right: 24px;
+  bottom: 168px;
+  z-index: 2147483646;
+  width: 372px;
+  max-height: 78vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 0 14px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background:
+    linear-gradient(180deg, rgba(24,18,54,0.92), rgba(10,11,24,0.92));
+  backdrop-filter: blur(30px) saturate(160%);
+  -webkit-backdrop-filter: blur(30px) saturate(160%);
+  color: #ece9ff;
+  font-family: 'Roboto', system-ui, sans-serif;
+  box-shadow: 0 24px 70px rgba(0,0,0,0.6),
+              0 0 0 1px color-mix(in srgb, var(--stardust-accent) 22%, transparent),
+              0 0 40px color-mix(in srgb, var(--stardust-accent) 18%, transparent);
+  transform: translateY(18px) scale(0.95);
+  transform-origin: bottom right;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s ease, transform 0.28s cubic-bezier(.2,.9,.3,1.3);
+}
+#stardust-panel.open { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+
+#stardust-panel::-webkit-scrollbar { width: 8px; }
+#stardust-panel::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--stardust-accent) 50%, transparent); border-radius: 8px; }
+
+/* animated aurora header */
+.stardust-head {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 18px;
+  background:
+    linear-gradient(120deg,
+      color-mix(in srgb, var(--stardust-accent) 55%, transparent),
+      transparent 40%,
+      color-mix(in srgb, var(--stardust-accent) 35%, transparent) 75%,
+      transparent),
+    rgba(12,13,28,0.7);
+  background-size: 220% 100%;
+  animation: stardust-aurora 9s ease infinite;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  border-radius: 20px 20px 0 0;
+  backdrop-filter: blur(8px);
+}
+@keyframes stardust-aurora { 0%,100% { background-position: 0% 0; } 50% { background-position: 100% 0; } }
+.stardust-logo {
+  font-weight: 800; font-size: 18px; letter-spacing: 0.6px;
+  background: linear-gradient(90deg, #fff, color-mix(in srgb, var(--stardust-accent) 70%, #fff));
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  text-shadow: 0 0 18px color-mix(in srgb, var(--stardust-accent) 60%, transparent);
+}
+.stardust-x {
+  background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12);
+  width: 26px; height: 26px; border-radius: 50%;
+  color: #cfcae6; cursor: pointer; font-size: 13px; line-height: 1;
+}
+.stardust-x:hover { color: #fff; background: rgba(255,255,255,0.18); }
+
+.stardust-section { padding: 14px 18px; border-top: 1px solid rgba(255,255,255,0.06); }
+.stardust-section:first-of-type { border-top: none; }
+.stardust-label {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 1.4px;
+  color: color-mix(in srgb, var(--stardust-accent) 55%, #b7b2dd); margin-bottom: 12px; font-weight: 700;
+}
+
+/* --- theme cards (preview + full name, no truncation) -------------------- */
+.stardust-themes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.stardust-theme-btn {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 8px; border-radius: 14px; cursor: pointer;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(255,255,255,0.03); color: #ece9ff;
+  text-align: left; position: relative;
+  transition: transform 0.15s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.stardust-theme-btn:hover { transform: translateY(-2px); background: rgba(255,255,255,0.06); }
+.stardust-theme-btn.active {
+  border-color: var(--swatch);
+  box-shadow: 0 0 0 1px var(--swatch), 0 6px 22px color-mix(in srgb, var(--swatch) 45%, transparent);
+}
+.stardust-theme-btn.active::before {
+  content: '✓'; position: absolute; top: 6px; left: 8px; z-index: 2;
+  font-size: 11px; font-weight: 800; color: #fff;
+  text-shadow: 0 0 8px var(--swatch);
+}
+.stardust-preview {
+  height: 58px; border-radius: 10px; position: relative; overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.08);
+  box-shadow: inset 0 0 24px rgba(0,0,0,0.4);
+}
+.stardust-preview::after {
+  content: '✦'; position: absolute; right: 8px; bottom: 4px;
+  color: #fff; opacity: 0.85; font-size: 12px;
+  text-shadow: 0 0 8px var(--swatch);
+}
+.stardust-tname { font-size: 12.5px; font-weight: 600; line-height: 1.2; white-space: normal; }
+.stardust-badge {
+  position: absolute; top: 6px; right: 6px; z-index: 2;
+  font-size: 8px; letter-spacing: 0.5px; text-transform: uppercase;
+  background: color-mix(in srgb, var(--swatch) 70%, #000); color: #fff;
+  padding: 2px 5px; border-radius: 6px;
+}
+
+.stardust-row { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+.stardust-mini-btn {
+  flex: 1; padding: 9px 8px; border-radius: 10px; cursor: pointer; font-size: 11.5px; font-weight: 600;
+  border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.05); color: #ddd;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.stardust-mini-btn:hover { background: color-mix(in srgb, var(--stardust-accent) 22%, rgba(255,255,255,0.05)); border-color: color-mix(in srgb, var(--stardust-accent) 50%, transparent); }
+
+/* --- rows + controls ----------------------------------------------------- */
+.stardust-toggle-row, .stardust-slider-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; font-size: 13.5px; }
+.stardust-slider-row label, .stardust-toggle-row label { color: #d9d5f0; }
+
+/* pill switches */
+.stardust-toggle-row input[type="checkbox"] {
+  appearance: none; -webkit-appearance: none; position: relative;
+  width: 42px; height: 24px; border-radius: 14px; cursor: pointer; flex: none;
+  background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.1);
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+.stardust-toggle-row input[type="checkbox"]::after {
+  content: ''; position: absolute; top: 2px; left: 2px;
+  width: 18px; height: 18px; border-radius: 50%; background: #fff;
+  transition: transform 0.2s cubic-bezier(.2,.9,.3,1.4);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+}
+.stardust-toggle-row input[type="checkbox"]:checked {
+  background: var(--stardust-accent);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--stardust-accent) 70%, transparent);
+}
+.stardust-toggle-row input[type="checkbox"]:checked::after { transform: translateX(18px); }
+.stardust-toggle-row input[type="checkbox"]:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* sliders */
+.stardust-slider-row input[type="range"] {
+  appearance: none; -webkit-appearance: none; width: 170px; height: 6px; border-radius: 6px;
+  background: rgba(255,255,255,0.15); cursor: pointer;
+}
+.stardust-slider-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--stardust-accent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--stardust-accent) 80%, transparent);
+  border: 2px solid #fff;
+}
+
+input[type="color"]#stardust-accent {
+  width: 48px; height: 34px; border: 1px solid rgba(255,255,255,0.15);
+  background: none; cursor: pointer; border-radius: 10px; padding: 2px;
+}
+
+.stardust-discord-id { margin-top: 10px; }
+#stardust-discord-id {
+  width: 100%; padding: 9px 11px; border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.3); color: #fff;
+  font-size: 12px; box-sizing: border-box;
+}
+#stardust-discord-id:focus { outline: none; border-color: var(--stardust-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--stardust-accent) 35%, transparent); }
+
+.stardust-foot { font-size: 10px; color: #7b77a0; text-align: center; padding: 12px 18px 0; }
+
+/* =========================================================================
+   Marketplace
+   ========================================================================= */
+.stardust-market-cta {
+  width: 100%; margin-top: 4px; padding: 11px 12px; border-radius: 12px; cursor: pointer;
+  font-size: 13px; font-weight: 700; letter-spacing: 0.3px; color: #fff;
+  border: 1px solid color-mix(in srgb, var(--stardust-accent) 45%, transparent);
+  background:
+    linear-gradient(120deg, color-mix(in srgb, var(--stardust-accent) 60%, transparent), transparent 55%),
+    rgba(255,255,255,0.05);
+  background-size: 200% 100%;
+  animation: stardust-aurora 7s ease infinite;
+  box-shadow: 0 0 22px color-mix(in srgb, var(--stardust-accent) 28%, transparent);
+  transition: transform 0.15s ease, box-shadow 0.2s ease;
+}
+.stardust-market-cta:hover { transform: translateY(-1px); box-shadow: 0 0 32px color-mix(in srgb, var(--stardust-accent) 45%, transparent); }
+
+#stardust-market {
+  position: fixed; inset: 0; z-index: 2147483647;
+  display: grid; place-items: center;
+  background: rgba(4,4,12,0.62);
+  backdrop-filter: blur(10px) saturate(120%);
+  -webkit-backdrop-filter: blur(10px) saturate(120%);
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+#stardust-market.open { opacity: 1; pointer-events: auto; }
+.stardust-market-card-shell {
+  width: min(1040px, 92vw); height: min(82vh, 880px);
+  display: flex; flex-direction: column;
+  border-radius: 22px; overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: linear-gradient(180deg, rgba(20,16,46,0.96), rgba(9,10,22,0.97));
+  box-shadow: 0 40px 120px rgba(0,0,0,0.7),
+              0 0 0 1px color-mix(in srgb, var(--stardust-accent) 22%, transparent),
+              0 0 60px color-mix(in srgb, var(--stardust-accent) 16%, transparent);
+  color: #ece9ff; font-family: 'Roboto', system-ui, sans-serif;
+  transform: translateY(14px) scale(0.98); transition: transform 0.25s cubic-bezier(.2,.9,.3,1.3);
+}
+#stardust-market.open .stardust-market-card-shell { transform: none; }
+
+.stardust-market-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 18px 22px;
+  background: linear-gradient(120deg, color-mix(in srgb, var(--stardust-accent) 45%, transparent), transparent 45%, color-mix(in srgb, var(--stardust-accent) 28%, transparent) 80%, transparent);
+  background-size: 220% 100%; animation: stardust-aurora 9s ease infinite;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.stardust-market-title { display: flex; flex-direction: column; gap: 3px; }
+.stardust-market-title .stardust-logo { font-size: 20px; }
+.stardust-market-sub { font-size: 11px; color: #b7b2dd; letter-spacing: 0.4px; }
+
+.stardust-market-toolbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  padding: 14px 22px; border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.stardust-market-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+.stardust-market-tab {
+  padding: 7px 14px; border-radius: 999px; cursor: pointer; font-size: 12.5px; font-weight: 600;
+  border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.04); color: #d9d5f0;
+  transition: all 0.15s ease;
+}
+.stardust-market-tab:hover { background: rgba(255,255,255,0.09); }
+.stardust-market-tab.active {
+  background: var(--stardust-accent); color: #fff; border-color: transparent;
+  box-shadow: 0 0 16px color-mix(in srgb, var(--stardust-accent) 60%, transparent);
+}
+#stardust-market-search {
+  flex: 1; max-width: 320px; padding: 9px 14px; border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.12); background: rgba(0,0,0,0.3); color: #fff; font-size: 12.5px;
+}
+#stardust-market-search:focus { outline: none; border-color: var(--stardust-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--stardust-accent) 30%, transparent); }
+
+.stardust-market-grid {
+  flex: 1; overflow-y: auto; padding: 20px 22px;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 16px;
+  align-content: start;
+}
+.stardust-market-grid::-webkit-scrollbar { width: 10px; }
+.stardust-market-grid::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--stardust-accent) 45%, transparent); border-radius: 8px; }
+.stardust-market-loading { grid-column: 1 / -1; text-align: center; color: #8b86b3; padding: 40px 0; font-size: 13px; }
+
+.stardust-market-item {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 12px; border-radius: 16px;
+  border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.03);
+  transition: transform 0.15s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.stardust-market-item:hover { transform: translateY(-3px); border-color: color-mix(in srgb, var(--stardust-accent) 40%, transparent); box-shadow: 0 12px 30px rgba(0,0,0,0.4); }
+.stardust-market-preview {
+  height: 96px; border-radius: 12px; position: relative; overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.08); box-shadow: inset 0 0 30px rgba(0,0,0,0.4); margin-bottom: 4px;
+}
+.stardust-market-type {
+  position: absolute; top: 8px; left: 8px;
+  font-size: 9px; letter-spacing: 0.6px; text-transform: uppercase; font-weight: 700;
+  background: rgba(0,0,0,0.55); color: #fff; padding: 3px 7px; border-radius: 6px;
+  backdrop-filter: blur(4px);
+}
+.stardust-market-name { font-size: 14px; font-weight: 700; line-height: 1.2; }
+.stardust-market-author { font-size: 11px; color: #9a95c0; }
+.stardust-market-desc { font-size: 12px; color: #c4bfe4; line-height: 1.35; flex: 1; }
+.stardust-market-actions { display: flex; gap: 8px; margin-top: 8px; }
+.stardust-market-btn {
+  flex: 1; padding: 9px 10px; border-radius: 10px; cursor: pointer; font-size: 12px; font-weight: 700;
+  border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.06); color: #ece9ff;
+  transition: all 0.15s ease;
+}
+.stardust-market-btn:hover { background: rgba(255,255,255,0.12); }
+.stardust-market-btn.primary { background: var(--stardust-accent); border-color: transparent; color: #fff; box-shadow: 0 0 16px color-mix(in srgb, var(--stardust-accent) 50%, transparent); }
+.stardust-market-btn.primary:hover { filter: brightness(1.1); }
+.stardust-market-btn.on { background: color-mix(in srgb, var(--stardust-accent) 22%, transparent); border-color: color-mix(in srgb, var(--stardust-accent) 55%, transparent); color: #fff; }
+.stardust-market-btn.ghost { flex: 0 0 auto; background: transparent; color: #b59; border-color: rgba(255,120,150,0.3); color: #ff96ab; }
+.stardust-market-btn.ghost:hover { background: rgba(255,80,110,0.15); }
+
+/* =========================================================================
+   Smart features — ambient glow, sleep timer, scroll-top, lyrics
+   ========================================================================= */
+#stardust-ambient {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  transition: background 1.2s ease;
+}
+
+#stardust-sleep {
+  position: fixed; left: 24px; bottom: 84px; z-index: 2147483645;
+  display: flex; align-items: center; gap: 6px;
+  padding: 7px 9px; border-radius: 999px;
+  background: rgba(12,13,28,0.82); backdrop-filter: blur(14px);
+  border: 1px solid rgba(255,255,255,0.14);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  color: #ece9ff; font-family: 'Roboto', system-ui, sans-serif; font-size: 12px;
+}
+#stardust-sleep.armed { border-color: color-mix(in srgb, var(--stardust-accent) 60%, transparent); box-shadow: 0 0 22px color-mix(in srgb, var(--stardust-accent) 40%, transparent); }
+.stardust-sleep-label { font-weight: 700; padding: 0 4px; min-width: 58px; }
+.stardust-chip {
+  border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.06);
+  color: #ded9ff; border-radius: 999px; padding: 4px 9px; font-size: 11px; font-weight: 600; cursor: pointer;
+}
+.stardust-chip:hover { background: color-mix(in srgb, var(--stardust-accent) 30%, rgba(255,255,255,0.06)); }
+.stardust-chip.cancel { color: #ff96ab; }
+
+#stardust-scrolltop {
+  position: fixed; left: 24px; bottom: 24px; z-index: 2147483645;
+  width: 44px; height: 44px; border-radius: 50%; cursor: pointer;
+  border: 1px solid rgba(255,255,255,0.16);
+  background: radial-gradient(circle at 50% 40%, color-mix(in srgb, var(--stardust-accent) 80%, #000), #0c0b22 80%);
+  color: #fff; font-size: 20px; line-height: 1;
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--stardust-accent) 40%, transparent);
+  transition: transform 0.18s ease;
+}
+#stardust-scrolltop:hover { transform: translateY(-3px) scale(1.05); }
+
+/* Synced lyrics rendered inside YTM's own Lyrics tab — flat & native, not a card. */
+/* When our lyrics are active, hide YTM's own tab content and show only ours. */
+#tab-renderer.stardust-lyrics-on > *:not(#stardust-lyrics) { display: none !important; }
+#stardust-lyrics { width: 100%; box-sizing: border-box; padding: 8px 32px 56px; font-family: inherit; }
+.stardust-lyric-lines { display: flex; flex-direction: column; gap: 2px; }
+.stardust-lyric-line {
+  font-size: 2rem; line-height: 1.34; font-weight: 700; padding: 7px 0;
+  color: rgba(255,255,255,0.42);
+  transition: color 0.25s ease, transform 0.25s ease; transform-origin: left center;
+}
+.stardust-lyric-line.plain { font-size: 1.15rem; font-weight: 500; color: rgba(255,255,255,0.72); }
+.stardust-lyric-line.active { color: #fff; transform: scale(1.02); text-shadow: 0 0 22px color-mix(in srgb, var(--stardust-accent) 55%, transparent); }
+.stardust-lyric-status { color: rgba(255,255,255,0.5); font-size: 1rem; padding: 24px 0; }
+
+/* Word-by-word (karaoke) highlighting. Smooth, beautiful-lyrics style: eased
+   colour transitions, a soft feathered fill edge on the current word, and a
+   gentle accent glow so it flows rather than snapping word to word. */
+.stardust-lyric-line.words.active .w {
+  transition: color 0.22s ease, text-shadow 0.22s ease;
+  color: rgba(255, 255, 255, 0.30);
+}
+.stardust-lyric-line.words.active .w.sung {
+  color: #fff;
+  text-shadow: 0 0 16px color-mix(in srgb, var(--stardust-accent) 42%, transparent);
+}
+/* Animatable fill position so Chromium interpolates between animation frames —
+   removes any residual per-frame stepping for a seamless sweep. */
+@property --wp { syntax: '<percentage>'; inherits: false; initial-value: 0%; }
+.stardust-lyric-line.words.active .w { display: inline-block; }
+.stardust-lyric-line.words.active .w.cur,
+.stardust-lyric-line.words.active .w.sched {
+  /* Soft feathered fill edge (±8%) — crisp but never a hard line. */
+  --wp: 0%;
+  background-image: linear-gradient(90deg,
+    #fff calc(var(--wp) - 8%),
+    color-mix(in srgb, #fff 55%, var(--stardust-accent)) var(--wp),
+    rgba(255, 255, 255, 0.30) calc(var(--wp) + 8%));
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent; color: transparent;
+  text-shadow: 0 0 18px color-mix(in srgb, var(--stardust-accent) 38%, transparent);
+  will-change: --wp, transform;
+}
+.stardust-lyric-line.words.active .w.cur { transition: --wp 0.09s linear, transform 0.18s ease; }
+/* The word being sung right now rises gently (tick-driven modes) */
+.stardust-lyric-line.words.active .w.cur.on { transform: translateY(-1.5px) scale(1.04); }
+/* Scheduled fills: the GPU sweeps each word continuously (delay may be
+   negative — entering mid-word after a seek) with a gentle rise as it's sung. */
+.stardust-lyric-line.words.active .w.sched {
+  animation: stardust-wfill var(--wd, 0.4s) linear var(--wdel, 0s) 1 both;
+}
+@keyframes stardust-wfill {
+  0%   { --wp: 0%;   transform: translateY(0) scale(1); }
+  14%  { transform: translateY(-1.5px) scale(1.04); }
+  82%  { transform: translateY(-1.5px) scale(1.04); }
+  100% { --wp: 100%; transform: translateY(0) scale(1); }
+}
+#stardust-lyrics.sd-paused .w.sched { animation-play-state: paused; }
+
+/* Depth of field — lines blur/dim with distance from the active one; sung
+   lines dim without blur. Hovering the panel lifts the blur for reading. */
+.stardust-lyric-line.words { transition: color 0.25s ease, transform 0.25s ease, filter 0.4s ease, opacity 0.4s ease; }
+.stardust-lyric-line:not(.active)[data-d="1"] { opacity: 0.62; filter: blur(0.6px); }
+.stardust-lyric-line:not(.active)[data-d="2"] { opacity: 0.5;  filter: blur(1.1px); }
+.stardust-lyric-line:not(.active)[data-d="3"] { opacity: 0.42; filter: blur(1.7px); }
+.stardust-lyric-line:not(.active)[data-d="4"] { opacity: 0.36; filter: blur(2.2px); }
+.stardust-lyric-line:not(.active).sung-line   { opacity: 0.45; filter: none; }
+#stardust-lyrics:hover .stardust-lyric-line:not(.active) { filter: none; opacity: 0.66; }
+
+/* The lyrics tab stays TRANSPARENT — the theme (starfield/nebula) shows
+   through, per user preference. */
+
+/* Timing-grade tint on the source badge */
+.stardust-lyr-src.good { color: #8be6b0; }
+.stardust-lyr-src.mid  { color: #b7b2dd; }
+.stardust-lyr-src.est  { color: #8b86b3; font-style: italic; }
+
+/* ---- Quick actions floating bar ---- */
+#stardust-quickbar {
+  position: fixed; right: 18px; bottom: 150px; z-index: 2147483640;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.stardust-qa {
+  width: 40px; height: 40px; border-radius: 50%; cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--stardust-accent) 40%, transparent);
+  background: color-mix(in srgb, var(--stardust-accent) 14%, rgba(10,10,20,0.72));
+  backdrop-filter: blur(10px); font-size: 17px; line-height: 1; color: #fff;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.stardust-qa:hover { transform: scale(1.1); box-shadow: 0 0 18px color-mix(in srgb, var(--stardust-accent) 55%, transparent); }
+
+/* ---- Toast ---- */
+#stardust-toast {
+  position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%) translateY(12px);
+  z-index: 2147483647; padding: 10px 18px; border-radius: 999px; font-size: 13px; font-weight: 600;
+  color: #fff; background: color-mix(in srgb, var(--stardust-accent) 24%, rgba(12,12,22,0.92));
+  border: 1px solid color-mix(in srgb, var(--stardust-accent) 45%, transparent);
+  backdrop-filter: blur(12px); opacity: 0; pointer-events: none; transition: opacity 0.2s ease, transform 0.2s ease;
+}
+#stardust-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ---- Generic modal (Stats) ---- */
+.stardust-modal {
+  position: fixed; inset: 0; z-index: 2147483647; display: flex; align-items: center; justify-content: center;
+  background: rgba(4,4,12,0.55); backdrop-filter: blur(6px);
+  opacity: 0; pointer-events: none; transition: opacity 0.2s ease;
+}
+.stardust-modal.open { opacity: 1; pointer-events: auto; }
+.stardust-modal-card {
+  width: min(760px, 92vw); max-height: 84vh; overflow: auto;
+  background: linear-gradient(180deg, rgba(20,18,40,0.98), rgba(10,9,22,0.98));
+  border: 1px solid color-mix(in srgb, var(--stardust-accent) 30%, rgba(255,255,255,0.08));
+  border-radius: 18px; padding: 20px; box-shadow: 0 30px 80px rgba(0,0,0,0.6);
+}
+.stardust-hint { font-size: 12px; color: #8b86b3; margin-top: 6px; line-height: 1.5; }
+
+.stardust-stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 14px 0 22px; }
+.stardust-stat { background: rgba(255,255,255,0.04); border-radius: 12px; padding: 14px; text-align: center; }
+.stardust-stat-n { font-size: 22px; font-weight: 800; color: #fff; }
+.stardust-stat-l { font-size: 11px; color: #b7b2dd; letter-spacing: 0.4px; margin-top: 2px; }
+.stardust-stat-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+.stardust-stat-col .stardust-label { margin-bottom: 8px; }
+.stardust-stat-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+.stardust-stat-rank { width: 20px; color: color-mix(in srgb, var(--stardust-accent) 80%, #fff); font-weight: 700; font-size: 13px; }
+.stardust-stat-main { flex: 1; color: #eee; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stardust-stat-sub { color: #8b86b3; font-size: 11px; white-space: nowrap; }
+
+/* ---- Discord easy setup ---- */
+.stardust-discord-help { font-size: 12px; color: #b7b2dd; line-height: 1.5; margin-bottom: 8px; }
+.stardust-discord-id .stardust-mini-btn { margin-bottom: 8px; }
+.stardust-discord-id input {
+  width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 8px;
+  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12); color: #fff; font-size: 12px;
+}
+
+/* ---- Smart playlist tools bar (left side) ---- */
+#stardust-plbar {
+  position: fixed; left: 18px; bottom: 150px; z-index: 2147483640;
+  display: flex; flex-direction: column; gap: 8px;
+}
+
+/* ---- Song X-ray seekbar overlay ---- */
+#stardust-xray {
+  position: fixed; height: 14px; z-index: 2147483639;
+  cursor: pointer; opacity: 0.9;
+}
+#stardust-xray-btn {
+  position: fixed; right: 18px; bottom: 96px; z-index: 2147483640;
+  font-size: 11px; padding: 4px 10px;
+}
+
+
+/* ---- TV jukebox mode ---- */
+#stardust-tv {
+  position: fixed; inset: 0; z-index: 2147483645; cursor: pointer;
+  background: var(--stardust-bg);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+}
+#stardust-tv-clock { position: absolute; top: 5vh; right: 6vw; font-size: clamp(28px, 4vw, 52px); font-weight: 200; color: rgba(255,255,255,0.85); font-variant-numeric: tabular-nums; }
+#stardust-tv-art { width: min(38vh, 40vw); height: min(38vh, 40vw); border-radius: 22px; object-fit: cover; box-shadow: 0 30px 90px rgba(0,0,0,0.6); }
+#stardust-tv-title { font-size: clamp(24px, 3.4vw, 44px); font-weight: 800; color: #fff; max-width: 84vw; text-align: center; }
+#stardust-tv-artist { font-size: clamp(15px, 1.8vw, 24px); color: rgba(255,255,255,0.6); }
+#stardust-tv-line { min-height: 34px; font-size: clamp(16px, 2vw, 26px); font-weight: 600; color: var(--stardust-accent); max-width: 84vw; text-align: center; }
+
+/* ---- Stardust Wrapped ---- */
+#stardust-wrapped {
+  position: fixed; inset: 0; z-index: 2147483646; cursor: pointer;
+  background: radial-gradient(circle at 50% 0%, #1b1340, #05060f 74%);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; text-align: center;
+}
+#sd-wr-kicker { font-size: clamp(16px, 2vw, 24px); color: rgba(255,255,255,0.55); letter-spacing: 1px; text-transform: uppercase; }
+#sd-wr-big { font-size: clamp(34px, 6vw, 84px); font-weight: 800; color: var(--stardust-accent); max-width: 86vw; white-space: pre-line; line-height: 1.25; }
+#sd-wr-sub { font-size: clamp(14px, 1.8vw, 22px); color: rgba(255,255,255,0.7); }
+#sd-wr-nav { position: absolute; bottom: 6vh; }
+#stardust-wrapped.pop #sd-wr-big { animation: sd-wr-pop 0.5s ease; }
+@keyframes sd-wr-pop { from { transform: scale(0.92); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+#stardust-ll-pop {
+  position: fixed; z-index: 2147483646; max-width: 320px;
+  padding: 10px 14px; font-size: 12.5px; line-height: 1.5; color: #fff;
+  background: color-mix(in srgb, var(--stardust-accent) 12%, rgba(8,8,16,0.94));
+  border: 1px solid color-mix(in srgb, var(--stardust-accent) 40%, rgba(255,255,255,0.1));
+  border-radius: 12px; backdrop-filter: blur(14px); box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+}
+.stardust-ll-x { cursor: pointer; opacity: 0.6; margin-left: 6px; }
+#stardust-ll-card { display: flex; flex-direction: column; gap: 8px; align-items: center; }
+.stardust-ll-front { font-size: 26px; font-weight: 800; color: #fff; }
+.stardust-ll-back { font-size: 13px; color: rgba(255,255,255,0.85); text-align: center; line-height: 1.5; }
+
+/* ---- Rhythm game ---- */
+#stardust-rg {
+  position: fixed; left: 50%; top: 6%; transform: translateX(-50%);
+  z-index: 2147483644; padding: 14px; display: flex; flex-direction: column; align-items: center; gap: 8px;
+  background: color-mix(in srgb, var(--stardust-accent) 7%, rgba(8,8,16,0.85));
+  border: 1px solid color-mix(in srgb, var(--stardust-accent) 30%, rgba(255,255,255,0.08));
+  border-radius: 16px; backdrop-filter: blur(14px);
+}
+#stardust-rg-hud { font-size: 13px; font-weight: 700; color: #fff; letter-spacing: 0.3px; }
+#stardust-rg .stardust-x { position: absolute; top: 8px; right: 8px; }
+
+/* ---- Karaoke Night ---- */
+#stardust-kn {
+  position: fixed; inset: 0; z-index: 2147483644;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 26px;
+  background: var(--stardust-bg); /* the theme shows through — never opaque art */
+  padding: 6vh 6vw;
+}
+#stardust-kn-prev, #stardust-kn-next {
+  font-size: clamp(16px, 2.4vw, 26px); color: rgba(255,255,255,0.35); text-align: center;
+}
+#stardust-kn-line {
+  font-size: clamp(28px, 4.6vw, 54px); font-weight: 800; text-align: center;
+  color: rgba(255,255,255,0.92); line-height: 1.35; max-width: 90vw;
+}
+#stardust-kn-line .kn-w { transition: color 0.12s, text-shadow 0.12s; }
+#stardust-kn-line .kn-w.sung {
+  color: var(--stardust-accent);
+  text-shadow: 0 0 26px color-mix(in srgb, var(--stardust-accent) 70%, transparent);
+}
+#stardust-kn-score { font-size: 15px; font-weight: 700; color: var(--stardust-accent); min-height: 20px; }
+#stardust-kn.duet #stardust-kn-line.singer-b .kn-w.sung {
+  color: #7dd3fc; text-shadow: 0 0 26px rgba(125,211,252,0.7);
+}
+#stardust-kn-controls { position: absolute; bottom: 5vh; display: flex; gap: 10px; }
+
+/* ---- Premium motion: everything eases in, nothing pops ---- */
+#stardust-djq, #stardust-ticker, #stardust-xray-btn {
+  animation: sd-rise 0.4s cubic-bezier(.22,1,.36,1);
+  transition: background 0.2s, border-color 0.2s, transform 0.2s;
+}
+.stardust-djq-row { animation: sd-rise 0.35s cubic-bezier(.22,1,.36,1) backwards; }
+.stardust-djq-row:nth-child(2) { animation-delay: 0.03s; }
+.stardust-djq-row:nth-child(3) { animation-delay: 0.06s; }
+.stardust-djq-row:nth-child(4) { animation-delay: 0.09s; }
+.stardust-djq-row:nth-child(5) { animation-delay: 0.12s; }
+.stardust-djq-row:nth-child(6) { animation-delay: 0.15s; }
+#stardust-quiz, #stardust-lt.open { animation: sd-rise 0.3s cubic-bezier(.22,1,.36,1); }
+@keyframes sd-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+#stardust-djq:hover { transform: translateY(-1px); }
+
+/* ---- The Dock: one orb, every tool ---- */
+#stardust-dock {
+  position: fixed; right: 18px; bottom: 170px; z-index: 2147483641;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
+}
+.stardust-dock-orb {
+  width: 46px; height: 46px; border-radius: 50%; cursor: pointer;
+  font-size: 19px; color: #fff;
+  background: color-mix(in srgb, var(--stardust-accent) 32%, rgba(10,10,22,0.85));
+  border: 1px solid color-mix(in srgb, var(--stardust-accent) 55%, rgba(255,255,255,0.12));
+  box-shadow: 0 6px 24px rgba(0,0,0,0.45), 0 0 18px color-mix(in srgb, var(--stardust-accent) 30%, transparent);
+  backdrop-filter: blur(12px);
+  transition: transform 0.25s cubic-bezier(.34,1.56,.64,1), box-shadow 0.25s;
+}
+#stardust-dock.open .stardust-dock-orb { transform: rotate(90deg) scale(1.06); }
+.stardust-dock-orb:hover { box-shadow: 0 6px 24px rgba(0,0,0,0.45), 0 0 26px color-mix(in srgb, var(--stardust-accent) 55%, transparent); }
+.stardust-dock-list {
+  display: flex; flex-direction: column; gap: 8px; align-items: flex-end;
+  max-height: 0; overflow: hidden; opacity: 0;
+  transition: max-height 0.35s cubic-bezier(.22,1,.36,1), opacity 0.25s;
+  pointer-events: none;
+}
+#stardust-dock.open .stardust-dock-list { max-height: 70vh; opacity: 1; pointer-events: auto; }
+.stardust-dock-item { min-width: 46px; transition: transform 0.15s; }
+.stardust-dock-item:hover { transform: translateX(-3px) scale(1.06); }
+#stardust-voice-btn.listening {
+  border-color: #f87171;
+  box-shadow: 0 0 14px rgba(248,113,113,0.6);
+  animation: sd-pulse 1.2s ease-in-out infinite;
+}
+@keyframes sd-pulse { 50% { transform: scale(1.12); } }
+#stardust-lt-btn.active, #stardust-ed-btn.active {
+  border-color: var(--stardust-accent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--stardust-accent) 45%, transparent);
+}
+#stardust-ed-btn { font-size: 11px; min-width: 58px; }
+
+/* ---- Listen Together ---- */
+#stardust-lt {
+  position: fixed; right: 76px; bottom: 170px; width: 280px; z-index: 2147483641;
+  display: none; flex-direction: column; gap: 8px; padding: 14px;
+  background: color-mix(in srgb, var(--stardust-accent) 8%, rgba(8,8,16,0.88));
+  border: 1px solid color-mix(in srgb, var(--stardust-accent) 30%, rgba(255,255,255,0.08));
+  border-radius: 14px; backdrop-filter: blur(14px);
+}
+#stardust-lt.open { display: flex; }
+#stardust-lt-state { font-size: 11.5px; color: rgba(255,255,255,0.7); line-height: 1.4; }
+#stardust-lt-code, #stardust-lt-msg {
+  flex: 1; padding: 7px 10px; border-radius: 8px; font-size: 12px;
+  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.14); color: #fff;
+}
+#stardust-lt-chatlog { max-height: 140px; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; }
+.stardust-lt-line { font-size: 11.5px; color: rgba(255,255,255,0.85); }
+
+/* ---- World ticker ---- */
+#stardust-ticker {
+  position: fixed; left: 18px; bottom: 96px; z-index: 2147483638;
+  max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11.5px; color: rgba(255,255,255,0.55); padding: 5px 12px;
+  background: rgba(8,8,16,0.55); border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 999px; backdrop-filter: blur(8px);
+  transition: opacity 0.6s;
+}
+
+/* ---- DJ's Booth queue-panel takeover ---- */
+.stardust-djq-hidden { display: none !important; }
+#stardust-djq-panel {
+  display: flex; flex-direction: column; gap: 4px; padding: 10px 8px;
+}
+.stardust-djq-head { font-size: 13px; font-weight: 800; color: var(--stardust-accent); padding: 4px 8px 8px; letter-spacing: 0.3px; }
+.stardust-djq-row {
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px;
+  background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);
+}
+.stardust-djq-row:hover { background: color-mix(in srgb, var(--stardust-accent) 10%, transparent); }
+.stardust-djq-n { font-size: 12px; font-weight: 700; color: rgba(255,255,255,0.4); min-width: 16px; text-align: center; }
+.stardust-djq-meta { flex: 1; min-width: 0; }
+.stardust-djq-title { font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.92); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stardust-djq-why { font-size: 11px; color: color-mix(in srgb, var(--stardust-accent) 80%, #fff); font-style: italic; margin-top: 2px; }
+
+.stardust-djq-dir {
+  font-size: 11px; color: color-mix(in srgb, var(--stardust-accent) 85%, #fff);
+  padding: 5px 10px; border-radius: 999px; cursor: pointer; margin: 0 8px;
+  background: color-mix(in srgb, var(--stardust-accent) 12%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--stardust-accent) 40%, transparent);
+}
+.stardust-djq-dir:hover { opacity: 0.7; }
+#stardust-djq-tell {
+  margin: 6px 8px; padding: 8px 12px; border-radius: 10px; font-size: 12px;
+  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.14); color: #fff;
+}
+#stardust-djq-tell:focus { outline: none; border-color: var(--stardust-accent); }
+#stardust-lsearch-out { display: flex; flex-direction: column; gap: 2px; max-height: 40vh; overflow-y: auto; }
+
+/* ---- DJ's Booth up-next pill ---- */
+#stardust-djq {
+  position: fixed; left: 18px; bottom: 134px; z-index: 2147483639;
+  max-width: 44vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.88); padding: 6px 14px;
+  background: color-mix(in srgb, var(--stardust-accent) 16%, rgba(8,8,16,0.7));
+  border: 1px solid color-mix(in srgb, var(--stardust-accent) 45%, rgba(255,255,255,0.1));
+  border-radius: 999px; backdrop-filter: blur(10px); cursor: pointer;
+}
+#stardust-djq:hover { background: color-mix(in srgb, var(--stardust-accent) 28%, rgba(8,8,16,0.7)); }
+
+/* ---- World ticker live page ---- */
+#stardust-ticker { cursor: pointer; }
+.stardust-live-row {
+  display: flex; justify-content: space-between; gap: 12px; padding: 7px 10px;
+  border-radius: 8px; cursor: pointer; font-size: 12.5px;
+}
+.stardust-live-row:hover { background: color-mix(in srgb, var(--stardust-accent) 14%, transparent); }
+.stardust-live-song { color: rgba(255,255,255,0.9); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stardust-live-when { color: rgba(255,255,255,0.4); font-size: 11px; flex: none; }
+
+/* ---- Lyric quiz ---- */
+#stardust-quiz {
+  position: fixed; left: 50%; top: 38%; transform: translate(-50%, -50%); width: min(460px, 80vw);
+  z-index: 2147483645; display: flex; flex-direction: column; gap: 10px; padding: 20px;
+  background: color-mix(in srgb, var(--stardust-accent) 10%, rgba(8,8,16,0.92));
+  border: 1px solid color-mix(in srgb, var(--stardust-accent) 40%, rgba(255,255,255,0.1));
+  border-radius: 16px; backdrop-filter: blur(18px); box-shadow: 0 24px 80px rgba(0,0,0,0.6);
+}
+.stardust-quiz-prev { font-size: 13px; color: rgba(255,255,255,0.55); font-style: italic; }
+#stardust-quiz-input {
+  padding: 10px 14px; border-radius: 10px; font-size: 14px;
+  background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.16); color: #fff;
+}
+#stardust-quiz-input:focus { outline: none; border-color: var(--stardust-accent); }
+
+
+/* ---- Ask-your-history box (stats modal) ---- */
+.stardust-ask-row { display: flex; gap: 8px; margin: 8px 0; }
+#stardust-ask-input {
+  flex: 1; padding: 8px 12px; border-radius: 8px; font-size: 12px;
+  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.14); color: #fff;
+}
+#stardust-ask-input:focus { outline: none; border-color: var(--stardust-accent); }
+#stardust-ask-out { font-size: 12.5px; line-height: 1.55; color: rgba(255,255,255,0.85); padding: 4px 2px 8px; white-space: pre-wrap; }
+
+/* ---- Personal Billboard chart movement badges ---- */
+.stardust-chart-head { margin-top: 18px; }
+.stardust-chart-move { font-size: 11px; font-weight: 700; min-width: 34px; text-align: center; border-radius: 6px; padding: 1px 4px; }
+.stardust-chart-move.up { color: #4ade80; }
+.stardust-chart-move.down { color: #f87171; }
+.stardust-chart-move.hold { color: rgba(255,255,255,0.45); }
+.stardust-chart-move.new { color: #facc15; background: rgba(250,204,21,0.12); }
+
+/* ---- Import dialog ---- */
+#stardust-import-ta {
+  width: 100%; min-height: 180px; box-sizing: border-box; margin: 10px 0;
+  padding: 10px 12px; border-radius: 10px; resize: vertical;
+  background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.14);
+  color: #eee; font-family: ui-monospace, Menlo, monospace; font-size: 12px; line-height: 1.5;
+}
+#stardust-import-ta:focus { outline: none; border-color: var(--stardust-accent); }
+#stardust-import .stardust-market-btn { margin-top: 8px; }
+
+/* ---- Kill Premium / upgrade upsells ---- */
+ytmusic-mealbar-promo-renderer,
+ytmusic-statement-banner-renderer,
+ytmusic-you-there-renderer,
+ytmusic-premium-promo-renderer,
+ytmusic-popup-container:has(ytmusic-mealbar-promo-renderer),
+tp-yt-paper-dialog:has(ytmusic-mealbar-promo-renderer) {
+  display: none !important;
+}
+
+/* ---- Self-contained lyrics panel (no dependency on YTM's tab) ---- */
+.stardust-lyrics-panel {
+  position: fixed; right: 16px; top: 72px; bottom: 96px; width: min(400px, 34vw);
+  z-index: 2147483641; display: flex; flex-direction: column;
+  background: color-mix(in srgb, var(--stardust-accent) 8%, rgba(8,8,16,0.82));
+  border: 1px solid color-mix(in srgb, var(--stardust-accent) 30%, rgba(255,255,255,0.08));
+  border-radius: 16px; backdrop-filter: blur(16px); box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  overflow: hidden;
+}
+.stardust-lyr-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; border-bottom: 1px solid rgba(255,255,255,0.08); flex: 0 0 auto;
+}
+.stardust-lyr-title { font-weight: 700; font-size: 14px; color: #fff; letter-spacing: .3px; }
+.stardust-lyr-x {
+  background: rgba(255,255,255,0.08); border: none; color: #fff; width: 26px; height: 26px;
+  border-radius: 50%; cursor: pointer; font-size: 13px;
+}
+.stardust-lyr-x:hover { background: color-mix(in srgb, var(--stardust-accent) 40%, rgba(255,255,255,0.1)); }
+.stardust-lyrics-panel .stardust-lyric-lines {
+  flex: 1 1 auto; overflow-y: auto; padding: 18px 20px 40px; scroll-behavior: smooth;
+}
+.stardust-lyrics-panel .stardust-lyric-line { font-size: 1.35rem; line-height: 1.3; padding: 6px 0; }
+.stardust-lyrics-panel .stardust-lyric-lines::-webkit-scrollbar { width: 8px; }
+.stardust-lyrics-panel .stardust-lyric-lines::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--stardust-accent) 45%, transparent); border-radius: 8px;
+}
+
+/* ---- Vinyl Spin (JS-tagged elements) ---- */
+img.stardust-vinyl.sd-mini {
+  width: var(--stardust-vinyl, 52px) !important; height: var(--stardust-vinyl, 52px) !important;
+  border-radius: 50% !important; object-fit: cover !important; background: transparent !important;
+  position: relative !important; bottom: 8px !important;
+  box-shadow: 0 0 0 3px rgba(0,0,0,.55), 0 0 0 6px color-mix(in srgb, var(--stardust-accent) 75%, transparent) !important;
+  animation: stardustVinyl 4s linear infinite; animation-play-state: paused;
+}
+/* Our own centered big-record overlay (immune to YTM ancestor transforms). */
+#stardust-vinyl-big {
+  /* Position + size are set in JS to sit exactly over YTM's art (centered in
+     the left art column). */
+  position: fixed;
+  border-radius: 50%; background-size: cover; background-position: center;
+  /* Above YTM's player content, below Stardust's own panels/visualizer. */
+  z-index: 2147483630; pointer-events: none; display: none;
+  box-shadow: 0 0 0 6px rgba(0,0,0,.5), 0 0 0 12px color-mix(in srgb, var(--stardust-accent) 60%, transparent);
+  animation: stardustVinyl 8s linear infinite; animation-play-state: paused;
+}
+body.stardust-playing #stardust-vinyl-big { animation-play-state: running; }
+/* Hide YouTube's original big art while our centered record is shown. */
+.sd-orig-hidden { visibility: hidden !important; }
+.stardust-vinyl-wrap { background: transparent !important; overflow: visible !important; }
+body.stardust-playing img.stardust-vinyl { animation-play-state: running !important; }
+@keyframes stardustVinyl { to { transform: rotate(360deg); } }
+
+/* ---- Transcription key input + button ---- */
+.stardust-text-input {
+  width: 100%; box-sizing: border-box; margin-top: 8px; padding: 8px 10px;
+  border-radius: 8px; background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.12); color: #fff; font-size: 12px;
+}
+.stardust-text-input:focus { outline: none; border-color: var(--stardust-accent); }
+#stardust-transcribe-btn { margin-top: 16px; }
+
+/* ---- Lyrics toolbar: sync nudge + copy ---- */
+.stardust-lyr-tools {
+  display: flex; align-items: center; gap: 6px;
+  margin-bottom: 12px; position: sticky; top: 0; z-index: 2;
+  /* The toolbar outgrew the tab — it scrolls sideways instead of wrapping. */
+  overflow-x: auto; flex-wrap: nowrap; white-space: nowrap;
+  scrollbar-width: thin; padding-bottom: 4px;
+}
+.stardust-lyr-tools::-webkit-scrollbar { height: 4px; }
+.stardust-lyr-tools::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--stardust-accent) 40%, transparent); border-radius: 2px; }
+.stardust-lyr-tools > * { flex: none; }
+.stardust-lyr-tool {
+  border: 1px solid rgba(255,255,255,0.14); background: rgba(12,13,28,0.72);
+  color: #cfcae6; border-radius: 999px; padding: 4px 11px;
+  font-size: 11px; font-weight: 600; cursor: pointer;
+  backdrop-filter: blur(10px);
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.stardust-lyr-tool:hover {
+  background: color-mix(in srgb, var(--stardust-accent) 26%, rgba(12,13,28,0.72));
+  border-color: color-mix(in srgb, var(--stardust-accent) 55%, transparent);
+  color: #fff;
+}
+.stardust-lyr-tool.sd-off { min-width: 44px; text-align: center; font-variant-numeric: tabular-nums; }
+.stardust-lyr-src { margin-left: auto; font-size: 11px; color: #8b86b3; letter-spacing: 0.3px; white-space: nowrap; }
+.stardust-lyr-tool.sd-off.nonzero {
+  color: #fff;
+  background: color-mix(in srgb, var(--stardust-accent) 24%, rgba(12,13,28,0.72));
+  border-color: color-mix(in srgb, var(--stardust-accent) 60%, transparent);
+}
+
+/* Synced lines seek on click */
+.stardust-lyric-line.words { cursor: pointer; }
+.stardust-lyric-line.words:not(.active):hover { color: rgba(255,255,255,0.68); }
+
+/* Adlibs — "(background vocals)" split onto their own smaller sub-line */
+.stardust-lyric-adlib {
+  font-size: 1.1rem; font-weight: 500; font-style: italic;
+  color: rgba(255,255,255,0.30); line-height: 1.3; margin-top: 2px;
+  transition: color 0.25s ease;
+}
+.stardust-lyric-line.active .stardust-lyric-adlib {
+  color: color-mix(in srgb, var(--stardust-accent) 45%, rgba(255,255,255,0.75));
+  text-shadow: 0 0 12px color-mix(in srgb, var(--stardust-accent) 35%, transparent);
+}
+/* A line that is ENTIRELY an adlib renders small */
+.stardust-lyric-line.adlib-line { font-size: 1.25rem; font-weight: 600; opacity: 0.85; }
+
+/* Instrumental interlude — three breathing dots under the finished line */
+.stardust-lyric-line.active.gap::after {
+  content: '● ● ●'; display: block;
+  font-size: 0.85rem; letter-spacing: 3px; margin-top: 6px; font-weight: 400;
+  color: color-mix(in srgb, var(--stardust-accent) 85%, #fff);
+  text-shadow: 0 0 12px color-mix(in srgb, var(--stardust-accent) 55%, transparent);
+  animation: stardustGapPulse 1.8s ease-in-out infinite;
+}
+@keyframes stardustGapPulse {
+  0%, 100% { opacity: 0.25; transform: scale(0.96); }
+  50% { opacity: 0.95; transform: scale(1.02); }
+}

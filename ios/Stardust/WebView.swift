@@ -11,12 +11,21 @@ struct WebView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let controller = WKUserContentController()
 
-        // Inject theme.css — and KEEP it applied. Mobile YTM is a SPA that
-        // rebuilds its DOM; a one-shot <style> tag can get dropped, which
-        // showed as "default YTM". A tiny observer re-attaches it.
+        // Inject THE DESKTOP APP'S OWN overlay.css (bundled verbatim at build)
+        // with the CSS variables its preload would define, plus theme.css for
+        // mobile-only extras (starfield). Self-healing: the SPA rebuilds its
+        // DOM, so the style re-attaches whenever it goes missing.
+        let vars = """
+        :root { --stardust-accent:#8b5cff; \
+        --stardust-bg: radial-gradient(circle at 50% 0%, #1b1340, #05060f 70%); \
+        --stardust-glass-blur: 14px; --stardust-glass-opacity: 0.5; }
+        """
+        let overlay = Bundle.main.url(forResource: "overlay", withExtension: "css")
+            .flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
         if let cssURL = Bundle.main.url(forResource: "theme", withExtension: "css"),
-           let css = try? String(contentsOf: cssURL, encoding: .utf8) {
-            print("[stardust] theme.css loaded: \(css.count) chars")
+           let extras = try? String(contentsOf: cssURL, encoding: .utf8) {
+            let css = vars + "\n" + overlay + "\n" + extras
+            print("[stardust] injecting \(css.count) chars of Stardust css (overlay: \(overlay.count))")
             let escaped = css
                 .replacingOccurrences(of: "\\", with: "\\\\")
                 .replacingOccurrences(of: "`", with: "\\`")
