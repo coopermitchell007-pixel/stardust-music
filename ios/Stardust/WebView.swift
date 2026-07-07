@@ -57,6 +57,10 @@ struct WebView: UIViewRepresentable {
                 injectionTime: .atDocumentEnd, forMainFrameOnly: true))
         }
 
+        // Native haptics: web pages can't vibrate on iOS, so the remote page
+        // posts sdHaptic messages and we tap the Taptic Engine for real.
+        controller.add(context.coordinator, name: "sdHaptic")
+
         let config = WKWebViewConfiguration()
         config.userContentController = controller
         config.allowsInlineMediaPlayback = true
@@ -91,7 +95,12 @@ struct WebView: UIViewRepresentable {
 
     /// Prints every navigation step so `devicectl … launch --console` shows
     /// exactly where a blank screen comes from; also revives a dead renderer.
-    final class Coordinator: NSObject, WKNavigationDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+        private let haptic = UIImpactFeedbackGenerator(style: .medium)
+        func userContentController(_ c: WKUserContentController, didReceive message: WKScriptMessage) {
+            if message.name == "sdHaptic" { haptic.impactOccurred() }
+        }
+
         func webView(_ w: WKWebView, didStartProvisionalNavigation n: WKNavigation!) {
             print("[stardust] start: \(w.url?.absoluteString ?? "?")")
         }

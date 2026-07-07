@@ -83,7 +83,9 @@ ll.innerHTML='';const el=document.createElement('b');el.textContent=s.line||'♪
 pp.textContent=s.playing?'⏸':'▶';
 dur=s.duration||0;
 if(dur>0){fill.style.width=(100*(s.position||0)/dur).toFixed(1)+'%';time.textContent=fmt(s.position)+' / '+fmt(dur)}
-if(haptics&&s.beat&&Date.now()-lastBeat>250&&navigator.vibrate){lastBeat=Date.now();navigator.vibrate(30)}
+if(haptics&&s.beat&&Date.now()-lastBeat>250){lastBeat=Date.now();
+if(window.webkit&&webkit.messageHandlers&&webkit.messageHandlers.sdHaptic)webkit.messageHandlers.sdHaptic.postMessage(1);
+else if(navigator.vibrate)navigator.vibrate(30)}
 }catch(e){}}
 setInterval(tick,700);tick();
 </script>`;

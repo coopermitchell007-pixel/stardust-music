@@ -1588,12 +1588,7 @@ const DJQueue = (() => {
         ]),
         h('button', { class: 'stardust-lyr-tool', title: 'Veto — the DJ digs again', text: '✕' })
       ]);
-      // The whole row plays the song; only the ✕ vetoes.
-      row.addEventListener('click', () => { plan.splice(0, i + 1); fire(p2); });
-      row.querySelector('button').addEventListener('click', (e) => {
-        e.stopPropagation();
-        plan.splice(i, 1); if (plan.length < 3) redig(); render();
-      });
+      row.dataset.idx = String(i); // clicks handled at document capture — see below
       panel.appendChild(row);
     });
     // Tell the DJ — standing instructions typed straight into the booth.
@@ -1620,8 +1615,7 @@ const DJQueue = (() => {
           ]),
           h('button', { class: 'stardust-lyr-tool', title: 'Delete', text: '✕' })
         ]);
-        row.addEventListener('click', () => AIPlaylist.run(pl.songs));
-        row.querySelector('button').addEventListener('click', (e) => { e.stopPropagation(); DJPlaylists.remove(pl.name); render(); });
+        row.dataset.pl = pl.name; // handled by the capture-phase click router
         panel.appendChild(row);
       }
     }
@@ -1687,10 +1681,43 @@ const DJQueue = (() => {
     } catch {}
   }
   function playNow() {
-    if (!active || !plan.length) return false;
+    if (!active) return false;
+    if (!plan.length) {
+      // Be loud about WHY a skip fell through — silence read as "broken".
+      toast('🎧 The DJ is still digging — using YTM\'s next this once');
+      redig();
+      return false;
+    }
     fire(plan.shift());
     return true;
   }
+  // Queue-row clicks land here in CAPTURE phase — YTM's queue container was
+  // swallowing bubbled clicks, which made rows feel dead.
+  window.addEventListener('click', (e) => {
+    if (!panel || !panel.isConnected) return;
+    const row = e.target.closest && e.target.closest('#stardust-djq-panel .stardust-djq-row');
+    if (!row) return;
+    // Saved-playlist rows
+    if (row.dataset.pl != null) {
+      e.preventDefault(); e.stopPropagation();
+      if (e.target.closest('button')) { DJPlaylists.remove(row.dataset.pl); render(); return; }
+      const pl = DJPlaylists.load().find((x) => x.name === row.dataset.pl);
+      if (pl) AIPlaylist.run(pl.songs);
+      return;
+    }
+    if (row.dataset.idx == null) return;
+    e.preventDefault(); e.stopPropagation();
+    const i = parseInt(row.dataset.idx, 10);
+    if (isNaN(i) || !plan[i]) return;
+    if (e.target.closest('button')) { // the ✕ veto
+      plan.splice(i, 1); if (plan.length < 3) redig(); render();
+      return;
+    }
+    const p2 = plan[i];
+    plan.splice(0, i + 1);
+    toast('🎧 Jumping to "' + p2.title + '"');
+    fire(p2);
+  }, true);
   return { enable, disable, onPoll, playNow, resumePlan, direct, request };
 })();
 
@@ -4650,12 +4677,12 @@ function spaNavigate(path) {
     a.click();
     a.remove();
     const vid = (href.match(/[?&]v=([\w-]+)/) || [])[1];
-    const beforeTrack = lastTrack;
+    // Desktop YTM often ignores synthetic anchor clicks entirely — verify
+    // FAST and hard-navigate unconditionally if the URL didn't take. (The
+    // old 3s conditional fallback silently ate skips.)
     setTimeout(() => {
-      // Hard-navigate ONLY if the router truly ignored us: URL unchanged AND
-      // no track change happened (the URL can lag the actual playback).
-      if (vid && !location.href.includes(vid) && lastTrack === beforeTrack) location.href = href;
-    }, 3000);
+      if (vid && !location.href.includes(vid)) location.href = href;
+    }, 800);
   } catch { location.href = href; }
 }
 
