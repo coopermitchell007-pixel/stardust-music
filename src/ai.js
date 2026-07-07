@@ -14,6 +14,7 @@ const community = require('./community');
 const CHAT_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const TTS_URL = 'https://api.groq.com/openai/v1/audio/speech';
 const CHAT_MODEL = 'llama-3.3-70b-versatile';
+const FAST_MODEL = 'llama-3.1-8b-instant'; // separate rate bucket — keeps the big model's budget for DJ lines and plans
 const TTS_MODEL = 'canopylabs/orpheus-v1-english';
 const TTS_VOICE = 'leo';
 
@@ -60,16 +61,19 @@ const proxyAvailable = async () => {
 };
 
 // ---- chat -------------------------------------------------------------------
-async function chat(apiKey, messages, { maxTokens = 300, temperature = 0.8, json = false } = {}) {
-  const body = { model: CHAT_MODEL, messages, max_tokens: maxTokens, temperature };
-  if (json) body.response_format = { type: 'json_object' };
-  let res = await viaProxy('chat', body);
-  if (!res && !apiKey) return { error: 'no-key' };
-  if (!res || res.status !== 200) {
-    if (!apiKey) return { error: statusErr(res) };
-    res = await post(CHAT_URL, body, { Authorization: 'Bearer ' + apiKey });
-  }
-  if (!res) return { error: 'network' };
+async function chat(apiKey, messages, { maxTokens = 300, temperature = 0.8, json = false, fast = false } = {}) {
+  const run = async (model) => {
+    const body = { model, messages, max_tokens: maxTokens, temperature };
+    if (json) body.response_format = { type: 'json_object' };
+    let res = await viaProxy('chat', body);
+    if ((!res || res.status !== 200) && apiKey) res = await post(CHAT_URL, body, { Authorization: 'Bearer ' + apiKey });
+    return res;
+  };
+  let res = await run(fast ? FAST_MODEL : CHAT_MODEL);
+  // Rate-limited on the big model → the small one answers instead of nothing.
+  // Groq buckets limits PER MODEL, so this usually goes straight through.
+  if (res && res.status === 429 && !fast) { console.log('[Stardust] 70b rate-limited — degrading to 8b'); res = await run(FAST_MODEL); }
+  if (!res) return { error: apiKey ? 'network' : 'no-key' };
   const text = res.json && res.json.choices && res.json.choices[0] && res.json.choices[0].message && res.json.choices[0].message.content;
   if (res.status !== 200 || !text) { console.log('[Stardust] ai chat failed:', res.status, res.raw); return { error: statusErr(res) }; }
   return { text: String(text).trim() };

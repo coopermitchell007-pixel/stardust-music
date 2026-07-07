@@ -1500,7 +1500,7 @@ const DJQueue = (() => {
           messages: [
             { role: 'system', content: 'List songs that MATCH the listener\'s instruction for a music queue. Reply JSON only: {"songs":["<title> <artist>", ...8-10 entries]}. Real, well-known songs; prefer any from the LIBRARY that fit.\n\nLIBRARY:\n' + ((s && s.topSongs) || []).slice(0, 30).map((t) => t.title + ' — ' + t.artist).join('\n') },
             { role: 'user', content: dirsNow.join(' | ') }
-          ], maxTokens: 400, json: true
+          ], maxTokens: 400, json: true, fast: true
         }).catch(() => null);
         try {
           const j = JSON.parse((r2 && r2.text) || '');
@@ -1516,7 +1516,7 @@ const DJQueue = (() => {
       if (!cand.length || !active) return;
       let picks = [];
       if (await aiOK()) {
-        const list = cand.slice(0, 30).map((c, i) => i + '. ' + c.title + ' — ' + c.artist + '  [' + c.tag + ']').join('\n');
+        const list = cand.slice(0, 22).map((c, i) => i + '. ' + c.title + ' — ' + c.artist + '  [' + c.tag + ']').join('\n');
         const dirs = liveDirectives().map((d) => d.text);
         const r = await ipcRenderer.invoke('stardust:ai-chat', {
           messages: [
@@ -1657,6 +1657,7 @@ const DJQueue = (() => {
     const key = np.title + '|' + np.artist;
     if (key !== lastKey) {
       lastKey = key;
+      setFiring(false); // the transition landed
       Visualizer.fx.fade(1, 0.5); // restore the handoff fade on arrival
       played.push(key); if (played.length > 60) played.shift();
       hist.push({ key, title: np.title, vid: null });
@@ -1686,10 +1687,18 @@ const DJQueue = (() => {
     // Hand off a beat earlier with a fade — absorbs resolution latency and
     // reads like the DJ riding the fader instead of a hard cut at 0:00.
     if (plan.length && left < 3.2 && !firing) {
-      firing = true;
+      // LATCHED until the next track actually arrives — releasing when fire()
+      // resolved let this re-trigger every poll and burn 3 picks in 2s.
+      setFiring(true);
       Visualizer.fx.fade(0.001, Math.max(0.4, left - 0.4));
-      fire(plan.shift()).finally(() => { firing = false; });
+      fire(plan.shift());
     }
+  }
+  let firingTimer = null;
+  function setFiring(on) {
+    firing = on;
+    clearTimeout(firingTimer);
+    if (on) firingTimer = setTimeout(() => { firing = false; }, 12000); // arrival normally clears it
   }
   async function fire(p2, hard) {
     blog('fire "' + p2.title + '" vid=' + (p2.videoId || 'none') + (hard ? ' (hard)' : ''));
@@ -1701,7 +1710,10 @@ const DJQueue = (() => {
     AIDJ.suppressOnce(); // no double-talking over the transition
     const worthSaying = p2.reason && /discovery|lost/.test(p2.tag || '');
     if (worthSaying) {
-      const line = 'Next up: ' + p2.title + (p2.artist ? ' by ' + p2.artist : '') + '. ' + p2.reason;
+      // Only discovery picks carry a RELIABLE artist (InnerTube metadata);
+      // stats artists can be upload channels — say just the title for those.
+      const by = (p2.tag || '').startsWith('discovery') && p2.artist ? ' by ' + p2.artist : '';
+      const line = 'Next up: ' + p2.title + by + '. ' + p2.reason;
       pendingSay = { line, title: p2.title, at: Date.now() };
       // Survives a hard navigation too (the SPA path clears it on arrival).
       try { sessionStorage.setItem('sd-dj-say', JSON.stringify({ line, at: Date.now() })); } catch {}
@@ -1743,14 +1755,16 @@ const DJQueue = (() => {
     return true;
   }
   function playNow() {
-    blog('playNow: active=' + active + ' plan=' + plan.length);
+    blog('playNow: active=' + active + ' plan=' + plan.length + ' firing=' + firing);
     if (!active) return false;
+    if (firing) { toast('🎧 Transitioning…'); return true; } // don't burn picks on double-press
     if (!plan.length) {
       // Be loud about WHY a skip fell through — silence read as "broken".
       toast('🎧 The DJ is still digging — using YTM\'s next this once');
       redig();
       return false;
     }
+    setFiring(true);
     fire(plan.shift(), true); // user asked NOW — guaranteed path
     return true;
   }
@@ -1776,9 +1790,11 @@ const DJQueue = (() => {
       plan.splice(i, 1); if (plan.length < 3) redig(); render();
       return;
     }
+    if (firing) { toast('🎧 Transitioning…'); return; }
     const p2 = plan[i];
     plan.splice(0, i + 1);
     toast('🎧 Jumping to "' + p2.title + '"');
+    setFiring(true);
     fire(p2, true); // explicit click — guaranteed path
   }, true);
   return { enable, disable, onPoll, playNow, playPrev, resumePlan, direct, request };
@@ -2146,7 +2162,7 @@ const LyricLearn = (() => {
       messages: [
         { role: 'system', content: 'Explain one song-lyric word for a language learner, in ' + lang + '. Format exactly: the word — reading/romanization if non-Latin — meaning (max 10 words) — meaning IN THIS LYRIC (max 10 words). One line, using — separators.' },
         { role: 'user', content: 'Word: ' + word + '\nLyric line: ' + context.trim().slice(0, 160) }
-      ], maxTokens: 90
+      ], maxTokens: 90, fast: true
     }).catch(() => null);
     if (!pop) return;
     const answer = (r && r.text) || 'Lookup failed';
@@ -3074,19 +3090,30 @@ const VoiceControl = (() => {
   }
   async function run(said) {
     const s = said.toLowerCase();
+    const npc = readNowPlaying();
+    const cur = npc && npc.isTrack ? '"' + npc.title + '"' + (npc.isVideo || !npc.artist ? '' : ' by ' + npc.artist) : '';
     if (/\b(pause|stop)\b/.test(s)) { doCommand('playpause'); toast('⏸ "' + said + '"'); return; }
     if (/^(play|resume)[.!]?$/.test(s.trim())) { doCommand('playpause'); toast('▶ "' + said + '"'); return; }
     if (/\b(next|skip)\b/.test(s)) { doCommand('next'); toast('⏭ "' + said + '"'); return; }
     if (/\b(previous|go back)\b/.test(s)) { doCommand('previous'); toast('⏮ "' + said + '"'); return; }
     if (/\bshuffle\b/.test(s)) { doCommand('shuffle'); return; }
-    if (/\blike this\b|\blike it\b/.test(s)) { doCommand('like'); return; }
+    // "this/that" means the CURRENT SONG — never searchable text. These run
+    // BEFORE anything can turn them into a literal query ("more songs like
+    // this" once found a song literally titled that).
+    if (/\b(more|similar|another)\b.*\b(like )?(this|that|it)\b|\blike this\b/.test(s) && cur) {
+      DJQueue.direct('Play more songs similar to ' + cur + ' — same style and energy.');
+      AIDJ.speak('More like this one. On it.', { pause: false });
+      return;
+    }
+    if (/^i (love|like|hate|don'?t like|dislike)\b/.test(s)) { AIDJ.converse(said); return; }
+    if (/^(like|heart|thumbs up)( (this|it|the song))?[.!]?$/.test(s.trim())) { doCommand('like'); return; }
     toast('🎤 "' + said + '"');
     // One LLM decision: is this a request to PLAY something, or talk to the DJ?
     const r = await ipcRenderer.invoke('stardust:ai-chat', {
       messages: [
-        { role: 'system', content: 'The user spoke to a music app with a DJ. Reply as JSON only. A specific song/artist/mood to play NOW: {"action":"search","query":"<strong YouTube Music search terms>"}. A request to BUILD/MAKE a playlist or mix: {"action":"playlist","request":"<what they asked for>"}. A standing instruction about what to play GOING FORWARD ("keep it mellow", "no more ballads", "more like this"): {"action":"direct","instruction":"<the instruction, cleanly restated>"}. Anything else (questions, chat, opinions): {"action":"chat"}.' },
+        { role: 'system', content: 'The user spoke to a music app with a DJ. Now playing: ' + (cur || 'nothing') + '. Reply as JSON only. RULES: words like "this/that/it" refer to the NOW-PLAYING song — substitute its actual name; a search query must be CONCRETE (real song/artist/genre terms) and must never contain "this", "that", or restate the user\'s sentence. Opinions and sentiments ("I love this") are chat, not requests. A specific song/artist/mood to play NOW: {"action":"search","query":"<concrete YouTube Music search terms>"}. BUILD/MAKE a playlist: {"action":"playlist","request":"<what they asked for, deixis resolved>"}. A standing instruction about what plays GOING FORWARD: {"action":"direct","instruction":"<cleanly restated, deixis resolved>"}. Anything else: {"action":"chat"}.' },
         { role: 'user', content: said }
-      ], maxTokens: 90, json: true
+      ], maxTokens: 90, json: true, fast: true
     }).catch(() => null);
     let intent = null;
     try { intent = JSON.parse((r && r.text) || ''); } catch {}
@@ -3097,7 +3124,13 @@ const VoiceControl = (() => {
       return;
     }
     if (intent && intent.action === 'playlist') { DJPlaylists.make(intent.request || said); return; }
-    const query = (intent && intent.query) || said.replace(/^(play|put on|queue)\s+/i, '');
+    let query = (intent && intent.query) || said.replace(/^(play|put on|queue)\s+/i, '');
+    if (/\b(this|that)\b/i.test(query)) {
+      // the model leaked deixis anyway — route to intent, not to search
+      if (cur) { DJQueue.direct('Play more songs similar to ' + cur + '.'); AIDJ.speak('Something in that lane, coming up.', { pause: false }); }
+      else AIDJ.converse(said);
+      return;
+    }
     playSearch(query);
   }
   // Play a song by name: resolve it to a videoId first and navigate INSIDE
