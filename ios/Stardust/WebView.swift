@@ -49,6 +49,14 @@ struct WebView: UIViewRepresentable {
                 injectionTime: .atDocumentStart, forMainFrameOnly: true))
         }
 
+        // The mobile runtime: ✦ launcher, panel, themes, starfield, lyrics.
+        if let jsURL = Bundle.main.url(forResource: "mobile", withExtension: "js"),
+           let runtime = try? String(contentsOf: jsURL, encoding: .utf8) {
+            print("[stardust] mobile.js loaded: \(runtime.count) chars")
+            controller.addUserScript(WKUserScript(source: runtime,
+                injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        }
+
         let config = WKWebViewConfiguration()
         config.userContentController = controller
         config.allowsInlineMediaPlayback = true

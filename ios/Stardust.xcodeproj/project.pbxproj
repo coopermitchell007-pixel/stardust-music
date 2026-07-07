@@ -12,6 +12,7 @@
 		A9A94CCE4815B3F3B4FFBF3B /* overlay.css in Resources */ = {isa = PBXBuildFile; fileRef = 207F1565799242A89366C230 /* overlay.css */; };
 		AB18C5E271A3BDAC93AE0044 /* WebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E1F987DA1D56702C1E8E219 /* WebView.swift */; };
 		B3D540E63F479F43EC2A4D1F /* StardustApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00DC864C90987631749A1052 /* StardustApp.swift */; };
+		D096E3DBBCC6A170234423EE /* mobile.js in Resources */ = {isa = PBXBuildFile; fileRef = B351FFCFAA9997057F1630EF /* mobile.js */; };
 		DADFE010B0228EC74060403E /* blockrules.json in Resources */ = {isa = PBXBuildFile; fileRef = 51BF35BDA03957C2D1F31BC9 /* blockrules.json */; };
 /* End PBXBuildFile section */
 
@@ -22,6 +23,7 @@
 		5CE27F8D6A1C78E0B97E05B2 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		7E1F987DA1D56702C1E8E219 /* WebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebView.swift; sourceTree = "<group>"; };
 		99B19B696354D0E647F8E4C2 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		B351FFCFAA9997057F1630EF /* mobile.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = mobile.js; sourceTree = "<group>"; };
 		CD38464544F9CD36A4754C8C /* theme.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = theme.css; sourceTree = "<group>"; };
 		E8858B37ACECAC2CB581524C /* Stardust.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Stardust.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -49,6 +51,7 @@
 				5CE27F8D6A1C78E0B97E05B2 /* Assets.xcassets */,
 				51BF35BDA03957C2D1F31BC9 /* blockrules.json */,
 				99B19B696354D0E647F8E4C2 /* Info.plist */,
+				B351FFCFAA9997057F1630EF /* mobile.js */,
 				207F1565799242A89366C230 /* overlay.css */,
 				00DC864C90987631749A1052 /* StardustApp.swift */,
 				CD38464544F9CD36A4754C8C /* theme.css */,
@@ -118,6 +121,7 @@
 			files = (
 				3F4AE441C2C28D8F478B6D18 /* Assets.xcassets in Resources */,
 				DADFE010B0228EC74060403E /* blockrules.json in Resources */,
+				D096E3DBBCC6A170234423EE /* mobile.js in Resources */,
 				A9A94CCE4815B3F3B4FFBF3B /* overlay.css in Resources */,
 				598217385A0C94888363A00A /* theme.css in Resources */,
 			);
