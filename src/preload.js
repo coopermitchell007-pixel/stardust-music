@@ -1656,6 +1656,11 @@ const DJQueue = (() => {
   }
   async function fire(p2, hard) {
     blog('fire "' + p2.title + '" vid=' + (p2.videoId || 'none') + (hard ? ' (hard)' : ''));
+    if (hard) {
+      // INSTANT response: kill the old song NOW — the navigation takes a few
+      // seconds, and the old track playing on made skips feel dead.
+      try { const v = q('video'); if (v) { Visualizer.fx.fade(0.001, 0.12); setTimeout(() => { try { v.pause(); } catch {} }, 130); } } catch {}
+    }
     AIDJ.suppressOnce(); // no double-talking over the transition
     const worthSaying = p2.reason && /discovery|lost/.test(p2.tag || '');
     if (worthSaying) {
@@ -4677,11 +4682,34 @@ function blog(line) {
   try { ipcRenderer.send('stardust:booth-log', line); } catch {}
 }
 
+// YTM's own polymer router — the truly instant, gapless path when it works.
+function endpointNavigate(videoId) {
+  try {
+    const app = document.querySelector('ytmusic-app');
+    if (app && typeof app.navigate === 'function') {
+      app.navigate({ watchEndpoint: { videoId } });
+      return true;
+    }
+  } catch {}
+  return false;
+}
+
 function spaNavigate(path, hard) {
   const href = path.startsWith('http') ? path : 'https://music.youtube.com' + path;
-  // Explicit user actions (skip, queue click) take the GUARANTEED path:
-  // an immediate hard navigation. Gapless anchor-clicks are only for
-  // automatic end-of-song transitions where a reload gap would be heard.
+  const vid = (href.match(/[?&]v=([\w-]+)/) || [])[1];
+  // First choice for ANY transition: YTM's own router — instant and gapless.
+  // Verified by an actual track change; the guaranteed hard path follows.
+  if (vid && endpointNavigate(vid)) {
+    blog('nav endpoint ' + vid);
+    const before = lastTrack;
+    setTimeout(() => {
+      if (lastTrack === before && !location.href.includes(vid)) {
+        blog('endpoint MISSED → hard');
+        location.href = href;
+      }
+    }, hard ? 1200 : 2000);
+    return;
+  }
   if (hard) { blog('nav HARD ' + href); location.href = href; return; }
   try {
     const a = document.createElement('a');
