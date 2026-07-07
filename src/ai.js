@@ -115,7 +115,8 @@ async function tts(apiKey, text, pref) {
   // (Orpheus tara → Google), or 'natural' (most human available: Orpheus
   // male when unlocked, otherwise the Google voice even though it's female).
   const male = pref === 'male';
-  const body = { model: TTS_MODEL, voice: pref === 'female' ? 'tara' : 'leo', input: String(text).slice(0, 600), response_format: 'wav' };
+  // Groq's Orpheus voice roster: autumn/diana/hannah (F), austin/daniel/troy (M).
+  const body = { model: TTS_MODEL, voice: pref === 'female' ? 'autumn' : 'troy', input: String(text).slice(0, 600), response_format: 'wav' };
   let res = await viaProxy('tts', body, true);
   if ((!res || res.status !== 200) && apiKey) res = await post(TTS_URL, body, { Authorization: 'Bearer ' + apiKey }, true);
   if (res && res.status === 200 && res.buf && res.buf.length >= 200) return { buf: res.buf, mime: 'audio/wav' };
