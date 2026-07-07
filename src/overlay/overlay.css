@@ -782,11 +782,6 @@ input[type="color"]#stardust-accent {
   font-size: 11px; padding: 4px 10px;
 }
 
-/* ---- Energy dial / AI playlist / TV mode buttons ---- */
-#stardust-ed-btn { position: fixed; right: 18px; bottom: 564px; z-index: 2147483640; font-size: 11px; min-width: 58px; }
-#stardust-ed-btn.active { border-color: var(--stardust-accent); box-shadow: 0 0 12px color-mix(in srgb, var(--stardust-accent) 45%, transparent); }
-#stardust-pl-btn { position: fixed; right: 18px; bottom: 616px; z-index: 2147483640; }
-#stardust-tv-btn { position: fixed; right: 18px; bottom: 668px; z-index: 2147483640; }
 
 /* ---- TV jukebox mode ---- */
 #stardust-tv {
@@ -813,9 +808,6 @@ input[type="color"]#stardust-accent {
 #stardust-wrapped.pop #sd-wr-big { animation: sd-wr-pop 0.5s ease; }
 @keyframes sd-wr-pop { from { transform: scale(0.92); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 
-/* ---- Phone remote + lyric learn buttons ---- */
-#stardust-pr-btn { position: fixed; right: 18px; bottom: 460px; z-index: 2147483640; }
-#stardust-ll-btn { position: fixed; right: 18px; bottom: 512px; z-index: 2147483640; }
 #stardust-ll-pop {
   position: fixed; z-index: 2147483646; max-width: 320px;
   padding: 10px 14px; font-size: 12.5px; line-height: 1.5; color: #fff;
@@ -829,7 +821,6 @@ input[type="color"]#stardust-accent {
 .stardust-ll-back { font-size: 13px; color: rgba(255,255,255,0.85); text-align: center; line-height: 1.5; }
 
 /* ---- Rhythm game ---- */
-#stardust-rg-btn { position: fixed; right: 18px; bottom: 356px; z-index: 2147483640; }
 #stardust-rg {
   position: fixed; left: 50%; top: 6%; transform: translateX(-50%);
   z-index: 2147483644; padding: 14px; display: flex; flex-direction: column; align-items: center; gap: 8px;
@@ -841,7 +832,6 @@ input[type="color"]#stardust-accent {
 #stardust-rg .stardust-x { position: absolute; top: 8px; right: 8px; }
 
 /* ---- Karaoke Night ---- */
-#stardust-kn-btn { position: fixed; right: 18px; bottom: 408px; z-index: 2147483640; }
 #stardust-kn {
   position: fixed; inset: 0; z-index: 2147483644;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 26px;
@@ -866,11 +856,61 @@ input[type="color"]#stardust-accent {
 }
 #stardust-kn-controls { position: absolute; bottom: 5vh; display: flex; gap: 10px; }
 
+/* ---- Premium motion: everything eases in, nothing pops ---- */
+#stardust-djq, #stardust-ticker, #stardust-xray-btn {
+  animation: sd-rise 0.4s cubic-bezier(.22,1,.36,1);
+  transition: background 0.2s, border-color 0.2s, transform 0.2s;
+}
+.stardust-djq-row { animation: sd-rise 0.35s cubic-bezier(.22,1,.36,1) backwards; }
+.stardust-djq-row:nth-child(2) { animation-delay: 0.03s; }
+.stardust-djq-row:nth-child(3) { animation-delay: 0.06s; }
+.stardust-djq-row:nth-child(4) { animation-delay: 0.09s; }
+.stardust-djq-row:nth-child(5) { animation-delay: 0.12s; }
+.stardust-djq-row:nth-child(6) { animation-delay: 0.15s; }
+#stardust-quiz, #stardust-lt.open { animation: sd-rise 0.3s cubic-bezier(.22,1,.36,1); }
+@keyframes sd-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+#stardust-djq:hover { transform: translateY(-1px); }
+
+/* ---- The Dock: one orb, every tool ---- */
+#stardust-dock {
+  position: fixed; right: 18px; bottom: 170px; z-index: 2147483641;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
+}
+.stardust-dock-orb {
+  width: 46px; height: 46px; border-radius: 50%; cursor: pointer;
+  font-size: 19px; color: #fff;
+  background: color-mix(in srgb, var(--stardust-accent) 32%, rgba(10,10,22,0.85));
+  border: 1px solid color-mix(in srgb, var(--stardust-accent) 55%, rgba(255,255,255,0.12));
+  box-shadow: 0 6px 24px rgba(0,0,0,0.45), 0 0 18px color-mix(in srgb, var(--stardust-accent) 30%, transparent);
+  backdrop-filter: blur(12px);
+  transition: transform 0.25s cubic-bezier(.34,1.56,.64,1), box-shadow 0.25s;
+}
+#stardust-dock.open .stardust-dock-orb { transform: rotate(90deg) scale(1.06); }
+.stardust-dock-orb:hover { box-shadow: 0 6px 24px rgba(0,0,0,0.45), 0 0 26px color-mix(in srgb, var(--stardust-accent) 55%, transparent); }
+.stardust-dock-list {
+  display: flex; flex-direction: column; gap: 8px; align-items: flex-end;
+  max-height: 0; overflow: hidden; opacity: 0;
+  transition: max-height 0.35s cubic-bezier(.22,1,.36,1), opacity 0.25s;
+  pointer-events: none;
+}
+#stardust-dock.open .stardust-dock-list { max-height: 70vh; opacity: 1; pointer-events: auto; }
+.stardust-dock-item { min-width: 46px; transition: transform 0.15s; }
+.stardust-dock-item:hover { transform: translateX(-3px) scale(1.06); }
+#stardust-voice-btn.listening {
+  border-color: #f87171;
+  box-shadow: 0 0 14px rgba(248,113,113,0.6);
+  animation: sd-pulse 1.2s ease-in-out infinite;
+}
+@keyframes sd-pulse { 50% { transform: scale(1.12); } }
+#stardust-lt-btn.active, #stardust-ed-btn.active {
+  border-color: var(--stardust-accent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--stardust-accent) 45%, transparent);
+}
+#stardust-ed-btn { font-size: 11px; min-width: 58px; }
+
 /* ---- Listen Together ---- */
-#stardust-lt-btn { position: fixed; right: 18px; bottom: 252px; z-index: 2147483640; }
-#stardust-lt-btn.active { border-color: var(--stardust-accent); box-shadow: 0 0 12px color-mix(in srgb, var(--stardust-accent) 45%, transparent); }
 #stardust-lt {
-  position: fixed; right: 70px; bottom: 200px; width: 280px; z-index: 2147483641;
+  position: fixed; right: 76px; bottom: 170px; width: 280px; z-index: 2147483641;
   display: none; flex-direction: column; gap: 8px; padding: 14px;
   background: color-mix(in srgb, var(--stardust-accent) 8%, rgba(8,8,16,0.88));
   border: 1px solid color-mix(in srgb, var(--stardust-accent) 30%, rgba(255,255,255,0.08));
@@ -947,7 +987,6 @@ input[type="color"]#stardust-accent {
 .stardust-live-when { color: rgba(255,255,255,0.4); font-size: 11px; flex: none; }
 
 /* ---- Lyric quiz ---- */
-#stardust-quiz-btn { position: fixed; right: 18px; bottom: 304px; z-index: 2147483640; }
 #stardust-quiz {
   position: fixed; left: 50%; top: 38%; transform: translate(-50%, -50%); width: min(460px, 80vw);
   z-index: 2147483645; display: flex; flex-direction: column; gap: 10px; padding: 20px;
@@ -962,16 +1001,6 @@ input[type="color"]#stardust-accent {
 }
 #stardust-quiz-input:focus { outline: none; border-color: var(--stardust-accent); }
 
-/* ---- Voice control mic ---- */
-#stardust-voice-btn {
-  position: fixed; right: 18px; bottom: 200px; z-index: 2147483640;
-}
-#stardust-voice-btn.listening {
-  border-color: #f87171;
-  box-shadow: 0 0 14px rgba(248,113,113,0.6);
-  animation: sd-pulse 1.2s ease-in-out infinite;
-}
-@keyframes sd-pulse { 50% { transform: scale(1.12); } }
 
 /* ---- Ask-your-history box (stats modal) ---- */
 .stardust-ask-row { display: flex; gap: 8px; margin: 8px 0; }

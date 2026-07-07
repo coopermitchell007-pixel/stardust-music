@@ -1340,7 +1340,12 @@ const FocusMode = (() => {
 // autoplay just before each song ends.
 const DJQueue = (() => {
   let active = false, pill = null, panel = null, plan = [], picking = false, lastKey = '';
+  let pendingSay = null; // the pick line, spoken when its track actually starts
   const played = []; // session history, newest last
+  // YouTube titles carry junk suffixes — strip for display and search both.
+  const cleanTitle = (t) => String(t || '')
+    .replace(/\s*[([][^)\]]*(official|video|lyric|audio|visuali[sz]er|remaster|hd|4k|mv|m\/v|fan video)[^)\]]*[)\]]/gi, '')
+    .replace(/\s+/g, ' ').trim();
   // Standing instructions from the listener ("keep it mellow", requests from
   // phones, tonight-arc mode, radio-show themes). Each may carry an expiry.
   let directives = [];
@@ -1421,9 +1426,10 @@ const DJQueue = (() => {
       avoid.add(nowKey);
       for (const q2 of plan) avoid.add(q2.title + '|' + q2.artist);
       const cand = [];
-      const push = (title, artist, tag, videoId) => {
+      const push = (rawTitle, artist, tag, videoId) => {
+        const title = cleanTitle(rawTitle);
         const k = title + '|' + (artist || '');
-        if (!title || avoid.has(k) || (skips[k] || 0) >= 3) return;
+        if (!title || avoid.has(k) || avoid.has(rawTitle + '|' + (artist || '')) || (skips[k] || 0) >= 3) return;
         if (cand.some((c) => c.title === title)) return;
         cand.push({ title, artist: artist || '', tag, videoId });
       };
@@ -1448,7 +1454,7 @@ const DJQueue = (() => {
         const dirs = liveDirectives().map((d) => d.text);
         const r = await ipcRenderer.invoke('stardust:ai-chat', {
           messages: [
-            { role: 'system', content: 'You are Stardust\'s radio DJ planning the next FIVE songs, in play order. Think about flow from the current song, the hour, and variety — mostly favorites, an occasional discovery or lost track where it fits.' + (dirs.length ? ' THE LISTENER\'S STANDING INSTRUCTIONS — OBEY THEM ABOVE ALL: ' + dirs.join(' | ') : '') + ' Reply JSON only: {"picks":[{"pick":<candidate number>,"reason":"<spoken line, under 14 words, why this song here>"}, ...5 entries]}. Reasons must not invent facts about the songs.' },
+            { role: 'system', content: 'You are Stardust\'s radio DJ planning the next FIVE songs, in play order. Think about flow from the current song, the hour, and variety — mostly favorites, an occasional discovery or lost track where it fits.' + (dirs.length ? ' THE LISTENER\'S STANDING INSTRUCTIONS — OBEY THEM ABOVE ALL: ' + dirs.join(' | ') : '') + ' Reply JSON only: {"picks":[{"pick":<candidate number>,"reason":"<under 12 words, plain-spoken, like telling a friend why this one\'s next>"}, ...5 entries]}. Reasons must not invent facts about the songs. No exclamation marks.' },
             { role: 'user', content: 'Now playing: "' + np.title + '" by ' + np.artist + '. Hour: ' + hr + '. Just played: ' + played.slice(-4).join('; ') + '\n\nCANDIDATES:\n' + list }
           ], maxTokens: 300, json: true
         }).catch(() => null);
@@ -1473,7 +1479,19 @@ const DJQueue = (() => {
       plan = extend ? plan.concat(picks.filter((p2) => !plan.some((q2) => q2.title === p2.title))).slice(0, 6) : picks.slice(0, 6);
       console.log('[Stardust] DJ booth plan: ' + plan.map((p2) => p2.title).join(' → '));
       render();
+      resolvePlan(); // videoIds in hand BEFORE the transitions → no reloads
     } finally { picking = false; }
+  }
+  // Eagerly resolve library picks to videoIds so every handoff is an in-app
+  // navigation instead of a search-page reload.
+  async function resolvePlan() {
+    for (const p2 of [...plan]) {
+      if (p2.videoId || p2.resolving) continue;
+      p2.resolving = true;
+      const vid = await ipcRenderer.invoke('stardust:resolve-song', { query: p2.title + ' ' + (p2.artist || '') }).catch(() => null);
+      if (vid) p2.videoId = vid;
+      p2.resolving = false;
+    }
   }
 
   // --- the queue-panel takeover: our list replaces YTM's "Up next" ----------
@@ -1554,6 +1572,12 @@ const DJQueue = (() => {
       if (plan.length && plan[0].title === np.title) plan.shift(); // our own transition
       if (plan.length < 3) redig();
       render();
+      // The pick's announcement waits for its track to actually start.
+      if (pendingSay && Date.now() - pendingSay.at < 25000 && np.title === pendingSay.title) {
+        const line = pendingSay.line; pendingSay = null;
+        try { sessionStorage.removeItem('sd-dj-say'); } catch {}
+        setTimeout(() => AIDJ.speak(line), 900);
+      } else if (pendingSay && Date.now() - pendingSay.at >= 25000) pendingSay = null;
     }
     const v = q('video');
     if (!v || !isFinite(v.duration) || v.duration <= 30 || !(v.currentTime > 0)) return;
@@ -1566,12 +1590,14 @@ const DJQueue = (() => {
     const worthSaying = p2.reason && /discovery|lost/.test(p2.tag || '');
     if (worthSaying) {
       const line = 'Next up: ' + p2.title + (p2.artist ? ' by ' + p2.artist : '') + '. ' + p2.reason;
+      pendingSay = { line, title: p2.title, at: Date.now() };
+      // Survives a hard navigation too (the SPA path clears it on arrival).
       try { sessionStorage.setItem('sd-dj-say', JSON.stringify({ line, at: Date.now() })); } catch {}
     }
     try { sessionStorage.setItem('sd-djq-plan', JSON.stringify({ plan, at: Date.now() })); } catch {}
     console.log('[Stardust] DJ booth: playing pick "' + p2.title + '"');
     toast('🎧 DJ pick: "' + p2.title + '"' + (p2.reason ? ' — ' + p2.reason : ''));
-    if (p2.videoId) location.href = 'https://music.youtube.com/watch?v=' + p2.videoId;
+    if (p2.videoId) spaNavigate('/watch?v=' + p2.videoId);
     else VoiceControl.playSearch(p2.title + ' ' + (p2.artist || ''));
   }
   // The plan survives the navigations its own picks cause.
@@ -1702,11 +1728,9 @@ const EnergyDial = (() => {
   const LABEL = ['⚡ off', '⚡ keep', '⚡ chill', '⚡ rise'];
   function show() {
     if (btn) return;
-    btn = h('button', { id: 'stardust-ed-btn', class: 'stardust-qa', title: 'Energy dial — keep / chill / rise', text: LABEL[0] });
-    btn.addEventListener('click', () => { mode = (mode + 1) % 4; btn.textContent = LABEL[mode]; btn.classList.toggle('active', mode > 0); toast('Energy dial: ' + LABEL[mode].slice(2)); });
-    document.body.appendChild(btn);
+    btn = Dock.add('stardust-ed-btn', LABEL[0], 'Energy dial — keep / chill / rise', () => { mode = (mode + 1) % 4; btn.textContent = LABEL[mode]; btn.classList.toggle('active', mode > 0); toast('Energy dial: ' + LABEL[mode].slice(2)); });
   }
-  function hide() { if (btn) { btn.remove(); btn = null; } mode = 0; }
+  function hide() { Dock.remove('stardust-ed-btn'); btn = null; mode = 0; }
   function onTrack(np) {
     if (!btn || !mode || !np || !np.isTrack) return;
     const key = np.title + '|' + np.artist;
@@ -1738,11 +1762,9 @@ const AIPlaylist = (() => {
   let btn = null, queue = [], at = -1, watching = null;
   function show() {
     if (btn) return;
-    btn = h('button', { id: 'stardust-pl-btn', class: 'stardust-qa', title: 'AI playlist — describe what you want to hear', text: '📝' });
-    btn.addEventListener('click', ask);
-    document.body.appendChild(btn);
+    btn = Dock.add('stardust-pl-btn', '📝', 'AI playlist — describe what you want to hear', ask);
   }
-  function hide() { stop(); if (btn) { btn.remove(); btn = null; } }
+  function hide() { stop(); Dock.remove('stardust-pl-btn'); btn = null; }
   function stop() { queue = []; at = -1; if (watching) { clearInterval(watching); watching = null; } }
   async function ask() {
     if (!(await aiOK())) { toast('AI playlists need the shared proxy or a Groq key'); return; }
@@ -1825,11 +1847,9 @@ const TVMode = (() => {
   let btn = null, wrap = null, timer = null;
   function show() {
     if (btn) return;
-    btn = h('button', { id: 'stardust-tv-btn', class: 'stardust-qa', title: 'TV mode — fullscreen jukebox screen', text: '📺' });
-    btn.addEventListener('click', open);
-    document.body.appendChild(btn);
+    btn = Dock.add('stardust-tv-btn', '📺', 'TV mode — fullscreen jukebox screen', open);
   }
-  function hide() { close(); if (btn) { btn.remove(); btn = null; } }
+  function hide() { close(); Dock.remove('stardust-tv-btn'); btn = null; }
   function open() {
     if (wrap) return;
     wrap = h('div', { id: 'stardust-tv' }, [
@@ -1878,12 +1898,10 @@ const PhoneRemote = (() => {
     remoteUrl = await ipcRenderer.invoke('stardust:remote-start').catch(() => null);
     if (!remoteUrl) { toast('Could not start the remote server'); return; }
     if (!btn) {
-      btn = h('button', { id: 'stardust-pr-btn', class: 'stardust-qa', title: 'Phone remote — click to copy the address', text: '📱' });
-      btn.addEventListener('click', () => {
+      btn = Dock.add('stardust-pr-btn', '📱', 'Phone remote — click to copy the address', () => {
         try { navigator.clipboard.writeText(remoteUrl); } catch {}
         toast('📱 On your phone: ' + remoteUrl + ' (copied)');
       });
-      document.body.appendChild(btn);
     }
     toast('📱 Phone remote at ' + remoteUrl + ' — address copied');
     try { navigator.clipboard.writeText(remoteUrl); } catch {}
@@ -1892,7 +1910,7 @@ const PhoneRemote = (() => {
   function disable() {
     active = false; remoteUrl = null;
     ipcRenderer.invoke('stardust:remote-stop').catch(() => {});
-    if (btn) { btn.remove(); btn = null; }
+    Dock.remove('stardust-pr-btn'); btn = null;
     announce();
   }
   // Ships now-playing + the live lyric lines to the phone every poll.
@@ -1931,15 +1949,13 @@ const LyricLearn = (() => {
     active = true;
     document.addEventListener('contextmenu', onCtx, true);
     if (!btn) {
-      btn = h('button', { id: 'stardust-ll-btn', class: 'stardust-qa', title: 'Vocabulary deck — words you looked up in lyrics', text: '📚' });
-      btn.addEventListener('click', review);
-      document.body.appendChild(btn);
+      btn = Dock.add('stardust-ll-btn', '📚', 'Vocabulary deck — words you looked up in lyrics', review);
     }
   }
   function disable() {
     active = false;
     document.removeEventListener('contextmenu', onCtx, true);
-    if (btn) { btn.remove(); btn = null; }
+    Dock.remove('stardust-ll-btn'); btn = null;
     if (pop) { pop.remove(); pop = null; }
   }
   function onCtx(e) {
@@ -2087,11 +2103,9 @@ const RhythmGame = (() => {
   const LEAD = 2.2, HIT = 0.16, GOOD = 0.32;
   function show() {
     if (btn) return;
-    btn = h('button', { id: 'stardust-rg-btn', class: 'stardust-qa', title: 'Rhythm game — tap the words as they land', text: '🎮' });
-    btn.addEventListener('click', open);
-    document.body.appendChild(btn);
+    btn = Dock.add('stardust-rg-btn', '🎮', 'Rhythm game — tap the words as they land', open);
   }
-  function hide() { close(); if (btn) { btn.remove(); btn = null; } }
+  function hide() { close(); Dock.remove('stardust-rg-btn'); btn = null; }
   function open() {
     const st = Lyrics.state();
     if (!st.hasWords) { toast('Needs word-synced lyrics (⚡) — play a synced song'); return; }
@@ -2176,11 +2190,9 @@ const KaraokeNight = (() => {
   let duet = false, lastT = 0;
   function show() {
     if (btn) return;
-    btn = h('button', { id: 'stardust-kn-btn', class: 'stardust-qa', title: 'Karaoke Night — fullscreen sing-along, vocals cancelled', text: '🎤✨' });
-    btn.addEventListener('click', open);
-    document.body.appendChild(btn);
+    btn = Dock.add('stardust-kn-btn', '✨', 'Karaoke Night — fullscreen sing-along, vocals cancelled', open);
   }
-  function hide() { close(); if (btn) { btn.remove(); btn = null; } }
+  function hide() { close(); Dock.remove('stardust-kn-btn'); btn = null; }
   function open() {
     const st = Lyrics.state();
     if (!st.synced || !st.synced.length) { toast('Needs synced lyrics — open the Lyrics tab first'); return; }
@@ -2374,11 +2386,9 @@ const ListenTogether = (() => {
   const topicOf = (code) => 'realtime:stardust:room:' + code;
   function show() {
     if (btn) return;
-    btn = h('button', { id: 'stardust-lt-btn', class: 'stardust-qa', title: 'Listen Together — synced rooms', text: '👥' });
-    btn.addEventListener('click', () => (panel && panel.classList.contains('open') ? hidePanel() : showPanel()));
-    document.body.appendChild(btn);
+    btn = Dock.add('stardust-lt-btn', '👥', 'Listen Together — synced rooms', () => (panel && panel.classList.contains('open') ? hidePanel() : showPanel()));
   }
-  function hide() { leaveRoom(); hidePanel(); if (panel) { panel.remove(); panel = null; } if (btn) { btn.remove(); btn = null; } }
+  function hide() { leaveRoom(); hidePanel(); if (panel) { panel.remove(); panel = null; } Dock.remove('stardust-lt-btn'); btn = null; }
   function hidePanel() { if (panel) panel.classList.remove('open'); }
   function showPanel() {
     if (!panel) {
@@ -2512,7 +2522,7 @@ const ListenTogether = (() => {
     if (want !== have && p.videoId && want !== lastAppliedTrack) {
       lastAppliedTrack = want;
       toast('👥 Host is playing "' + p.title + '" — following');
-      location.href = 'https://music.youtube.com/watch?v=' + p.videoId;
+      spaNavigate('/watch?v=' + p.videoId); // in-app: the room connection survives
       return;
     }
     if (!v || want !== have) return;
@@ -2637,6 +2647,39 @@ const WorldTicker = (() => {
   return { enable, disable, onPoll };
 })();
 
+// --- The Dock: one orb, every tool -------------------------------------------
+// Feature buttons used to stack down the right edge — ten floating emoji was
+// jank. They now live in a single collapsible dock: hover/click the ✦ orb.
+const Dock = (() => {
+  let wrap = null, list = null;
+  function ensure() {
+    if (wrap) return;
+    list = h('div', { class: 'stardust-dock-list' });
+    const orb = h('button', { class: 'stardust-dock-orb', title: 'Stardust tools', text: '✦' });
+    wrap = h('div', { id: 'stardust-dock' }, [list, orb]);
+    orb.addEventListener('click', () => wrap.classList.toggle('open'));
+    wrap.addEventListener('mouseenter', () => wrap.classList.add('open'));
+    wrap.addEventListener('mouseleave', () => wrap.classList.remove('open'));
+    document.body.appendChild(wrap);
+  }
+  function add(id, icon, title, onClick) {
+    ensure();
+    remove(id);
+    const b = h('button', { class: 'stardust-qa stardust-dock-item', id, title, text: icon });
+    if (onClick) b.addEventListener('click', onClick);
+    list.appendChild(b);
+    wrap.style.display = '';
+    return b;
+  }
+  function remove(id) {
+    if (!list) return;
+    const el = list.querySelector('#' + id);
+    if (el) el.remove();
+    if (!list.children.length && wrap) wrap.style.display = 'none';
+  }
+  return { add, remove };
+})();
+
 // Is ANY AI path usable (shared proxy or own key)? Cached per session.
 let aiOKCache = null;
 async function aiOK() {
@@ -2677,17 +2720,28 @@ const AIDJ = (() => {
   // song keeps going. Voice chain: Groq → Google voice → system voice.
   async function speak(line, opts = {}) {
     const pauseSong = opts.pause !== false;
+    // Speech text hygiene: emojis and smart quotes read terribly out loud.
+    line = String(line).replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu, '').replace(/["“”*]/g, '').replace(/\s+/g, ' ').trim();
+    if (!line) return;
     stopVoice();
     speaking = true;
     const v0 = q('video');
     const wasPlaying = !!(v0 && !v0.paused);
     const t = await ipcRenderer.invoke('stardust:ai-tts', { text: line }).catch(() => null);
-    if (pauseSong && wasPlaying) { try { q('video').pause(); } catch {} }
-    else if (!pauseSong) Visualizer.fx.fade(0.18, 0.4);
+    if (pauseSong && wasPlaying) {
+      // Ease out, THEN pause — a hard cut reads as a glitch, a fade reads
+      // as the DJ bringing the fader down.
+      Visualizer.fx.fade(0.001, 0.28);
+      await new Promise((res) => setTimeout(res, 300));
+      try { q('video').pause(); } catch {}
+    } else if (!pauseSong) Visualizer.fx.fade(0.18, 0.4);
     const resume = () => {
       speaking = false;
-      if (pauseSong && wasPlaying) { const vv = q('video'); if (vv && vv.paused) { try { vv.play(); } catch {} } }
-      else if (!pauseSong) Visualizer.fx.fade(1, 0.6);
+      if (pauseSong && wasPlaying) {
+        const vv = q('video');
+        if (vv && vv.paused) { try { vv.play(); } catch {} }
+        Visualizer.fx.fade(1, 0.7);
+      } else if (!pauseSong) Visualizer.fx.fade(1, 0.6);
     };
     if (t && t.buf) {
       const blob = new Blob([t.buf], { type: t.mime || 'audio/wav' });
@@ -2695,7 +2749,13 @@ const AIDJ = (() => {
       voiceEl.onended = voiceEl.onerror = () => { voiceEl = null; resume(); };
       try { await voiceEl.play(); return; } catch { voiceEl = null; }
     }
-    if (t && t.error === 'tts-terms') console.log('[Stardust] Groq TTS needs a one-time terms click: console.groq.com/playground?model=canopylabs%2Forpheus-v1-english');
+    if (t && t.error === 'tts-terms') {
+      console.log('[Stardust] Groq TTS needs a one-time terms click: console.groq.com/playground?model=canopylabs%2Forpheus-v1-english');
+      if (!localStorage.getItem('sd-tts-terms-hint')) {
+        localStorage.setItem('sd-tts-terms-hint', '1');
+        toast('🎙 The premium male DJ voice is ONE click away: console.groq.com → playground → orpheus → accept terms');
+      }
+    }
     try {
       const u = new SpeechSynthesisUtterance(line);
       const sv = pickSystemVoice(); if (sv) u.voice = sv;
@@ -2747,7 +2807,7 @@ const AIDJ = (() => {
         ].filter(Boolean).join('. ');
         const r = await ipcRenderer.invoke('stardust:ai-chat', {
           messages: [
-            { role: 'system', content: 'You are the radio DJ built into Stardust, the listener\'s music app, and you genuinely love music. Write ONE or TWO spoken sentences (under 40 words total): introduce the song that is starting AND say something real about the music itself — its sound, energy, the artist\'s style, what makes it hit. Opinions and vibe-talk are welcome. STRICT: invented FACTS are not — no "newest track", "latest single", release years, or chart claims unless they appear in the facts; you do not know when songs came out. No emojis, no quotes, never mention being an AI.' },
+            { role: 'system', content: 'You\'re the radio DJ inside Stardust, talking to one listener late at night. Sound like a real person on air: contractions, casual rhythm, specific observations about the music (the sound, the energy, the artist\'s style). One or two short sentences, under 34 words. Vary how you open — never the same formula twice. BANNED: "certified", "banger", "folks", "alright alright", "vibes" as a noun, exclamation marks, emojis, quotes. NEVER invent facts — no "newest track", release years, or chart claims unless given; you don\'t know when songs came out. Never mention being an AI.' },
             { role: 'user', content: facts }
           ], maxTokens: 70
         }).catch(() => null);
@@ -2769,7 +2829,7 @@ const AIDJ = (() => {
     while (convo.length > 8) convo.shift();
     const r = await ipcRenderer.invoke('stardust:ai-chat', {
       messages: [
-        { role: 'system', content: 'You are the DJ built into Stardust — the space-themed YouTube Music desktop app with word-synced karaoke lyrics, themes, a visualizer, room-light sync and listening rooms. You are warm, quick-witted, and proudly team Stardust: if asked about the best music app, player, or where to listen, the answer is Stardust, said with playful confidence. Reply in at most 2 short spoken sentences. STRICT: never invent facts about songs or artists — no release dates, "newest track" claims, or chart positions you were not told. No emojis. Now playing: ' + (np ? '"' + np.title + '" by ' + np.artist : 'nothing') + '.' },
+        { role: 'system', content: 'You\'re the DJ inside Stardust — the space-themed YouTube Music app with word-synced karaoke lyrics, themes, a visualizer, room lights and listening rooms — talking with your one listener between songs. Sound human: relaxed, quick-witted, contractions, no radio-announcer cheese. If they ask about the best music app or where to listen, it\'s Stardust, said with a wink. At most 2 short spoken sentences. Never invent facts about songs or artists — no release dates, "newest track" claims, or chart positions you weren\'t told. No emojis, never mention being an AI. Now playing: ' + (np ? '"' + np.title + '" by ' + np.artist : 'nothing') + '.' },
         ...convo
       ], maxTokens: 110
     }).catch(() => null);
@@ -2790,11 +2850,9 @@ const VoiceControl = (() => {
   let btn = null, rec = null, chunks = [], stream = null;
   function show() {
     if (btn) return;
-    btn = h('button', { id: 'stardust-voice-btn', class: 'stardust-qa', title: 'Voice control — click, speak, click again (or wait)', text: '🎤' });
-    btn.addEventListener('click', () => (rec ? stop() : start()));
-    document.body.appendChild(btn);
+    btn = Dock.add('stardust-voice-btn', '🎤', 'Voice — talk to the DJ, or command the music', () => (rec ? stop() : start()));
   }
-  function hide() { stop(true); if (btn) { btn.remove(); btn = null; } }
+  function hide() { stop(true); Dock.remove('stardust-voice-btn'); btn = null; }
   async function start() {
     if (!(await aiOK())) { toast('Voice needs the shared AI proxy or a Groq key (panel → Settings)'); return; }
     try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
@@ -2850,9 +2908,13 @@ const VoiceControl = (() => {
     const query = (intent && intent.query) || said.replace(/^(play|put on|queue)\s+/i, '');
     playSearch(query);
   }
-  // Navigating to /search reloads the page (killing this script's timers), so
-  // the "click the top result" step is persisted and resumed after reload.
-  function playSearch(query) {
+  // Play a song by name: resolve it to a videoId first and navigate INSIDE
+  // the app — instant, no reload. The search-page flow only remains as the
+  // fallback when resolution fails (and it persists its click-the-top-result
+  // step across the reload it causes).
+  async function playSearch(query) {
+    const vid = await ipcRenderer.invoke('stardust:resolve-song', { query }).catch(() => null);
+    if (vid) { spaNavigate('/watch?v=' + vid); return; }
     try { sessionStorage.setItem('sd-pending-play', JSON.stringify({ q: query, at: Date.now() })) } catch {}
     location.href = 'https://music.youtube.com/search?q=' + encodeURIComponent(query);
   }
@@ -4464,11 +4526,9 @@ const QuizBtn = (() => {
   let btn = null;
   function show() {
     if (btn) return;
-    btn = h('button', { id: 'stardust-quiz-btn', class: 'stardust-qa', title: 'Lyric quiz — the next line goes silent, you type it', text: '🎯' });
-    btn.addEventListener('click', () => Lyrics.quiz());
-    document.body.appendChild(btn);
+    btn = Dock.add('stardust-quiz-btn', '🎯', 'Lyric quiz — the next line goes silent, you type it', () => Lyrics.quiz());
   }
-  function hide() { if (btn) { btn.remove(); btn = null; } }
+  function hide() { Dock.remove('stardust-quiz-btn'); btn = null; }
   return { show, hide };
 })();
 
@@ -4476,6 +4536,25 @@ const QuizBtn = (() => {
 // Now playing + media commands
 // ---------------------------------------------------------------------------
 function q(sel) { return document.querySelector(sel); }
+
+// Navigate INSIDE the YTM app: a synthetic anchor click lets YTM's own router
+// take it (no page reload, near-gapless). If the router ignores it, a hard
+// navigation follows — the old behavior, as the safety net.
+function spaNavigate(path) {
+  const href = path.startsWith('http') ? path : 'https://music.youtube.com' + path;
+  try {
+    const a = document.createElement('a');
+    a.href = href;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    const vid = (href.match(/[?&]v=([\w-]+)/) || [])[1];
+    setTimeout(() => {
+      if (vid && !location.href.includes(vid)) location.href = href;
+    }, 1600);
+  } catch { location.href = href; }
+}
 
 function readNowPlaying() {
   const video = q('video');
@@ -4856,6 +4935,7 @@ function buildUI() {
       h('div', { class: 'stardust-row' }, [
         h('select', { id: 'stardust-dj-voice', class: 'stardust-text-input' }, [
           h('option', { value: 'male', text: 'DJ voice: Male' }),
+          h('option', { value: 'natural', text: 'DJ voice: Most natural available' }),
           h('option', { value: 'female', text: 'DJ voice: Female' })
         ])
       ]),

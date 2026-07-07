@@ -401,6 +401,22 @@ function registerIpc() {
   });
   ipcMain.handle('stardust:remote-stop', () => { remote.stop(); return true; });
   ipcMain.on('stardust:remote-state', (_e, s) => remote.setState(s));
+  // "song title artist" → videoId, so transitions can navigate INSIDE the
+  // app (no page reload) instead of bouncing through a search page.
+  ipcMain.handle('stardust:resolve-song', async (_e, { query } = {}) => {
+    try {
+      if (!query) return null;
+      const yt = await songAudio.client();
+      const res = await yt.music.search(String(query).slice(0, 120), { type: 'song' });
+      for (const sec of (res && res.contents) || []) {
+        for (const it of (sec && sec.contents) || []) {
+          const v = it.id || it.video_id || it.videoId;
+          if (v && /^[\w-]{6,20}$/.test(String(v))) return String(v);
+        }
+      }
+    } catch (e) { console.log('[Stardust] resolve-song failed:', e && String(e.message).slice(0, 100)); }
+    return null;
+  });
   // YTM's own "up next" suggestions for the current track — the discovery
   // half of the DJ's Booth candidate pool. Duck-typed defensively.
   ipcMain.handle('stardust:up-next', async (_e, { videoId } = {}) => {
