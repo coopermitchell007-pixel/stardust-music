@@ -1,25 +1,90 @@
-/* Slim Stardust theme for the iOS WKWebView wrapper. Deep-space dark look,
-   hides Premium upsells. (The desktop app's starfield/visualizer/marketplace
-   are not ported here.) */
-:root { --stardust-accent: #8b5cff; }
-
-html, body, ytmusic-app, ytmusic-app-layout {
-  background: radial-gradient(1200px 900px at 50% -10%, #1a1140 0%, rgba(26,17,64,0) 60%), #05060f !important;
+/* Stardust theme for the iOS wrapper — a real port of the desktop look:
+   starfield + nebula background, see-through surfaces, violet accents. */
+:root {
+  --stardust-accent: #8b5cff;
 }
 
-/* Make YTM's own surfaces see-through so the gradient shows. */
-ytmusic-app, ytmusic-app-layout, #layout, #content, #background, #nav-bar-background,
-ytmusic-section-list-renderer, ytmusic-shelf-renderer, ytmusic-carousel-shelf-renderer,
-ytmusic-item-section-renderer, ytmusic-carousel, ytmusic-grid-renderer, ytmusic-tab-renderer {
+/* Neutralize YTM's own background variables so every surface derived from
+   them goes clear at once (the desktop app's core trick). */
+html, ytmusic-app, ytmusic-app-layout {
+  --ytmusic-general-background: transparent !important;
+  --ytmusic-general-background-a: transparent !important;
+  --ytmusic-general-background-b: transparent !important;
+  --ytmusic-general-background-c: transparent !important;
+  --ytmusic-brand-background-solid: transparent !important;
+  --ytmusic-color-black1: transparent !important;
+  --ytmusic-color-black2: transparent !important;
+  --ytmusic-color-black3: transparent !important;
+  --ytmusic-color-black4: transparent !important;
+  --yt-spec-base-background: transparent !important;
+  --yt-spec-general-background-a: transparent !important;
+  --yt-spec-general-background-b: transparent !important;
+  --yt-spec-general-background-c: transparent !important;
+}
+
+html {
+  background:
+    radial-gradient(900px 700px at 24% -6%, #2a1b6e 0%, rgba(42,27,110,0) 62%),
+    radial-gradient(1000px 800px at 88% 108%, #1d1250 0%, rgba(29,18,80,0) 66%),
+    #05060f !important;
+}
+body { background: transparent !important; }
+
+/* Starfield: three tiled layers of CSS dots — no JS, no images. */
+body::before {
+  content: '';
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background-image:
+    radial-gradient(1px 1px at 25px 35px, rgba(255,255,255,0.9), transparent 55%),
+    radial-gradient(1px 1px at 110px 90px, rgba(255,255,255,0.6), transparent 55%),
+    radial-gradient(1.5px 1.5px at 200px 40px, rgba(200,180,255,0.8), transparent 55%),
+    radial-gradient(1px 1px at 65px 150px, rgba(255,255,255,0.5), transparent 55%),
+    radial-gradient(1px 1px at 160px 180px, rgba(180,160,255,0.7), transparent 55%),
+    radial-gradient(1.5px 1.5px at 30px 210px, rgba(255,255,255,0.75), transparent 55%);
+  background-size: 240px 240px;
+}
+ytmusic-app { position: relative; z-index: 1; }
+
+/* Structural containers + every shelf/row renderer see-through. */
+ytmusic-app, ytmusic-app-layout, #layout, #content, #background,
+#nav-bar-background, ytmusic-browse-response, ytmusic-tabs, tp-yt-paper-tabs,
+ytmusic-section-list-renderer, ytmusic-item-section-renderer,
+ytmusic-shelf-renderer, ytmusic-carousel-shelf-renderer, ytmusic-carousel,
+ytmusic-grid-renderer, ytmusic-two-row-item-renderer,
+ytmusic-responsive-list-item-renderer, ytmusic-tab-renderer,
+ytmusic-player-page, #player-page, ytmusic-detail-header-renderer {
   background: transparent !important;
   background-color: transparent !important;
+  background-image: none !important;
 }
 
-/* Accent recolor for the play/nav highlights. */
-.ytmusic-player-bar[slot="player-bar"], tp-yt-paper-icon-button[aria-label*="Play" i] {
+/* Player bar: dark violet glass. */
+ytmusic-player-bar {
+  background: rgba(12, 9, 30, 0.82) !important;
+  backdrop-filter: blur(18px) !important;
+  -webkit-backdrop-filter: blur(18px) !important;
+  border-top: 1px solid rgba(139, 92, 255, 0.25) !important;
+}
+
+/* Violet accents: progress + volume sliders, active tab, links, spinners. */
+#progress-bar, tp-yt-paper-slider {
+  --paper-slider-active-color: var(--stardust-accent) !important;
+  --paper-slider-knob-color: var(--stardust-accent) !important;
+}
+tp-yt-paper-tab.iron-selected, a.yt-simple-endpoint.iron-selected {
+  color: var(--stardust-accent) !important;
+}
+tp-yt-paper-spinner-lite {
+  --paper-spinner-color: var(--stardust-accent) !important;
+}
+ytmusic-pivot-bar-item-renderer.iron-selected,
+ytmusic-guide-entry-renderer[active] {
   color: var(--stardust-accent) !important;
 }
 
 /* Kill Premium / upgrade upsells. */
 ytmusic-mealbar-promo-renderer, ytmusic-statement-banner-renderer,
-ytmusic-you-there-renderer, ytmusic-premium-promo-renderer { display: none !important; }
+ytmusic-you-there-renderer, ytmusic-premium-promo-renderer,
+ytmusic-popup-container:has(ytmusic-mealbar-promo-renderer) {
+  display: none !important;
+}
