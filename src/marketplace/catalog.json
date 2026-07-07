@@ -52,6 +52,10 @@
         ]
       },
       "css": ""
+    },
+    "mobile": {
+      "accent": "#ff5d9e",
+      "bg": "radial-gradient(circle at 50% 0%, #33101f, #0f0409 70%)"
     }
   },
   {
@@ -107,6 +111,10 @@
         ]
       },
       "css": "ytmusic-nav-bar.ytmusic-app-layout { box-shadow: 0 1px 0 0 color-mix(in srgb, var(--stardust-accent) 40%, transparent), 0 0 22px color-mix(in srgb, var(--stardust-accent) 25%, transparent) !important; }"
+    },
+    "mobile": {
+      "accent": "#00e5ff",
+      "bg": "radial-gradient(circle at 50% 0%, #0a2233, #04070f 70%)"
     }
   },
   {
@@ -155,6 +163,10 @@
         ]
       },
       "css": ""
+    },
+    "mobile": {
+      "accent": "#6d6a8f",
+      "bg": "radial-gradient(circle at 50% 0%, #14121f, #030309 70%)"
     }
   },
   {
@@ -202,6 +214,10 @@
         ]
       },
       "css": ""
+    },
+    "mobile": {
+      "accent": "#4ade9e",
+      "bg": "radial-gradient(circle at 50% 0%, #0b2e26, #04100d 70%)"
     }
   },
   {
@@ -635,6 +651,10 @@
         ]
       },
       "css": ""
+    },
+    "mobile": {
+      "accent": "#ffb14d",
+      "bg": "radial-gradient(circle at 50% 0%, #33200b, #0d0703 70%)"
     }
   },
   {

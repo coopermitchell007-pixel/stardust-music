@@ -28,4 +28,7 @@ targets:
           - UIInterfaceOrientationPortrait
         UIBackgroundModes:
           - audio
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        NSLocalNetworkUsageDescription: Stardust connects to the desktop app on your network for the remote.
         UIViewControllerBasedStatusBarAppearance: true
