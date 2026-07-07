@@ -1331,6 +1331,43 @@ const FocusMode = (() => {
   return { enable, disable, onTrack };
 })();
 
+// --- DJ playlists: he can build them, you can keep them -----------------------
+// Saved locally; played through the AI-playlist session runner. Created from
+// the booth's current plan (💾) or by ASKING the DJ ("make me a playlist of…").
+const DJPlaylists = (() => {
+  const load = () => { try { return JSON.parse(localStorage.getItem('sd-dj-playlists') || '[]'); } catch { return []; } };
+  const save = (all) => localStorage.setItem('sd-dj-playlists', JSON.stringify(all.slice(0, 30)));
+  function add(name, songs) {
+    if (!name || !songs || !songs.length) return false;
+    const all = load().filter((p) => p.name !== name);
+    all.unshift({ name: String(name).slice(0, 60), songs: songs.slice(0, 40), at: Date.now() });
+    save(all);
+    return true;
+  }
+  function remove(name) { save(load().filter((p) => p.name !== name)); }
+  // "Make me a playlist of …" — the DJ builds it from the library + taste.
+  async function make(request) {
+    if (!(await aiOK())) { toast('Playlist-making needs the AI (proxy or Groq key)'); return; }
+    toast('🎧 The DJ is building that playlist…');
+    const s = await ipcRenderer.invoke('stardust:stats').catch(() => null);
+    const lib = ((s && s.topSongs) || []).slice(0, 40).map((t) => t.title + ' — ' + t.artist).join('\n');
+    const r = await ipcRenderer.invoke('stardust:ai-chat', {
+      messages: [
+        { role: 'system', content: 'You are Stardust\'s DJ building a playlist. Reply JSON only: {"name":"<short evocative name>","songs":["<title> <artist>", ...10-14 entries]}. Prefer the listener\'s library below when it fits; fill with well-known songs that match. Order for flow.\n\nLIBRARY:\n' + lib },
+        { role: 'user', content: request }
+      ], maxTokens: 600, json: true
+    }).catch(() => null);
+    let out = null;
+    try { out = JSON.parse((r && r.text) || ''); } catch {}
+    if (!out || !out.songs || !out.songs.length) { toast('Couldn\'t build that one — try rephrasing'); return; }
+    add(out.name || 'DJ mix', out.songs);
+    AIDJ.speak('Made you a playlist. ' + (out.name || 'DJ mix') + ' — ' + out.songs.length + ' tracks. Starting it now.', { pause: false });
+    toast('💿 "' + (out.name || 'DJ mix') + '" saved — ' + out.songs.length + ' songs');
+    AIPlaylist.run(out.songs);
+  }
+  return { load, add, remove, make };
+})();
+
 // --- DJ's Booth: Stardust's own Up Next, replacing YTM autoplay AND its UI --
 // The DJ plans several songs ahead from YOUR data — favorites by play count,
 // loved-and-lost tracks, hour affinity, minus serial skips and recents —
@@ -1339,7 +1376,7 @@ const FocusMode = (() => {
 // with his reasons, play-now and veto per row. Transitions preempt YTM's
 // autoplay just before each song ends.
 const DJQueue = (() => {
-  let active = false, pill = null, panel = null, plan = [], picking = false, lastKey = '';
+  let active = false, pill = null, panel = null, plan = [], picking = false, lastKey = '', firing = false;
   let pendingSay = null; // the pick line, spoken when its track actually starts
   const played = []; // session history, newest last
   // YouTube titles carry junk suffixes — strip for display and search both.
@@ -1521,8 +1558,19 @@ const DJQueue = (() => {
       toast('🌙 Tonight is programmed — build, peak, wind-down');
       AIDJ.speak('I have got the night. We will build it up, peak it, and land soft.', { pause: false });
     });
+    const keep = h('button', { class: 'stardust-lyr-tool', title: 'Save the current plan as a playlist', text: '💾' });
+    keep.addEventListener('click', () => {
+      const np = readNowPlaying();
+      const songs = [np && np.isTrack ? np.title + ' ' + (np.artist || '') : null, ...plan.map((p2) => p2.title + ' ' + (p2.artist || ''))].filter(Boolean);
+      if (songs.length < 2) { toast('Nothing to save yet'); return; }
+      const name = prompt('Name this playlist', 'Set of ' + new Date().toLocaleDateString());
+      if (!name) return;
+      DJPlaylists.add(name, songs);
+      toast('💿 Saved "' + name + '"');
+      render();
+    });
     panel.appendChild(h('div', { class: 'stardust-djq-head' }, [
-      h('span', { text: "🎧 DJ's Booth — hand-picked up next  " }), tonight
+      h('span', { text: "🎧 DJ's Booth — hand-picked up next  " }), tonight, keep
     ]));
     // Standing instructions, dismissible.
     for (const d of liveDirectives()) {
@@ -1559,7 +1607,25 @@ const DJQueue = (() => {
       AIDJ.speak('You got it.', { pause: false });
     });
     panel.appendChild(inp);
-    panel.appendChild(h('div', { class: 'stardust-hint', text: 'Picked from your plays, lost favorites and fitting discoveries — not YouTube\'s ads-driven queue.' }));
+    // The record shelf: playlists the DJ (or you) saved.
+    const lists = DJPlaylists.load();
+    if (lists.length) {
+      panel.appendChild(h('div', { class: 'stardust-djq-head', text: '💿 Playlists' }));
+      for (const pl of lists.slice(0, 6)) {
+        const row = h('div', { class: 'stardust-djq-row', title: 'Play this playlist' }, [
+          h('span', { class: 'stardust-djq-n', text: '▶' }),
+          h('div', { class: 'stardust-djq-meta' }, [
+            h('div', { class: 'stardust-djq-title', text: pl.name }),
+            h('div', { class: 'stardust-djq-why', text: pl.songs.length + ' songs' })
+          ]),
+          h('button', { class: 'stardust-lyr-tool', title: 'Delete', text: '✕' })
+        ]);
+        row.addEventListener('click', () => AIPlaylist.run(pl.songs));
+        row.querySelector('button').addEventListener('click', (e) => { e.stopPropagation(); DJPlaylists.remove(pl.name); render(); });
+        panel.appendChild(row);
+      }
+    }
+    panel.appendChild(h('div', { class: 'stardust-hint', text: 'Picked from your plays, lost favorites and fitting discoveries — not YouTube\'s ads-driven queue. Ask the DJ to "make a playlist of…" any time.' }));
   }
 
   function onPoll(np) {
@@ -1568,6 +1634,7 @@ const DJQueue = (() => {
     const key = np.title + '|' + np.artist;
     if (key !== lastKey) {
       lastKey = key;
+      Visualizer.fx.fade(1, 0.5); // restore the handoff fade on arrival
       played.push(key); if (played.length > 60) played.shift();
       if (plan.length && plan[0].title === np.title) plan.shift(); // our own transition
       if (plan.length < 3) redig();
@@ -1583,9 +1650,15 @@ const DJQueue = (() => {
     if (!v || !isFinite(v.duration) || v.duration <= 30 || !(v.currentTime > 0)) return;
     const left = v.duration - v.currentTime;
     if (!plan.length && !picking && left < 30 && left > 8) redig();
-    if (plan.length && left < 2.2) fire(plan.shift());
+    // Hand off a beat earlier with a fade — absorbs resolution latency and
+    // reads like the DJ riding the fader instead of a hard cut at 0:00.
+    if (plan.length && left < 3.2 && !firing) {
+      firing = true;
+      Visualizer.fx.fade(0.001, Math.max(0.4, left - 0.4));
+      fire(plan.shift()).finally(() => { firing = false; });
+    }
   }
-  function fire(p2) {
+  async function fire(p2) {
     AIDJ.suppressOnce(); // no double-talking over the transition
     const worthSaying = p2.reason && /discovery|lost/.test(p2.tag || '');
     if (worthSaying) {
@@ -1597,6 +1670,11 @@ const DJQueue = (() => {
     try { sessionStorage.setItem('sd-djq-plan', JSON.stringify({ plan, at: Date.now() })); } catch {}
     console.log('[Stardust] DJ booth: playing pick "' + p2.title + '"');
     toast('🎧 DJ pick: "' + p2.title + '"' + (p2.reason ? ' — ' + p2.reason : ''));
+    // A pick without a videoId resolves RIGHT HERE (row clicks used to fall
+    // through to the flaky search-page path when resolution hadn't finished).
+    if (!p2.videoId) {
+      p2.videoId = await ipcRenderer.invoke('stardust:resolve-song', { query: p2.title + ' ' + (p2.artist || '') }).catch(() => null);
+    }
     if (p2.videoId) spaNavigate('/watch?v=' + p2.videoId);
     else VoiceControl.playSearch(p2.title + ' ' + (p2.artist || ''));
   }
@@ -2718,7 +2796,17 @@ const AIDJ = (() => {
   // Speak a line. Track-start announcements PAUSE the music (a real radio
   // break); conversation replies just duck it — you asked mid-song, the
   // song keeps going. Voice chain: Groq → Google voice → system voice.
-  async function speak(line, opts = {}) {
+  // One mouth: every line goes through a queue so the DJ can never talk over
+  // himself (two triggers landing together used to double-speak). At most one
+  // line waits; newer waiting lines replace older ones.
+  let speakChain = Promise.resolve(), queued = 0;
+  function speak(line, opts = {}) {
+    if (queued >= 2) return Promise.resolve(); // one speaking + one waiting max
+    queued++;
+    speakChain = speakChain.then(() => speakNow(line, opts)).catch(() => {}).finally(() => { queued--; });
+    return speakChain;
+  }
+  async function speakNow(line, opts = {}) {
     const pauseSong = opts.pause !== false;
     // Speech text hygiene: emojis and smart quotes read terribly out loud.
     line = String(line).replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu, '').replace(/["“”*]/g, '').replace(/\s+/g, ' ').trim();
@@ -2735,34 +2823,45 @@ const AIDJ = (() => {
       await new Promise((res) => setTimeout(res, 300));
       try { q('video').pause(); } catch {}
     } else if (!pauseSong) Visualizer.fx.fade(0.18, 0.4);
-    const resume = () => {
-      speaking = false;
-      if (pauseSong && wasPlaying) {
-        const vv = q('video');
-        if (vv && vv.paused) { try { vv.play(); } catch {} }
-        Visualizer.fx.fade(1, 0.7);
-      } else if (!pauseSong) Visualizer.fx.fade(1, 0.6);
-    };
-    if (t && t.buf) {
-      const blob = new Blob([t.buf], { type: t.mime || 'audio/wav' });
-      voiceEl = new Audio(URL.createObjectURL(blob));
-      voiceEl.onended = voiceEl.onerror = () => { voiceEl = null; resume(); };
-      try { await voiceEl.play(); return; } catch { voiceEl = null; }
-    }
-    if (t && t.error === 'tts-terms') {
-      console.log('[Stardust] Groq TTS needs a one-time terms click: console.groq.com/playground?model=canopylabs%2Forpheus-v1-english');
-      if (!localStorage.getItem('sd-tts-terms-hint')) {
-        localStorage.setItem('sd-tts-terms-hint', '1');
-        toast('🎙 The premium male DJ voice is ONE click away: console.groq.com → playground → orpheus → accept terms');
+    // The chain must not advance until the SPEECH ends — resolve on resume.
+    await new Promise((done) => {
+      let ended = false;
+      const resume = () => {
+        if (ended) return; ended = true;
+        speaking = false;
+        if (pauseSong && wasPlaying) {
+          const vv = q('video');
+          if (vv && vv.paused) { try { vv.play(); } catch {} }
+          Visualizer.fx.fade(1, 0.7);
+        } else if (!pauseSong) Visualizer.fx.fade(1, 0.6);
+        done();
+      };
+      setTimeout(resume, 30000); // absolute cap — a stuck voice never wedges the queue
+      if (t && t.buf) {
+        const blob = new Blob([t.buf], { type: t.mime || 'audio/wav' });
+        voiceEl = new Audio(URL.createObjectURL(blob));
+        voiceEl.onended = voiceEl.onerror = () => { voiceEl = null; resume(); };
+        voiceEl.play().catch(() => { voiceEl = null; systemVoice(); });
+        return;
       }
-    }
-    try {
-      const u = new SpeechSynthesisUtterance(line);
-      const sv = pickSystemVoice(); if (sv) u.voice = sv;
-      u.rate = 0.98; u.pitch = 1.0;
-      u.onend = u.onerror = resume;
-      window.speechSynthesis.speak(u);
-    } catch { resume(); }
+      if (t && t.error === 'tts-terms') {
+        console.log('[Stardust] Groq TTS needs a one-time terms click: console.groq.com/playground?model=canopylabs%2Forpheus-v1-english');
+        if (!localStorage.getItem('sd-tts-terms-hint')) {
+          localStorage.setItem('sd-tts-terms-hint', '1');
+          toast('🎙 The premium male DJ voice is ONE click away: console.groq.com → playground → orpheus → accept terms');
+        }
+      }
+      systemVoice();
+      function systemVoice() {
+        try {
+          const u = new SpeechSynthesisUtterance(line);
+          const sv = pickSystemVoice(); if (sv) u.voice = sv;
+          u.rate = 0.98; u.pitch = 1.0;
+          u.onend = u.onerror = resume;
+          window.speechSynthesis.speak(u);
+        } catch { resume(); }
+      }
+    });
   }
   // Template lines: the keyless fallback DJ. Facts only, no LLM.
   function templateLine(np, tr, artistRank) {
@@ -2893,7 +2992,7 @@ const VoiceControl = (() => {
     // One LLM decision: is this a request to PLAY something, or talk to the DJ?
     const r = await ipcRenderer.invoke('stardust:ai-chat', {
       messages: [
-        { role: 'system', content: 'The user spoke to a music app with a DJ. Reply as JSON only. A specific song/artist/mood to play NOW: {"action":"search","query":"<strong YouTube Music search terms>"}. A standing instruction about what to play GOING FORWARD ("keep it mellow", "no more ballads", "more like this"): {"action":"direct","instruction":"<the instruction, cleanly restated>"}. Anything else (questions, chat, opinions): {"action":"chat"}.' },
+        { role: 'system', content: 'The user spoke to a music app with a DJ. Reply as JSON only. A specific song/artist/mood to play NOW: {"action":"search","query":"<strong YouTube Music search terms>"}. A request to BUILD/MAKE a playlist or mix: {"action":"playlist","request":"<what they asked for>"}. A standing instruction about what to play GOING FORWARD ("keep it mellow", "no more ballads", "more like this"): {"action":"direct","instruction":"<the instruction, cleanly restated>"}. Anything else (questions, chat, opinions): {"action":"chat"}.' },
         { role: 'user', content: said }
       ], maxTokens: 90, json: true
     }).catch(() => null);
@@ -2905,6 +3004,7 @@ const VoiceControl = (() => {
       AIDJ.speak('You got it. Reshaping the queue.', { pause: false });
       return;
     }
+    if (intent && intent.action === 'playlist') { DJPlaylists.make(intent.request || said); return; }
     const query = (intent && intent.query) || said.replace(/^(play|put on|queue)\s+/i, '');
     playSearch(query);
   }
@@ -4550,9 +4650,12 @@ function spaNavigate(path) {
     a.click();
     a.remove();
     const vid = (href.match(/[?&]v=([\w-]+)/) || [])[1];
+    const beforeTrack = lastTrack;
     setTimeout(() => {
-      if (vid && !location.href.includes(vid)) location.href = href;
-    }, 1600);
+      // Hard-navigate ONLY if the router truly ignored us: URL unchanged AND
+      // no track change happened (the URL can lag the actual playback).
+      if (vid && !location.href.includes(vid) && lastTrack === beforeTrack) location.href = href;
+    }, 3000);
   } catch { location.href = href; }
 }
 

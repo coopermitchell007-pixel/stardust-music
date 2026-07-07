@@ -404,18 +404,26 @@ function registerIpc() {
   // "song title artist" → videoId, so transitions can navigate INSIDE the
   // app (no page reload) instead of bouncing through a search page.
   ipcMain.handle('stardust:resolve-song', async (_e, { query } = {}) => {
-    try {
-      if (!query) return null;
-      const yt = await songAudio.client();
-      const res = await yt.music.search(String(query).slice(0, 120), { type: 'song' });
+    const clean = String(query || '').replace(/["“”]/g, '').replace(/\s+/g, ' ').trim().slice(0, 120);
+    if (!clean) return null;
+    const firstId = (res) => {
       for (const sec of (res && res.contents) || []) {
         for (const it of (sec && sec.contents) || []) {
           const v = it.id || it.video_id || it.videoId;
           if (v && /^[\w-]{6,20}$/.test(String(v))) return String(v);
         }
       }
-    } catch (e) { console.log('[Stardust] resolve-song failed:', e && String(e.message).slice(0, 100)); }
-    return null;
+      return null;
+    };
+    try {
+      const yt = await songAudio.client();
+      // Songs first; videos as the fallback — some tracks only exist as videos.
+      let v = firstId(await yt.music.search(clean, { type: 'song' }).catch(() => null));
+      if (!v) v = firstId(await yt.music.search(clean, { type: 'video' }).catch(() => null));
+      if (!v) v = firstId(await yt.music.search(clean).catch(() => null));
+      if (!v) console.log('[Stardust] resolve-song: no match for "' + clean + '"');
+      return v;
+    } catch (e) { console.log('[Stardust] resolve-song failed:', e && String(e.message).slice(0, 100)); return null; }
   });
   // YTM's own "up next" suggestions for the current track — the discovery
   // half of the DJ's Booth candidate pool. Duck-typed defensively.
