@@ -480,6 +480,17 @@ function registerIpc() {
     if (config.get('transcribeKey')) return true;
     try { return await ai.proxyAvailable(); } catch { return false; }
   });
+  // Health panel: what state is the machinery actually in?
+  ipcMain.handle('stardust:health', async () => {
+    let boothTail = [];
+    try {
+      boothTail = fs.readFileSync(path.join(app.getPath('userData'), 'booth.log'), 'utf8')
+        .trim().split('\n').slice(-4);
+    } catch {}
+    let proxy = false;
+    try { proxy = await ai.proxyAvailable(); } catch {}
+    return { key: !!config.get('transcribeKey'), proxy, boothTail, version: app.getVersion() };
+  });
   // Raw track audio for renderer-side analysis (X-ray seekbar). Same source
   // rules as word-sync: the sniffed stream only when its duration vouches.
   ipcMain.handle('stardust:track-audio', async (_e, p = {}) => {

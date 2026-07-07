@@ -61,7 +61,21 @@ const proxyAvailable = async () => {
 };
 
 // ---- chat -------------------------------------------------------------------
-async function chat(apiKey, messages, { maxTokens = 300, temperature = 0.8, json = false, fast = false } = {}) {
+// One call at a time with breathing room — a burst of features stacking
+// requests is what kept tripping Groq's per-minute limits.
+let chatChain = Promise.resolve(), chatQueued = 0, lastChatAt = 0;
+function chat(apiKey, messages, opts = {}) {
+  if (chatQueued >= 4) return Promise.resolve({ error: 'busy' });
+  chatQueued++;
+  chatChain = chatChain.then(async () => {
+    const wait = Math.max(0, lastChatAt + 350 - Date.now());
+    if (wait) await new Promise((r) => setTimeout(r, wait));
+    lastChatAt = Date.now();
+    return chatNow(apiKey, messages, opts);
+  }).finally(() => { chatQueued--; });
+  return chatChain;
+}
+async function chatNow(apiKey, messages, { maxTokens = 300, temperature = 0.8, json = false, fast = false } = {}) {
   const run = async (model) => {
     const body = { model, messages, max_tokens: maxTokens, temperature };
     if (json) body.response_format = { type: 'json_object' };

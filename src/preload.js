@@ -1142,12 +1142,8 @@ const QuickActions = (() => {
 // --- Auto-DJ: keep the music going by enabling autoplay/radio near the end --
 const AutoDJ = (() => {
   let timer = null;
-  function enable() {
-    if (timer) return;
-    tick();
-    timer = setInterval(tick, 5000);
-  }
-  function disable() { if (timer) { clearInterval(timer); timer = null; } }
+  function enable() { if (timer) return; timer = true; tick(); Scheduler.add('auto-dj', tick, 5000); }
+  function disable() { if (timer) { Scheduler.remove('auto-dj'); timer = null; } }
   function tick() {
     const v = q('video'); if (!v || !isFinite(v.duration) || v.duration <= 0) return;
     // Within the last 25s of the final queued track, kick off a radio so the
@@ -1251,8 +1247,8 @@ const ReactiveTheme = (() => {
 const Crossfade = (() => {
   let timer = null, active = false, faded = false, outroSkipped = false;
   const OUT = 3, IN = 1.4;
-  function enable() { if (active) return; active = true; faded = false; Visualizer.fx.fade(1, 0.2); timer = setInterval(tick, 300); }
-  function disable() { active = false; if (timer) { clearInterval(timer); timer = null; } Visualizer.fx.fade(1, 0.3); }
+  function enable() { if (active) return; active = true; faded = false; Visualizer.fx.fade(1, 0.2); Scheduler.add('crossfade', tick, 300, true); }
+  function disable() { active = false; Scheduler.remove('crossfade'); Visualizer.fx.fade(1, 0.3); }
   // Fade IN the moment a real track change is detected (driven by pollNowPlaying,
   // so there's no silent gap while a poll catches up). Guarded by `active`.
   function onTrack(np) {
@@ -1302,8 +1298,8 @@ const FocusMode = (() => {
   const allow = new Set();
   let lastSkipKey = '', lastSkipAt = 0;
   function reset(key) { voicedMs = 0; floor = 0; decided = false; checkedKey = key; }
-  function enable() { if (!timer) { reset(''); timer = setInterval(tick, 400); } }
-  function disable() { if (timer) { clearInterval(timer); timer = null; } }
+  function enable() { if (!timer) { reset(''); timer = true; Scheduler.add('focus-mode', tick, 400); } }
+  function disable() { if (timer) { Scheduler.remove('focus-mode'); timer = null; } }
   function onTrack(np) {
     if (!timer || !np) return;
     const key = np.title + '|' + np.artist;
@@ -1865,8 +1861,8 @@ const NightMode = (() => {
       if (on) toast('🌙 Night mode — easing the volume down');
     }
   }
-  function enable() { if (!timer) { on = false; tick(); timer = setInterval(tick, 60000); } }
-  function disable() { if (timer) { clearInterval(timer); timer = null; } if (on) { on = false; Visualizer.fx.night(false); } }
+  function enable() { if (!timer) { on = false; timer = true; tick(); Scheduler.add('night-mode', tick, 60000, true); } }
+  function disable() { if (timer) { Scheduler.remove('night-mode'); timer = null; } if (on) { on = false; Visualizer.fx.night(false); } }
   return { enable, disable };
 })();
 
@@ -2297,8 +2293,8 @@ const RoomLights = (() => {
     ListenTogether.broadcastLights({ colors, intensity });
     ipcRenderer.send('stardust:lights-frame', { colors, intensity });
   }
-  function enable() { if (!timer) timer = setInterval(frame, 100); }
-  function disable() { if (timer) { clearInterval(timer); timer = null; } }
+  function enable() { if (!timer) { timer = true; Scheduler.add('room-lights', frame, 100, true); } }
+  function disable() { if (timer) { Scheduler.remove('room-lights'); timer = null; } }
   return { enable, disable };
 })();
 
@@ -2785,12 +2781,12 @@ const WorldTicker = (() => {
       if (!el) mount();
       if (live) renderLive();
     });
-    cycle = setInterval(step, 7000);
+    Scheduler.add('ticker-step', step, 7000); cycle = true;
   }
   function disable() {
     active = false;
     Realtime.leave(TOPIC);
-    if (cycle) { clearInterval(cycle); cycle = null; }
+    Scheduler.remove('ticker-step'); cycle = null;
     if (el) { el.remove(); el = null; }
     if (live) { live.remove(); live = null; }
     feed = [];
@@ -3195,12 +3191,13 @@ const XraySeekbar = (() => {
   function enable() {
     if (active) return;
     active = true;
-    timer = setInterval(place, 700);
+    Scheduler.add('xray-place', place, 700);
+    timer = true;
     forKey = ''; onTrack(readNowPlaying());
   }
   function disable() {
     active = false;
-    if (timer) { clearInterval(timer); timer = null; }
+    Scheduler.remove('xray-place'); timer = null;
     if (canvas) { canvas.remove(); canvas = null; cx = null; }
     if (btn) { btn.remove(); btn = null; }
     profile = null; chorusAt = null; forKey = '';
@@ -4799,6 +4796,33 @@ const QuizBtn = (() => {
 // ---------------------------------------------------------------------------
 // Now playing + media commands
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Scheduler — one clock for all recurring work. Each task registers a
+// cadence; everything downshifts 4× while the window is hidden (tasks that
+// drive AUDIO or LIGHTS opt out), and a throwing task logs once instead of
+// spamming. Replaces a pile of ~20 independent setIntervals.
+// ---------------------------------------------------------------------------
+const Scheduler = (() => {
+  const tasks = new Map();
+  let clock = 0;
+  setInterval(() => {
+    clock += 250;
+    const hidden = document.hidden;
+    for (const t of tasks.values()) {
+      const ms = hidden && !t.always ? t.ms * 4 : t.ms;
+      if (clock - t.last >= ms) {
+        t.last = clock;
+        try { t.fn(); } catch (e) { if (!t.warned) { t.warned = true; console.error('[Stardust] task "' + t.id + '" failed:', e); } }
+      }
+    }
+  }, 250);
+  return {
+    add(id, fn, ms, always) { tasks.set(id, { id, fn, ms: Math.max(250, ms), last: 0, always: !!always }); },
+    remove(id) { tasks.delete(id); }
+  };
+})();
+
 function q(sel) { return document.querySelector(sel); }
 
 // Navigate INSIDE the YTM app: a synthetic anchor click lets YTM's own router
@@ -5158,7 +5182,7 @@ function watchAds() {
     obs.observe(target, { subtree: true, attributes: true, attributeFilter: ['player-ui-state_'] });
   } catch {}
   hookVideoForAds();
-  setInterval(hookVideoForAds, 2000); // the <video> can be recreated
+  Scheduler.add('ad-video-hook', hookVideoForAds, 2000); // the <video> can be recreated
 }
 
 // Attach ad-guards directly to the media element so an ad is caught the instant
@@ -5250,7 +5274,7 @@ function buildUI() {
       sliderRow('Glass blur', 'glassBlur', { min: '0', max: '40', step: '1' })
     ]),
     section([
-      label('Smart'),
+      label('Lyrics & AI'),
       h('button', { class: 'stardust-market-cta', dataset: { act: 'open-stats' }, text: '✦  Listening Stats' }),
       h('div', { class: 'stardust-row' }, [
         miniBtn('toggle-lyrics', 'Lyrics: off'),
@@ -5302,17 +5326,25 @@ function buildUI() {
       ])
     ]),
     section([
+      label('System'),
       toggleRow('Ad blocker', 'adBlock'),
       toggleRow('Mini player', 'miniPlayer'),
       toggleRow('Global hotkeys', 'globalHotkeys'),
       toggleRow('Discord presence', 'discordRichPresence', 'stardust-discord'),
       discordIdWrap
     ]),
+    section([
+      label('Health'),
+      h('div', { id: 'stardust-health', class: 'stardust-hint', text: 'Checking…' })
+    ]),
     h('div', { class: 'stardust-foot', text: 'Stardust v' + (appVersion || '?') + ' • drop themes into the folder above' })
   ]);
   document.body.appendChild(panel);
 
-  launcher.addEventListener('click', () => panel.classList.toggle('open'));
+  launcher.addEventListener('click', () => {
+    panel.classList.toggle('open');
+    if (panel.classList.contains('open')) panel.dispatchEvent(new Event('stardust-panel-open'));
+  });
 
   panelEl = panel;
   wirePanel(panel);
@@ -5393,6 +5425,18 @@ function wirePanel(panel) {
     tk.value = settings.transcribeKey || '';
     tk.addEventListener('change', () => { setSetting('transcribeKey', tk.value.trim()); aiOKCache = null; });
   }
+
+  // Health readout — refreshed every time the panel opens.
+  async function refreshHealth() {
+    const el = panel.querySelector('#stardust-health');
+    if (!el) return;
+    const hHealth = await ipcRenderer.invoke('stardust:health').catch(() => null);
+    if (!hHealth) { el.textContent = 'Health check failed'; return; }
+    const ai2 = hHealth.key ? 'your key' : hHealth.proxy ? 'shared proxy' : 'not configured';
+    el.textContent = 'v' + hHealth.version + ' · AI: ' + ai2 + (hHealth.boothTail.length ? '\nBooth: ' + hHealth.boothTail[hHealth.boothTail.length - 1] : '');
+  }
+  panel.addEventListener('stardust-panel-open', refreshHealth);
+  setTimeout(refreshHealth, 4000);
 
   // DJ voice preference.
   const dv = panel.querySelector('#stardust-dj-voice');
@@ -5972,8 +6016,8 @@ async function boot() {
   applyExtras();
   buildUI();
 
-  setInterval(pollNowPlaying, 1000);
-  setInterval(skipAds, 500);
+  Scheduler.add('now-playing', pollNowPlaying, 1000, true);
+  Scheduler.add('ad-skip', skipAds, 500, true);
   watchAds();
   skipAds();
 
