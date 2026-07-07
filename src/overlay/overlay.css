@@ -1162,3 +1162,78 @@ body.stardust-playing img.stardust-vinyl { animation-play-state: running !import
   0%, 100% { opacity: 0.25; transform: scale(0.96); }
   50% { opacity: 0.95; transform: scale(1.02); }
 }
+
+/* =========================================================================
+   Polish pass 2 — motion & feel. Everything responds; nothing pops.
+   ========================================================================= */
+
+/* Press feedback everywhere */
+.stardust-qa:active, .stardust-lyr-tool:active, .stardust-mini-btn:active,
+.stardust-market-btn:active, .stardust-dock-orb:active, .stardust-djq-row:active {
+  transform: scale(0.94);
+  transition: transform 0.08s;
+}
+.stardust-qa, .stardust-lyr-tool, .stardust-mini-btn, .stardust-market-btn {
+  transition: transform 0.15s cubic-bezier(.34,1.56,.64,1), background 0.2s, border-color 0.2s, box-shadow 0.2s;
+}
+.stardust-lyr-tool:hover, .stardust-mini-btn:hover { transform: translateY(-1px); }
+
+/* Toast: glass slide-up with an accent edge */
+#stardust-toast {
+  background: color-mix(in srgb, var(--stardust-accent) 14%, rgba(10,10,20,0.88)) !important;
+  border: 1px solid color-mix(in srgb, var(--stardust-accent) 45%, rgba(255,255,255,0.1)) !important;
+  border-left: 3px solid var(--stardust-accent) !important;
+  backdrop-filter: blur(14px) !important;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.45), 0 0 24px color-mix(in srgb, var(--stardust-accent) 20%, transparent) !important;
+  transition: opacity 0.3s cubic-bezier(.22,1,.36,1), transform 0.3s cubic-bezier(.34,1.56,.64,1) !important;
+}
+
+/* Modals (stats, marketplace, wrapped card) spring in */
+.stardust-modal .stardust-modal-card { animation: sd-card-in 0.35s cubic-bezier(.34,1.4,.64,1); }
+@keyframes sd-card-in { from { opacity: 0; transform: translateY(16px) scale(0.97); } to { opacity: 1; transform: none; } }
+
+/* Booth pill breathes when a new pick lands */
+#stardust-djq { animation: sd-rise 0.4s cubic-bezier(.22,1,.36,1), sd-glow 2.6s ease-in-out 1; }
+@keyframes sd-glow {
+  0%, 100% { box-shadow: none; }
+  30% { box-shadow: 0 0 22px color-mix(in srgb, var(--stardust-accent) 55%, transparent); }
+}
+
+/* Dock items reveal a name on hover */
+.stardust-dock-item { position: relative; }
+.stardust-dock-item:hover::after {
+  content: attr(title);
+  position: absolute; right: 54px; top: 50%; transform: translateY(-50%);
+  white-space: nowrap; max-width: 260px; overflow: hidden; text-overflow: ellipsis;
+  font-size: 11px; font-weight: 600; color: #fff; padding: 5px 10px; border-radius: 8px;
+  background: rgba(8,8,16,0.92); border: 1px solid color-mix(in srgb, var(--stardust-accent) 35%, rgba(255,255,255,0.1));
+  pointer-events: none;
+  animation: sd-tip-in 0.15s ease-out;
+}
+@keyframes sd-tip-in { from { opacity: 0; transform: translateY(-50%) translateX(4px); } to { opacity: 1; transform: translateY(-50%); } }
+
+/* Marketplace cards lift */
+.stardust-market-card { transition: transform 0.2s cubic-bezier(.34,1.56,.64,1), box-shadow 0.2s; }
+.stardust-market-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 14px 40px rgba(0,0,0,0.4), 0 0 20px color-mix(in srgb, var(--stardust-accent) 18%, transparent);
+}
+
+/* Directive chips pulse in */
+.stardust-djq-dir { animation: sd-rise 0.3s cubic-bezier(.22,1,.36,1); }
+
+/* Lyric quiz + importer modals share the spring */
+#stardust-quiz { animation: sd-card-in 0.3s cubic-bezier(.34,1.4,.64,1); }
+
+/* Stats rows stagger softly */
+.stardust-stat-row { animation: sd-rise 0.3s cubic-bezier(.22,1,.36,1) backwards; }
+.stardust-stat-row:nth-child(2) { animation-delay: 0.02s; }
+.stardust-stat-row:nth-child(3) { animation-delay: 0.04s; }
+.stardust-stat-row:nth-child(4) { animation-delay: 0.06s; }
+.stardust-stat-row:nth-child(5) { animation-delay: 0.08s; }
+
+/* Respect users who turn motion off */
+@media (prefers-reduced-motion: reduce) {
+  #stardust-djq, .stardust-djq-row, .stardust-modal .stardust-modal-card,
+  #stardust-quiz, .stardust-stat-row, .stardust-djq-dir { animation: none !important; }
+}

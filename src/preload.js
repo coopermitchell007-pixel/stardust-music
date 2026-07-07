@@ -1484,6 +1484,28 @@ const DJQueue = (() => {
         const rel = await ipcRenderer.invoke('stardust:up-next', { videoId: vid }).catch(() => []);
         for (const r of (rel || []).slice(0, 8)) push(r.title, r.artist, 'discovery — flows from the current song', r.videoId);
       }
+      // Standing instructions SOURCE their own candidates. Re-ranking the
+      // library pool was worthless when the pool had nothing matching ("only
+      // family guy" → one match): ask the LLM for actual matching songs and
+      // put them in front of the picker.
+      const dirsNow = liveDirectives().map((d) => d.text);
+      if (dirsNow.length && await aiOK()) {
+        const r2 = await ipcRenderer.invoke('stardust:ai-chat', {
+          messages: [
+            { role: 'system', content: 'List songs that MATCH the listener\'s instruction for a music queue. Reply JSON only: {"songs":["<title> <artist>", ...8-10 entries]}. Real, well-known songs; prefer any from the LIBRARY that fit.\n\nLIBRARY:\n' + ((s && s.topSongs) || []).slice(0, 30).map((t) => t.title + ' — ' + t.artist).join('\n') },
+            { role: 'user', content: dirsNow.join(' | ') }
+          ], maxTokens: 400, json: true
+        }).catch(() => null);
+        try {
+          const j = JSON.parse((r2 && r2.text) || '');
+          for (const s2 of (j.songs || []).slice(0, 10)) {
+            // unshift-style priority: matching songs go to the FRONT
+            const k = cleanTitle(s2) + '|';
+            if (!cand.some((c) => c.title === cleanTitle(s2))) cand.unshift({ title: cleanTitle(s2), artist: '', tag: 'matches your instruction' });
+          }
+          blog('directive sourcing added ' + Math.min(10, (j.songs || []).length) + ' candidates');
+        } catch {}
+      }
       console.log('[Stardust] DJ booth: ' + cand.length + ' candidates (vid=' + (vid || 'none') + ')');
       if (!cand.length || !active) return;
       let picks = [];
@@ -1492,7 +1514,7 @@ const DJQueue = (() => {
         const dirs = liveDirectives().map((d) => d.text);
         const r = await ipcRenderer.invoke('stardust:ai-chat', {
           messages: [
-            { role: 'system', content: 'You are Stardust\'s radio DJ planning the next FIVE songs, in play order. Think about flow from the current song, the hour, and variety — mostly favorites, an occasional discovery or lost track where it fits.' + (dirs.length ? ' THE LISTENER\'S STANDING INSTRUCTIONS — OBEY THEM ABOVE ALL: ' + dirs.join(' | ') : '') + ' Reply JSON only: {"picks":[{"pick":<candidate number>,"reason":"<under 12 words, plain-spoken, like telling a friend why this one\'s next>"}, ...5 entries]}. Reasons must not invent facts about the songs. No exclamation marks.' },
+            { role: 'system', content: 'You are Stardust\'s radio DJ planning the next FIVE songs, in play order. Think about flow from the current song, the hour, and variety — mostly favorites, an occasional discovery or lost track where it fits.' + (dirs.length ? ' THE LISTENER\'S STANDING INSTRUCTIONS — OBEY THEM ABOVE ALL (if one says ONLY a certain thing, EVERY pick must match it; the \'matches your instruction\' candidates exist for this): ' + dirs.join(' | ') : '') + ' Reply JSON only: {"picks":[{"pick":<candidate number>,"reason":"<under 12 words, plain-spoken, like telling a friend why this one\'s next>"}, ...5 entries]}. Reasons must not invent facts about the songs. No exclamation marks.' },
             { role: 'user', content: 'Now playing: "' + np.title + '" by ' + np.artist + '. Hour: ' + hr + '. Just played: ' + played.slice(-4).join('; ') + '\n\nCANDIDATES:\n' + list }
           ], maxTokens: 300, json: true
         }).catch(() => null);
