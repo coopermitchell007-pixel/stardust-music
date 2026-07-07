@@ -104,7 +104,7 @@
     lyr.el.id = 'sd-lyrics';
     lyr.el.innerHTML = '<div id="sd-lyr-head"><span>✦ Lyrics</span><button id="sd-lyr-x">✕</button></div><div id="sd-lyr-body">Searching…</div>';
     document.body.appendChild(lyr.el);
-    lyr.el.querySelector('#sd-lyr-x').onclick = () => lyricsSheet(false);
+    lyr.el.querySelector('#sd-lyr-x').addEventListener('touchend', (e) => { e.preventDefault(); e.stopPropagation(); lyricsSheet(false); }, true);
     lyr.timer = setInterval(tickLyrics, 400);
     tickLyrics(true);
   }
@@ -125,7 +125,7 @@
       lines.forEach((l, i) => {
         const d = document.createElement('div');
         d.className = 'sd-line'; d.textContent = l.s || '♪'; d.dataset.i = i;
-        d.onclick = () => { const v = nowPlaying().video; if (v) v.currentTime = l.t + 0.01; };
+        d.addEventListener('touchend', (e) => { e.preventDefault(); const v = nowPlaying().video; if (v) v.currentTime = l.t + 0.01; }, true);
         body.appendChild(d);
       });
     }
@@ -182,7 +182,32 @@
       + '<div class="sd-row"><span>Starfield</span><input type="checkbox" id="sd-star-t"></div>'
       + '<button class="sd-btn" id="sd-lyr-open">🎤 Synced lyrics</button>';
     document.body.appendChild(panel);
-    orb.onclick = () => panel.classList.toggle('open');
+
+    // Mobile YTM swallows events before they bubble to overlaid buttons, so
+    // taps are caught in CAPTURE phase and hit-tested by COORDINATES — the
+    // page can neither stop nor cover them.
+    const inside = (el, x, y) => {
+      if (!el || !el.isConnected) return false;
+      const r = el.getBoundingClientRect();
+      return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+    };
+    const tap = (e) => {
+      const x = (e.changedTouches ? e.changedTouches[0] : e).clientX;
+      const y = (e.changedTouches ? e.changedTouches[0] : e).clientY;
+      if (inside(orb, x, y)) {
+        e.preventDefault(); e.stopPropagation();
+        panel.classList.toggle('open');
+        return;
+      }
+      if (panel.classList.contains('open') && !inside(panel, x, y) && !document.getElementById('sd-lyrics')) {
+        panel.classList.remove('open');
+      }
+    };
+    document.addEventListener('touchend', tap, { capture: true, passive: false });
+    document.addEventListener('click', (e) => {
+      // Ghost click after a handled touchend — swallow it near the orb.
+      if (inside(orb, e.clientX, e.clientY)) { e.preventDefault(); e.stopPropagation(); }
+    }, true);
 
     const twrap = panel.querySelector('#sd-themes');
     for (const [id, t] of Object.entries(THEMES)) {
@@ -190,17 +215,21 @@
       b.className = 'sd-sw' + (cfg.theme === id ? ' on' : '');
       b.style.background = t.bg; b.style.boxShadow = 'inset 0 0 0 2px ' + t.accent + '44';
       b.title = t.name;
-      b.onclick = () => {
+      b.addEventListener('touchend', (e) => {
+        e.preventDefault(); e.stopPropagation();
         cfg.theme = id; save(); applyTheme();
         twrap.querySelectorAll('.sd-sw').forEach((x) => x.classList.remove('on'));
         b.classList.add('on');
-      };
+      }, true);
       twrap.appendChild(b);
     }
     const st = panel.querySelector('#sd-star-t');
     st.checked = !!cfg.starfield;
-    st.onchange = () => { cfg.starfield = st.checked; save(); starfield(st.checked); };
-    panel.querySelector('#sd-lyr-open').onclick = () => { panel.classList.remove('open'); lyricsSheet(true); };
+    st.addEventListener('change', () => { cfg.starfield = st.checked; save(); starfield(st.checked); });
+    panel.querySelector('#sd-lyr-open').addEventListener('touchend', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      panel.classList.remove('open'); lyricsSheet(true);
+    }, true);
   }
 
   function boot() {
