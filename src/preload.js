@@ -1558,6 +1558,17 @@ const DJQueue = (() => {
       if (vid) p2.videoId = vid;
       p2.resolving = false;
     }
+    // Different titles can resolve to the SAME video ("Shipoopi" ×3) — keep
+    // the first of each id, drop the ghosts, top the plan back up.
+    const seen = new Set();
+    const before = plan.length;
+    plan = plan.filter((p2) => {
+      if (!p2.videoId) return true;
+      if (seen.has(p2.videoId)) return false;
+      seen.add(p2.videoId);
+      return true;
+    });
+    if (plan.length < before) { blog('deduped ' + (before - plan.length) + ' same-video picks'); render(); if (plan.length < 3) redig(); }
   }
 
   // --- the queue-panel takeover: our list replaces YTM's "Up next" ----------
@@ -1726,6 +1737,19 @@ const DJQueue = (() => {
     if (!p2.videoId) {
       p2.videoId = await ipcRenderer.invoke('stardust:resolve-song', { query: p2.title + ' ' + (p2.artist || '') }).catch(() => null);
       blog('resolved late → ' + (p2.videoId || 'FAILED'));
+    }
+    // Same video as what's playing? That navigation is a no-op/restart —
+    // skip to the NEXT pick instead of pretending.
+    let curVid = null;
+    try { curVid = await ipcRenderer.invoke('stardust:current-videoid'); } catch {}
+    if (p2.videoId && curVid && p2.videoId === curVid) {
+      blog('pick is the CURRENT video — advancing to the next pick');
+      const nxt = plan.shift();
+      if (nxt) return fire(nxt, hard);
+      setFiring(false);
+      toast('🎧 That one is already playing — digging fresh');
+      redig();
+      return;
     }
     if (p2.videoId) spaNavigate('/watch?v=' + p2.videoId, hard);
     else { blog('falling back to search-page flow'); VoiceControl.playSearch(p2.title + ' ' + (p2.artist || '')); }
@@ -4813,7 +4837,27 @@ function spaNavigate(path, hard) {
     }, hard ? 1200 : 2000);
     return;
   }
-  if (hard) { blog('nav HARD ' + href); location.href = href; return; }
+  if (hard) {
+    blog('nav HARD ' + href);
+    location.href = href;
+    // Watchdog: a hung response leaves the old page alive and skips absorbed.
+    // Retry once with replace(), then fall back to YTM's own next button so
+    // SOMETHING audible always happens.
+    setTimeout(() => {
+      if (vid && !location.href.includes(vid)) {
+        blog('HARD nav stuck — retrying via replace()');
+        try { location.replace(href); } catch {}
+        setTimeout(() => {
+          if (!location.href.includes(vid)) {
+            blog('replace stuck too — native next as last resort');
+            const b = document.querySelector('ytmusic-player-bar .next-button');
+            if (b) { try { b.click(); } catch {} }
+          }
+        }, 3000);
+      }
+    }, 4000);
+    return;
+  }
   try {
     const a = document.createElement('a');
     a.href = href;
