@@ -95,8 +95,15 @@ struct WebView: UIViewRepresentable {
         func webView(_ w: WKWebView, didStartProvisionalNavigation n: WKNavigation!) {
             print("[stardust] start: \(w.url?.absoluteString ?? "?")")
         }
+        var probeTimer: Timer?
         func webView(_ w: WKWebView, didFinish n: WKNavigation!) {
             print("[stardust] finish: \(w.url?.absoluteString ?? "?")")
+            probeTimer?.invalidate()
+            probeTimer = Timer.scheduledTimer(withTimeInterval: 4, repeats: true) { [weak w] _ in
+                w?.evaluateJavaScript("JSON.stringify({mobile:!!window.__stardustMobile,orb:!!document.getElementById('sd-orb'),panel:!!document.getElementById('sd-panel'),log:(window.__sdLog||[]).slice(-6)})") { r, e in
+                    print("[stardust] status: \(r ?? e?.localizedDescription ?? "nil")")
+                }
+            }
             w.evaluateJavaScript("JSON.stringify({injected: !!document.getElementById('stardust'), bodyBg: getComputedStyle(document.body).backgroundColor, app: !!document.querySelector('ytmusic-app')})") { r, e in
                 print("[stardust] probe: \(r ?? e?.localizedDescription ?? "nil")")
             }

@@ -6,6 +6,21 @@
   'use strict';
   if (window.__stardustMobile) return;
   window.__stardustMobile = true;
+  window.__sdLog = [];
+  const dlog = (m) => { try { window.__sdLog.push(m); if (window.__sdLog.length > 30) window.__sdLog.shift(); } catch {} };
+  window.addEventListener('error', (e) => dlog('ERR ' + (e.message || '?')));
+  // YouTube enforces Trusted Types — innerHTML assignment THROWS. All UI must
+  // be built with createElement (same reason the desktop preload does).
+  const el = (tag, props, kids) => {
+    const n = document.createElement(tag);
+    for (const [k, v] of Object.entries(props || {})) {
+      if (k === 'text') n.textContent = v;
+      else if (k === 'css') n.style.cssText = v;
+      else n.setAttribute(k, v);
+    }
+    for (const c of kids || []) if (c) n.appendChild(c);
+    return n;
+  };
 
   const THEMES = {
     nebula:  { name: 'Nebula',  accent: '#8b5cff', bg: 'radial-gradient(circle at 50% 0%, #1b1340, #05060f 70%)' },
@@ -100,11 +115,13 @@
   function lyricsSheet(open) {
     if (!open) { if (lyr.el) lyr.el.remove(); lyr.el = null; if (lyr.timer) clearInterval(lyr.timer); lyr.timer = null; return; }
     if (lyr.el) return;
-    lyr.el = document.createElement('div');
-    lyr.el.id = 'sd-lyrics';
-    lyr.el.innerHTML = '<div id="sd-lyr-head"><span>✦ Lyrics</span><button id="sd-lyr-x">✕</button></div><div id="sd-lyr-body">Searching…</div>';
+    const xBtn = el('button', { id: 'sd-lyr-x', text: '✕' });
+    lyr.el = el('div', { id: 'sd-lyrics' }, [
+      el('div', { id: 'sd-lyr-head' }, [el('span', { text: '✦ Lyrics' }), xBtn]),
+      el('div', { id: 'sd-lyr-body', text: 'Searching…' })
+    ]);
     document.body.appendChild(lyr.el);
-    lyr.el.querySelector('#sd-lyr-x').addEventListener('touchend', (e) => { e.preventDefault(); e.stopPropagation(); lyricsSheet(false); }, true);
+    xBtn.addEventListener('touchend', (e) => { e.preventDefault(); e.stopPropagation(); lyricsSheet(false); }, true);
     lyr.timer = setInterval(tickLyrics, 400);
     tickLyrics(true);
   }
@@ -120,7 +137,7 @@
       const lines = await fetchLyrics(np);
       if (lyr.key !== key || !lyr.el) return;
       lyr.lines = lines;
-      body.innerHTML = '';
+      while (body.firstChild) body.removeChild(body.firstChild);
       if (!lines.length) { body.textContent = 'No synced lyrics found for this song.'; return; }
       lines.forEach((l, i) => {
         const d = document.createElement('div');
@@ -145,6 +162,9 @@
 
   // ---- the ✦ button + panel --------------------------------------------------
   function buildUI() {
+    try { buildUIInner(); } catch (e) { dlog('buildUI threw: ' + (e && e.message)); }
+  }
+  function buildUIInner() {
     if (document.getElementById('sd-orb') || !document.body) return;
     const style = document.createElement('style');
     style.textContent = `
@@ -176,11 +196,15 @@
     orb.id = 'sd-orb'; orb.textContent = '✦';
     document.body.appendChild(orb);
 
-    const panel = document.createElement('div');
-    panel.id = 'sd-panel';
-    panel.innerHTML = '<div class="sd-h">✦ Stardust</div><div id="sd-themes"></div>'
-      + '<div class="sd-row"><span>Starfield</span><input type="checkbox" id="sd-star-t"></div>'
-      + '<button class="sd-btn" id="sd-lyr-open">🎤 Synced lyrics</button>';
+    const twrap = el('div', { id: 'sd-themes' });
+    const st = el('input', { type: 'checkbox', id: 'sd-star-t' });
+    const lyrBtn = el('button', { class: 'sd-btn', id: 'sd-lyr-open', text: '🎤 Synced lyrics' });
+    const panel = el('div', { id: 'sd-panel' }, [
+      el('div', { class: 'sd-h', text: '✦ Stardust' }),
+      twrap,
+      el('div', { class: 'sd-row' }, [el('span', { text: 'Starfield' }), st]),
+      lyrBtn
+    ]);
     document.body.appendChild(panel);
 
     // Mobile YTM swallows events before they bubble to overlaid buttons, so
@@ -194,9 +218,11 @@
     const tap = (e) => {
       const x = (e.changedTouches ? e.changedTouches[0] : e).clientX;
       const y = (e.changedTouches ? e.changedTouches[0] : e).clientY;
+      dlog('tap ' + e.type + ' @' + Math.round(x) + ',' + Math.round(y) + ' orbHit=' + inside(orb, x, y) + ' orbConn=' + (orb && orb.isConnected));
       if (inside(orb, x, y)) {
         e.preventDefault(); e.stopPropagation();
         panel.classList.toggle('open');
+        dlog('panel now ' + panel.className + ' display=' + getComputedStyle(panel).display + ' conn=' + panel.isConnected);
         return;
       }
       if (panel.classList.contains('open') && !inside(panel, x, y) && !document.getElementById('sd-lyrics')) {
@@ -209,7 +235,6 @@
       if (inside(orb, e.clientX, e.clientY)) { e.preventDefault(); e.stopPropagation(); }
     }, true);
 
-    const twrap = panel.querySelector('#sd-themes');
     for (const [id, t] of Object.entries(THEMES)) {
       const b = document.createElement('button');
       b.className = 'sd-sw' + (cfg.theme === id ? ' on' : '');
@@ -223,10 +248,9 @@
       }, true);
       twrap.appendChild(b);
     }
-    const st = panel.querySelector('#sd-star-t');
     st.checked = !!cfg.starfield;
     st.addEventListener('change', () => { cfg.starfield = st.checked; save(); starfield(st.checked); });
-    panel.querySelector('#sd-lyr-open').addEventListener('touchend', (e) => {
+    lyrBtn.addEventListener('touchend', (e) => {
       e.preventDefault(); e.stopPropagation();
       panel.classList.remove('open'); lyricsSheet(true);
     }, true);
