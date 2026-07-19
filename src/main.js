@@ -4,6 +4,9 @@ const { app, BrowserWindow, ipcMain, globalShortcut, shell, Menu, nativeImage, d
 const path = require('path');
 const fs = require('fs');
 
+const { useSharedUserData, migrateSessions, partitionName } = require('./shared-userdata');
+useSharedUserData();
+
 const config = require('./config');
 const themes = require('./themes');
 const discord = require('./discord');
@@ -51,7 +54,9 @@ function createMainWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
-      backgroundThrottling: false // keep timers/rAF running so lyrics never freeze
+      backgroundThrottling: false, // keep timers/rAF running so lyrics never freeze
+      // Shared with Hub
+      partition: partitionName('music')
     }
   });
 
@@ -606,6 +611,7 @@ function buildAppMenu() {
 }
 
 app.whenReady().then(async () => {
+  try { migrateSessions(); } catch (e) { console.warn('[Stardust] migrate:', e.message); }
   try { marketplace.syncBundled(); } catch {}
   buildAppMenu();
   if (process.platform === 'darwin' && app.dock) {
